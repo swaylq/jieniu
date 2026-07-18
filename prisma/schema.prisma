@@ -1,0 +1,410 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+    provider = "prisma-client-js"
+    output   = "../generated/prisma"
+}
+
+datasource db {
+    provider = "postgresql"
+    // NOTE: When using mysql or sqlserver, uncomment the @db.Text annotations in model Account below
+    // Further reading:
+    // https://next-auth.js.org/adapters/prisma#create-the-prisma-schema
+    // https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference#string
+    url      = env("DATABASE_URL")
+}
+
+model Post {
+    id        Int      @id @default(autoincrement())
+    name      String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    createdBy   User   @relation(fields: [createdById], references: [id])
+    createdById String
+
+    @@index([name])
+}
+
+// Necessary for Next auth
+model Account {
+    id                       String  @id @default(cuid())
+    userId                   String
+    type                     String
+    provider                 String
+    providerAccountId        String
+    refresh_token            String? // @db.Text
+    access_token             String? // @db.Text
+    expires_at               Int?
+    token_type               String?
+    scope                    String?
+    id_token                 String? // @db.Text
+    session_state            String?
+    user                     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+    refresh_token_expires_in Int?
+
+    @@unique([provider, providerAccountId])
+}
+
+model Session {
+    id           String   @id @default(cuid())
+    sessionToken String   @unique
+    userId       String
+    expires      DateTime
+    user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+    id            String    @id @default(cuid())
+    name          String?
+    email         String?   @unique
+    emailVerified DateTime?
+    image         String?
+    password      String?   // scrypt 哈希（U-3）；null=仅 OTP 登录。与邮箱验证码并存
+    accounts      Account[]
+    sessions      Session[]
+    posts         Post[]
+    watchlist     Watchlist[]
+    bookmarks     Bookmark[]
+    decisions     Decision[]
+    investorProfile InvestorProfile?
+    userTheses    UserThesis[]
+    alertReviews  ThesisAlertReview[]
+    priceAlerts   PriceAlert[]
+    notificationsSeenAt DateTime?
+    alertPrefs    Json?     // 提醒协议(P5-8)：{logic,fundamental,catalyst,price} 分类开关
+    plan          String    @default("STANDARD") // 分层权限位(P3-7)：STANDARD | PLUS；支付暂占位
+}
+
+model VerificationToken {
+    identifier String
+    token      String   @unique
+    expires    DateTime
+    attempts   Int      @default(0) // 错码尝试次数，达 MAX_OTP_ATTEMPTS 即作废该码（防在线爆破）
+
+    @@unique([identifier, token])
+}
+
+model Entity {
+    id        String   @id @default(cuid())
+    type      EntityType
+    name      String
+    shortName String?
+    aliases   String[]
+    ticker    String?
+    exchange  String?
+    meta      Json?
+    createdAt DateTime @default(now())
+    relFrom   EntityRelation[] @relation("from")
+    relTo     EntityRelation[] @relation("to")
+    news      NewsEntity[]
+    watchers  Watchlist[]
+    decisions Decision[]
+    thesis    Thesis?
+    thesisSignals ThesisSignal[]
+    userTheses UserThesis[]
+    priceAlerts PriceAlert[]
+
+    @@index([type])
+}
+
+/// 投资逻辑框架（实体级、AI 生成、共享缓存）：解牛 Phase 3 的核心。监控用，非投资建议。
+model Thesis {
+    id         String   @id @default(cuid())
+    entityId   String   @unique
+    entity     Entity   @relation(fields: [entityId], references: [id], onDelete: Cascade)
+    summary    String                       // 一句话投资逻辑
+    bullCase   String                       // 多头逻辑（要盯的兑现点）
+    bearCase   String                       // 空头风险（要盯的恶化点）
+    dimensions Json                         // [{ key, watch, bull, bear }]
+    catalysts    Json?                      // string[]：关键催化剂（什么发生会兑现逻辑）P4-2
+    invalidations Json?                     // string[]：证伪条件（什么情况证明逻辑错了）P4-2
+    keyLevels  String?                      // 关键价位观察（非买卖点）
+    model      String?
+    createdAt  DateTime @default(now())
+    updatedAt  DateTime @updatedAt
+}
+
+/// 用户自有投资逻辑（S1）：从共享 Thesis 快照采纳而来、可编辑。这是「盯住*你的*逻辑」的锚——
+/// 用户拥有维度选择/重点/敏感度/静音，监控在读取层按此个性化。共享 Thesis 仍作冷启动基础框架。
+model UserThesis {
+    id         String   @id @default(cuid())
+    userId     String
+    entityId   String
+    reason     String?  // 一句话：我为什么持有/关注它
+    horizon    String?  // long | swing
+    dimensions Json     // UserDimension[]：{ key, watch, bull, bear, priority, sensitivity, muted, source }
+    baseModel  String?  // 采纳时 base thesis 的 model（溯源）
+    adoptedAt  DateTime @default(now())
+    updatedAt  DateTime @updatedAt
+    user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    entity     Entity   @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+    @@unique([userId, entityId])
+    @@index([userId])
+}
+
+/// 新闻触及某实体投资逻辑维度的信号（Phase 3 P3-3）。denormalize 新闻标题/时间，免 join。材料度=对该维度逻辑的实质影响，非涨跌预测。
+model ThesisSignal {
+    id           String   @id @default(cuid())
+    entityId     String
+    newsId       String
+    dimensionKey String                       // 命中的维度 key
+    direction    String                       // bull | bear | neutral（偏兑现 / 偏恶化 / 中性）
+    materiality  Int                          // 0-100 材料度（够不够改变对该维度的判断）
+    note         String                       // 一句话：为什么命中 / 影响
+    newsTitle    String
+    publishedAt  DateTime
+    createdAt    DateTime @default(now())
+    entity       Entity   @relation(fields: [entityId], references: [id], onDelete: Cascade)
+    news         NewsItem @relation(fields: [newsId], references: [id], onDelete: Cascade)
+
+    @@unique([entityId, newsId, dimensionKey])
+    @@index([entityId])
+    @@index([newsId])
+}
+
+model EntityRelation {
+    id     String       @id @default(cuid())
+    fromId String
+    toId   String
+    type   RelationType
+    from   Entity       @relation("from", fields: [fromId], references: [id], onDelete: Cascade)
+    to     Entity       @relation("to",   fields: [toId],   references: [id], onDelete: Cascade)
+
+    @@unique([fromId, toId, type])
+    @@index([toId])
+}
+
+enum EntityType {
+    SECTOR
+    COMPANY
+    STOCK
+    PERSON
+}
+
+enum RelationType {
+    BELONGS_TO
+    ISSUES
+    WORKS_AT
+    RELATED
+}
+
+enum SourceTier {
+    PRIMARY
+    MEDIA
+    DERIVED
+}
+
+model Source {
+    id      String     @id @default(cuid())
+    key     String     @unique
+    name    String
+    tier    SourceTier
+    kind    String
+    enabled Boolean    @default(true)
+    news    NewsItem[]
+}
+
+model NewsItem {
+    id          String       @id @default(cuid())
+    sourceId    String
+    source      Source       @relation(fields: [sourceId], references: [id])
+    tier        SourceTier
+    title       String
+    url         String
+    publishedAt DateTime
+    summary     String
+    content     String?
+    hash        String       @unique
+    importance  Int          @default(0)
+    eventType   String?
+    createdAt   DateTime     @default(now())
+    eventId     String?      // 所属事件（P4-7 合并同事件多篇）
+    event       NewsEvent?   @relation(fields: [eventId], references: [id], onDelete: SetNull)
+    entities    NewsEntity[]
+    interpretations Interpretation[]
+    bookmarks   Bookmark[]
+    thesisSignals ThesisSignal[]
+
+    @@index([publishedAt])
+    @@index([eventId])
+}
+
+// Event 合并（P4-7）：同一事件的多篇报道聚成一个 Event，承载一次 signal（省 token）。rule 预聚类 + 可选 AI 命名。
+model NewsEvent {
+    id          String     @id @default(cuid())
+    title       String     // 代表性标题
+    summary     String?
+    entityId    String? // 主要相关实体
+    count       Int        @default(1)
+    firstSeenAt DateTime
+    lastSeenAt  DateTime
+    createdAt   DateTime   @default(now())
+    items       NewsItem[]
+
+    @@index([entityId])
+    @@index([lastSeenAt])
+}
+
+model NewsEntity {
+    newsId    String
+    entityId  String
+    relevance Float    @default(1)
+    news      NewsItem @relation(fields: [newsId], references: [id], onDelete: Cascade)
+    entity    Entity   @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+    @@id([newsId, entityId])
+    @@index([entityId])
+}
+
+model Watchlist {
+    userId    String
+    entityId  String
+    createdAt DateTime @default(now())
+    // Portfolio Memory (P4-1)：一条自选可为「观察 WATCH」或「持仓 HOLDING」；成本/仓位手录、仅观察用，不做盈亏/买卖建议。
+    status       String @default("WATCH") // WATCH | HOLDING | CLOSED
+    costBasis    Float? // 成本价（观察）
+    shares       Float? // 持股数（可选）
+    weight       Float? // 当前仓位占比 %
+    targetWeight Float? // 目标仓位 %
+    note         String?
+    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    entity    Entity   @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+    @@id([userId, entityId])
+    @@index([userId])
+}
+
+// 自定义价位提醒（#3b）：用户自设「到价通知我」阈值——非荐买/荐卖（铁律②）。
+// ticker 冗余存，cron 比价时直接用不必回查关系。触发即一次性：置 active=false + 记 triggeredAt/triggeredPrice，
+// 由提醒中心露出（沿用「派生通知」架构：无独立 Notification 表）。
+model PriceAlert {
+    id             String   @id @default(cuid())
+    userId         String
+    entityId       String
+    ticker         String
+    direction      String // above（涨破）| below（跌破）
+    threshold      Float
+    active         Boolean  @default(true)
+    note           String?
+    createdAt      DateTime @default(now())
+    triggeredAt    DateTime?
+    triggeredPrice Float?
+    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+    entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+    @@index([userId])
+    @@index([active])
+    @@index([ticker])
+}
+
+// User Memory（P4-6）：投资画像。自我认知工具，非风险测评结论、非荐股依据。回灌 drift 语气与提醒优先级。
+model InvestorProfile {
+    id         String   @id @default(cuid())
+    userId     String   @unique
+    style      String? // value | growth | trade
+    riskLevel  String? // conservative | balanced | aggressive
+    holdPeriod String? // long | swing
+    traits     Json? // 关注偏好等
+    summary    String? // AI 从决策史归纳的一句画像
+    updatedAt  DateTime @updatedAt
+    user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Alert 决策升级（P4-8）：每个 thesis 维度的当前状态 + 最近一次「跨越」。只在跨越到新方向时才提醒——宁少毋滥。
+model ThesisDimensionState {
+    id                 String    @id @default(cuid())
+    entityId           String
+    dimensionKey       String
+    state              String    @default("neutral") // neutral | bullish | bearish
+    lastCrossFrom      String?
+    lastCrossTo        String?
+    lastCrossNote      String?
+    lastCrossNewsId    String?
+    lastCrossNewsTitle String?
+    lastCrossAt        DateTime?
+    updatedAt          DateTime  @updatedAt
+
+    @@unique([entityId, dimensionKey])
+    @@index([entityId])
+    @@index([lastCrossAt])
+}
+
+/// 提醒复核闭环（S3）：用户对某维度跨越的处置（已复核/不相关/仍有效）。
+/// 按 (user,entity,dim) 唯一，记录复核针对的那次跨越时刻——之后有更晚的新跨越会重新浮现。
+model ThesisAlertReview {
+    id           String   @id @default(cuid())
+    userId       String
+    entityId     String
+    dimensionKey String
+    crossedAt    DateTime // 复核针对的跨越时刻（thesisDimensionState.lastCrossAt 的快照）
+    action       String   // reviewed | dismissed | still_valid
+    createdAt    DateTime @default(now())
+    updatedAt    DateTime @updatedAt
+    user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@unique([userId, entityId, dimensionKey])
+    @@index([userId])
+}
+
+// Decision Memory（P4-3）：用户记录自己对某标的的决策与理由。非平台建议；price 仅观察、不算盈亏。
+model Decision {
+    id             String   @id @default(cuid())
+    userId         String
+    entityId       String
+    action         String // BUY | ADD | TRIM | SELL | HOLD_REAFFIRM
+    reason         String // 为什么做这个决策（你自己的理由）
+    price          Float? // 可选记价（观察用）
+    thesisSnapshot Json? // 录入当刻的 thesis 快照 {summary, catalysts[], invalidations[]}，供 P4-5 drift 对比
+    createdAt      DateTime @default(now())
+    user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    entity         Entity   @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+    @@index([userId, entityId])
+}
+
+enum InterpretationKind {
+    NEUTRAL
+    BUFFETT
+    MUNGER
+    LYNCH
+    GRAHAM
+}
+
+model Interpretation {
+    id        String             @id @default(cuid())
+    newsId    String
+    kind      InterpretationKind
+    content   String
+    model     String
+    createdAt DateTime           @default(now())
+    news      NewsItem           @relation(fields: [newsId], references: [id], onDelete: Cascade)
+
+    @@unique([newsId, kind])
+}
+
+model Bookmark {
+    userId    String
+    newsId    String
+    createdAt DateTime @default(now())
+    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    news      NewsItem @relation(fields: [newsId], references: [id], onDelete: Cascade)
+
+    @@id([userId, newsId])
+    @@index([userId])
+}
+
+model AnalyticsEvent {
+    id        String   @id @default(cuid())
+    type      String
+    entityId  String?
+    newsId    String?
+    userId    String?
+    meta      Json?
+    createdAt DateTime @default(now())
+
+    @@index([type, createdAt])
+    @@index([userId, type, createdAt]) // recentViews：按 userId+type 查、按时间排（避免全表扫）
+}

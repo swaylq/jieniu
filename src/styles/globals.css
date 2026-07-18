@@ -1,0 +1,104 @@
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: var(--font-geist-sans), "PingFang SC", "Hiragino Sans GB",
+    ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
+  --color-brand: #f5a623;
+  --color-brand-dark: #d98c00;
+  /* 暖色系「私人投研工作台」皮肤：近黑暖墨 + 暖米画布 + 白卡 */
+  --color-ink: #1b1a17;
+  --color-canvas: #f4f2ec;
+  --color-surface: #ffffff;
+  --color-surface-2: #faf8f3;
+  --color-line: #e8e4da;
+  --color-muted: #8b887f;
+  --color-faint: #b4b0a6;
+  --color-up: #e0322c;
+  --color-down: #12a36b;
+  /* 暗色暖调侧边栏（不随明暗翻转，始终深色工作台） */
+  --color-sb: #181a1f;
+  --color-sb-2: #22252d;
+  --color-sb-ink: #f4f3ef;
+  --color-sb-muted: #8a8c93;
+  --color-sb-faint: #63656c;
+  --color-sb-line: #2a2d35;
+}
+
+/* 暗色：深藏蓝(Midnight Blue)——覆盖语义变量，text-ink / bg-surface / border-line 等自动翻转 */
+.dark {
+  --color-ink: #eaf0f8;
+  --color-canvas: #0b1220;
+  --color-surface: #131c2e;
+  --color-surface-2: #182338;
+  --color-line: #253149;
+  --color-muted: #94a3b8;
+  --color-faint: #64748b;
+  --color-up: #f2564b;
+  --color-down: #2fb87e;
+}
+
+/* 色盲友好：把红涨绿跌重映射为 橙涨蓝跌（对红绿色盲更易分辨）。只动涨跌色，其余不变。 */
+.cb {
+  --color-up: #c2410c;
+  --color-down: #1d4ed8;
+}
+.dark.cb {
+  --color-up: #fb923c;
+  --color-down: #60a5fa;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* 全局兜底：任何页面内容都不该把整页横向撑出滚动条 */
+  overflow-x: hidden;
+}
+
+/* 金融数字等宽对齐 */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* 隐藏滚动条但保留可滚动（横向 ticker / chips 等） */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* 统一键盘焦点态：仅键盘 / 程序聚焦时显示 amber 描边（鼠标点击不触发），全站按钮 / 链接 / tab / chip
+   一致可达。放 @layer base，带自定义 focus 样式的控件（utilities 层）仍能覆盖；输入框走自身
+   focus:ring（见 section-head 的 fieldCls），此处不含 input/textarea 以免双重焦点环。 */
+@layer base {
+  a:focus-visible,
+  button:focus-visible,
+  [role="button"]:focus-visible,
+  [tabindex]:not([tabindex="-1"]):focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+}
+
+/* 尊重减弱动效偏好：关掉过渡 / 动画，避免眩晕（a11y） */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
