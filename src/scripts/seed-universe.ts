@@ -23,24 +23,51 @@ const SECTORS: { name: string; aliases: string[] }[] = [
   { name: "房地产", aliases: ["地产"] },
 ];
 
-/** 按市值 desc 分页抓前 n 只 A 股（东方财富 clist）。单页 pz=200，逐页翻到够数。 */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * 按市值 desc 分页抓前 n 只 A 股（东方财富 clist）。单页 pz=200，逐页翻到够数。
+ * 东财 push2 会对密集请求限流（返回空/非 200）——所以逐页限速 + 失败重试，
+ * 且**不再整体抛错**：某页始终失败就带着已抓到的结果继续（宁可少抓也别整轮炸掉）。
+ */
 async function fetchTopAshare(n: number): Promise<{ code: string; name: string }[]> {
   const out: { code: string; name: string }[] = [];
-  const pz = 200;
+  // 东财 clist 服务端每页实际最多返回 100 条（传 pz=200 也只给 100）——
+  // 原来按 pz=200 算页数，导致实际只抓到 SEED_TOP_N 的一半（TOP_N=1000 只进了 ~500 只）。
+  const pz = 100;
   const pages = Math.ceil(n / pz);
   for (let pn = 1; pn <= pages; pn++) {
     const url =
       `https://push2.eastmoney.com/api/qt/clist/get?pn=${pn}&pz=${pz}&po=1&np=1` +
       `&fid=f20&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=f12,f14`;
-    const res = await fetch(url, { headers: { "User-Agent": UA }, cache: "no-store" });
-    if (!res.ok) throw new Error(`clist ${res.status} @pn${pn}`);
-    const j = (await res.json()) as {
-      data?: { diff?: { f12: string; f14: string }[] };
-    };
-    const diff = j.data?.diff ?? [];
-    if (diff.length === 0) break;
+    let diff: { f12: string; f14: string }[] = [];
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        const res = await fetch(url, {
+          headers: { "User-Agent": UA, Referer: "https://quote.eastmoney.com" },
+          cache: "no-store",
+          signal: AbortSignal.timeout(15000),
+        });
+        if (res.ok) {
+          const j = (await res.json()) as {
+            data?: { diff?: { f12: string; f14: string }[] };
+          };
+          diff = j.data?.diff ?? [];
+          if (diff.length > 0) break;
+        }
+      } catch {
+        // 网络/超时 → 退避重试
+      }
+      if (attempt < 4) await sleep(800 * attempt); // 被限流时退避
+    }
+    if (diff.length === 0) {
+      console.log(`  ! pn=${pn} 连续重试仍无数据（疑似限流），带着已抓 ${out.length} 只继续`);
+      break;
+    }
     out.push(...diff.map((d) => ({ code: d.f12, name: d.f14 })));
+    console.log(`  pn=${pn} +${diff.length} → 累计 ${out.length}`);
     if (out.length >= n) break;
+    await sleep(400); // 逐页限速，避免触发限流
   }
   return out.slice(0, n);
 }
@@ -78,11 +105,11 @@ async function main() {
       });
       newCo++;
     }
-    const stock = await db.entity.findFirst({
+    let stock = await db.entity.findFirst({
       where: { type: "STOCK", ticker: t.code },
     });
     if (!stock) {
-      const created = await db.entity.create({
+      stock = await db.entity.create({
         data: {
           type: "STOCK",
           name: `${t.name}(${t.code})`,
@@ -91,8 +118,17 @@ async function main() {
         },
       });
       newStk++;
+    }
+    // 股票已存在时也要补 ISSUES 关系——否则公司改名/除息日变名会新建一个 COMPANY
+    // 却永远没有代码绑定（孤儿公司：搜不到行情、拿不到公告、报告里显示「实体不完整」）。
+    // 但该股票若已被别的公司认领，就不再重复挂（避免两家公司发行同一只股票）。
+    const claimed = await db.entityRelation.findFirst({
+      where: { toId: stock.id, type: "ISSUES" },
+      select: { fromId: true },
+    });
+    if (!claimed) {
       await db.entityRelation
-        .create({ data: { fromId: company.id, toId: created.id, type: "ISSUES" } })
+        .create({ data: { fromId: company.id, toId: stock.id, type: "ISSUES" } })
         .catch(() => undefined);
     }
   }

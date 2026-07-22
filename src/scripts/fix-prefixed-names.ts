@@ -113,6 +113,45 @@ async function main() {
     }
   }
   console.log(`\nSTOCK→COMPANY 补绑：救回 ${rescued} 家公司、共 ${rebinds} 条资讯`);
+
+  // ── 交易所后缀标记 → 补别名（幂等）：科创板未盈利「-U」、同股不同权「-W」、存托凭证「-D」、
+  // 以及东财的全角「Ａ/Ｂ」（万科Ａ）。资讯正文写的是「君实生物」而非「君实生物-U」，
+  // 不补别名就永远绑不上。别名参与 matchEntities，故补上即可自动命中。
+  const marked = await db.entity.findMany({
+    where: {
+      type: { in: ["COMPANY", "STOCK"] },
+      OR: [{ name: { contains: "-" } }, { name: { contains: "Ａ" } }, { name: { contains: "Ｂ" } }],
+    },
+    select: { id: true, name: true, aliases: true },
+  });
+  let aliased = 0;
+  for (const e of marked) {
+    const base = e.name.replace(/\(.*\)$/, ""); // STOCK 名去掉「(代码)」
+    const clean = base.replace(/-[UWD]$/, "").replace(/Ａ/g, "A").replace(/Ｂ/g, "B");
+    if (clean === base || clean.length < 2) continue;
+    if (e.aliases.includes(clean)) continue;
+    await db.entity.update({
+      where: { id: e.id },
+      data: { aliases: { set: [...e.aliases, clean] } },
+    });
+    console.log(`  别名 "${e.name}" += "${clean}"`);
+    aliased++;
+  }
+  console.log(`交易所后缀标记补别名：${aliased} 个实体`);
+
+  // ── 孤儿公司清理（幂等）：无 ISSUES 绑定**且**无任何资讯的 COMPANY = 除息日/改名时
+  // 由旧 seed bug 建出来的重名垃圾实体（如「XD三峡能」之于「三峡能源」）。
+  // 只删「零资讯 + 零绑定」的，绝不碰有内容的实体；真公司下轮 seed 会带正确绑定重建。
+  const orphans = await db.entity.findMany({
+    where: { type: "COMPANY", relFrom: { none: { type: "ISSUES" } }, news: { none: {} } },
+    select: { id: true, name: true },
+  });
+  for (const o of orphans) {
+    await db.entityRelation.deleteMany({ where: { OR: [{ fromId: o.id }, { toId: o.id }] } });
+    await db.entity.delete({ where: { id: o.id } });
+    console.log(`  删除孤儿空实体 "${o.name}"`);
+  }
+  console.log(`孤儿空公司清理：${orphans.length} 个`);
 }
 
 main()
