@@ -3,6 +3,7 @@
 // 不改任何数据，只读统计。
 
 import { PrismaClient } from "../../generated/prisma";
+import { HOT_SECTOR_NAMES } from "../lib/hot-universe";
 
 const db = new PrismaClient();
 const DAY = 24 * 60 * 60 * 1000;
@@ -42,7 +43,30 @@ async function main() {
   console.log("");
   console.log("【基础资料完整率】");
   console.log(`  有绑定股票代码: ${withStock}/${companies} (${pct(withStock, companies)})`);
-  console.log(`  有投资逻辑thesis: ${withThesis}/${companies} (${pct(withThesis, companies)})`);
+  console.log("");
+
+  // thesis 只对「重点覆盖的热门股宇宙」生成（聚焦策略 + 省token铁律④）——
+  // 拿 thesis 除以全部 508 家是**误导性指标**（会显示 ~26% 像是大缺口，实则长尾本就不生成）。
+  // 有意义的口径：热门宇宙内的 thesis 覆盖率。
+  const hotSectors = await db.entity.findMany({
+    where: { type: "SECTOR", name: { in: [...HOT_SECTOR_NAMES] } },
+    select: { id: true },
+  });
+  const hotMembers = await db.entityRelation.findMany({
+    where: {
+      type: "BELONGS_TO",
+      toId: { in: hotSectors.map((s) => s.id) },
+      from: { type: "COMPANY" },
+    },
+    select: { fromId: true },
+  });
+  const hotIds = [...new Set(hotMembers.map((m) => m.fromId))];
+  const hotWithThesis = await db.entity.count({
+    where: { id: { in: hotIds }, thesis: { isNot: null } },
+  });
+  console.log("【投资逻辑 thesis 覆盖】(只对重点覆盖的热门股生成——长尾不生成是设计)");
+  console.log(`  ★ 热门宇宙内: ${hotWithThesis}/${hotIds.length} (${pct(hotWithThesis, hotIds.length)})  ← 有意义的口径`);
+  console.log(`    全库(含长尾)供参考: ${withThesis}/${companies} (${pct(withThesis, companies)})，长尾无 thesis 属预期`);
   console.log("");
   console.log("【有效信息覆盖】");
   console.log(`  有任意资讯:    ${withNews}/${companies} (${pct(withNews, companies)})`);
