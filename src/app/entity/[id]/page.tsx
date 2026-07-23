@@ -21,7 +21,7 @@ import { DecisionList, type DecisionItem } from "../../_components/decision-list
 import { NewsCard } from "../../_components/news-card";
 import { NewsScorecard } from "../../_components/news-scorecard";
 import { PriceChart } from "../../_components/price-chart";
-import { SectionHead, chipClass } from "../../_components/section-head";
+import { SectionHead, chipClass, displayCls } from "../../_components/section-head";
 import { ThesisCard } from "../../_components/thesis-card";
 import { MyThesisCard } from "../../_components/my-thesis-card";
 import { AdoptThesisButton } from "../../_components/adopt-thesis-button";
@@ -377,7 +377,7 @@ export default async function EntityPage({
           <span className="inline-block rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500 dark:bg-white/10 dark:text-gray-300">
             {entityTypeLabel(entity.type)}
           </span>
-          <h1 className="mt-2 text-2xl font-extrabold tracking-tight text-ink lg:text-3xl">
+          <h1 className={`mt-2 text-2xl lg:text-3xl ${displayCls}`}>
             {entity.name}
           </h1>
           <p className="mt-1 text-sm text-muted">

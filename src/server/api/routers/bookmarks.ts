@@ -9,6 +9,7 @@ const NEWS_SELECT = {
   title: true,
   url: true,
   summary: true,
+  brief: true,
   tier: true,
   publishedAt: true,
   source: { select: { name: true } },

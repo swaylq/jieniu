@@ -3,7 +3,7 @@ import { type Metadata } from "next";
 
 import { api } from "~/trpc/server";
 import { EntitySearch } from "../_components/entity-search";
-import { SectionHead, chipClass } from "../_components/section-head";
+import { SectionHead, chipClass, displayCls } from "../_components/section-head";
 import { HotSectorGrid } from "../_components/hot-sector-grid";
 import { entityTypeLabel } from "~/lib/format";
 import { abs, openGraph, twitter } from "~/lib/seo";
@@ -52,7 +52,7 @@ export default async function DiscoverPage() {
       <header className="pt-1">
         <div className="flex items-center gap-2.5">
           <span className="h-6 w-1.5 rounded-full bg-brand" aria-hidden />
-          <h1 className="text-2xl font-extrabold tracking-tight text-ink">
+          <h1 className={`text-2xl ${displayCls}`}>
             机会雷达
           </h1>
         </div>

@@ -19,6 +19,7 @@ export const feedRouter = createTRPCRouter({
         title: true,
         url: true,
         summary: true,
+        brief: true,
         tier: true,
         importance: true,
         eventType: true,

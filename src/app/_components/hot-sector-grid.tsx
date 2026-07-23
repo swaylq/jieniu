@@ -12,7 +12,8 @@ export type HotSectorItem = {
 
 /**
  * 「重点覆盖 · 热门板块」网格（张楚寒/GPT：先覆盖最热门板块最火的股票）。
- * discover 与首页登出态共用。纯展示、零 AI；热度一律 amber(注意)，非红绿价格。
+ * discover 与首页登出态共用。纯展示、零 AI。
+ * 热度用 amber(注意语义)而非红绿价格色；但只给板块内第一名，其余静默——见 DESIGN.md 强调色铁律。
  */
 export function HotSectorGrid({
   sectors,
@@ -54,7 +55,7 @@ export function HotSectorGrid({
               </span>
             </div>
             <ul className="mt-2.5 flex flex-wrap gap-1.5">
-              {s.top.map((m) => (
+              {s.top.map((m, i) => (
                 <li key={m.id}>
                   <Link
                     href={`/entity/${m.id}`}
@@ -62,7 +63,15 @@ export function HotSectorGrid({
                   >
                     {m.name}
                     {m.heat > 0 ? (
-                      <span className="tabular text-[10px] text-brand">{m.heat}</span>
+                      // 只有本板块热度第一名用琥珀，其余静默：琥珀是「一屏一个焦点」的强调色，
+                      // 每个 chip 都染色会把层级稀释成底噪。见 DESIGN.md「Identity color system」。
+                      <span
+                        className={`tabular text-[10px] ${
+                          i === 0 ? "text-brand" : "text-faint"
+                        }`}
+                      >
+                        {m.heat}
+                      </span>
                     ) : null}
                   </Link>
                 </li>

@@ -30,6 +30,7 @@ export const notificationsRouter = createTRPCRouter({
         title: true,
         url: true,
         summary: true,
+        brief: true,
         tier: true,
         publishedAt: true,
         createdAt: true,
@@ -75,7 +76,12 @@ export const notificationsRouter = createTRPCRouter({
       }),
       ctx.db.thesisAlertReview.findMany({
         where: { userId, entityId: { in: ids } },
-        select: { entityId: true, dimensionKey: true, crossedAt: true, action: true },
+        select: {
+          entityId: true,
+          dimensionKey: true,
+          crossedAt: true,
+          action: true,
+        },
       }),
     ]);
     if (crossings.length === 0) return [];

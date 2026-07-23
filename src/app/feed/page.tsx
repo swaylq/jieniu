@@ -4,7 +4,7 @@ import { type Metadata } from "next";
 import { api } from "~/trpc/server";
 import { auth } from "~/server/auth";
 import { NewsCard } from "../_components/news-card";
-import { primaryBtn } from "../_components/section-head";
+import { displayCls, primaryBtn } from "../_components/section-head";
 import { abs, openGraph, twitter } from "~/lib/seo";
 
 export const dynamic = "force-dynamic";
@@ -27,7 +27,7 @@ function Masthead({ subtitle }: { subtitle?: string }) {
     <header className="pt-1 pb-4">
       <div className="flex items-center gap-2.5">
         <span className="h-6 w-1.5 rounded-full bg-brand" aria-hidden />
-        <h1 className="text-2xl font-extrabold tracking-tight text-ink">
+        <h1 className={`text-2xl ${displayCls}`}>
           我的自选
         </h1>
       </div>

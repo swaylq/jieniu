@@ -19,7 +19,7 @@ import { CatalystCalendar } from "./_components/catalyst-calendar";
 import { MorningBriefing } from "./_components/morning-briefing";
 import { WorkbenchRail, type CurrentCard } from "./_components/workbench-rail";
 import { HotSectorGrid } from "./_components/hot-sector-grid";
-import { primaryBtn } from "./_components/section-head";
+import { displayCls, primaryBtn } from "./_components/section-head";
 
 export const dynamic = "force-dynamic";
 
@@ -85,7 +85,7 @@ export default async function Home() {
           <p className="text-xs font-semibold uppercase tracking-[1.5px] text-brand">
             你的私人投研 Agent
           </p>
-          <h1 className="mt-2 max-w-3xl text-2xl font-extrabold leading-snug tracking-tight text-ink sm:text-[32px]">
+          <h1 className={`mt-2 max-w-3xl text-2xl leading-snug sm:text-[32px] ${displayCls}`}>
             不铺满全市场，只把你在乎的投资逻辑盯牢。
           </h1>
           <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">

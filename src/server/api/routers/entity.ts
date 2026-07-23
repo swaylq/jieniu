@@ -100,7 +100,11 @@ export const entityRouter = createTRPCRouter({
       }
 
       const memberRels = await ctx.db.entityRelation.findMany({
-        where: { toId: { in: sectorIds }, type: "BELONGS_TO", from: { type: "COMPANY" } },
+        where: {
+          toId: { in: sectorIds },
+          type: "BELONGS_TO",
+          from: { type: "COMPANY" },
+        },
         select: { from: { select: { id: true, name: true, ticker: true } } },
         take: 60,
       });
@@ -243,22 +247,34 @@ export const entityRouter = createTRPCRouter({
     const heat = memberIds.length
       ? await ctx.db.newsEntity.groupBy({
           by: ["entityId"],
-          where: { entityId: { in: memberIds }, news: { publishedAt: { gte: since } } },
+          where: {
+            entityId: { in: memberIds },
+            news: { publishedAt: { gte: since } },
+          },
           _count: { entityId: true },
         })
       : [];
     const heatMap = new Map(heat.map((h) => [h.entityId, h._count.entityId]));
 
-    const bySector = new Map<string, { id: string; name: string; heat: number }[]>();
+    const bySector = new Map<
+      string,
+      { id: string; name: string; heat: number }[]
+    >();
     for (const r of rels) {
       const arr = bySector.get(r.toId) ?? [];
-      arr.push({ id: r.from.id, name: r.from.name, heat: heatMap.get(r.from.id) ?? 0 });
+      arr.push({
+        id: r.from.id,
+        name: r.from.name,
+        heat: heatMap.get(r.from.id) ?? 0,
+      });
       bySector.set(r.toId, arr);
     }
 
     const sectors = secs
       .map((s) => {
-        const members = (bySector.get(s.id) ?? []).sort((a, b) => b.heat - a.heat);
+        const members = (bySector.get(s.id) ?? []).sort(
+          (a, b) => b.heat - a.heat,
+        );
         return {
           sectorId: s.id,
           name: s.name,
@@ -286,6 +302,7 @@ export const entityRouter = createTRPCRouter({
           title: true,
           url: true,
           summary: true,
+          brief: true,
           tier: true,
           importance: true,
           publishedAt: true,
@@ -314,17 +331,24 @@ export const entityRouter = createTRPCRouter({
         select: { id: true, name: true, type: true, ticker: true },
       });
       // 合并 COMPANY 与其发行 STOCK（同一家公司别显示两条、别双代码）：按 ISSUES 关系归并到规范 COMPANY 页。
-      const companyIds = raw.filter((e) => e.type === "COMPANY").map((e) => e.id);
+      const companyIds = raw
+        .filter((e) => e.type === "COMPANY")
+        .map((e) => e.id);
       const stockIds = raw.filter((e) => e.type === "STOCK").map((e) => e.id);
       const rels =
         companyIds.length > 0 || stockIds.length > 0
           ? await ctx.db.entityRelation.findMany({
               where: {
                 type: "ISSUES",
-                OR: [{ fromId: { in: companyIds } }, { toId: { in: stockIds } }],
+                OR: [
+                  { fromId: { in: companyIds } },
+                  { toId: { in: stockIds } },
+                ],
               },
               select: {
-                from: { select: { id: true, name: true, type: true, ticker: true } },
+                from: {
+                  select: { id: true, name: true, type: true, ticker: true },
+                },
                 to: { select: { id: true, ticker: true } },
               },
             })

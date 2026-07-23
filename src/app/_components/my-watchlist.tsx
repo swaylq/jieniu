@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { NewsTimeline, type StreamItem } from "./news-timeline";
-import { chipClass, primaryBtn } from "./section-head";
+import { chipClass, displayCls, primaryBtn } from "./section-head";
 
 type Watched = { id: string; name: string; type: string };
 
@@ -10,7 +10,7 @@ function HeroTitle({ title, count }: { title: string; count?: number }) {
   return (
     <div className="flex items-center gap-2.5">
       <span className="h-6 w-1.5 rounded-full bg-brand" aria-hidden />
-      <h1 className="text-2xl font-extrabold tracking-tight text-ink">
+      <h1 className={`text-2xl ${displayCls}`}>
         {title}
       </h1>
       {count !== undefined ? (

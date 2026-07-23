@@ -25,6 +25,7 @@ export const newsRouter = createTRPCRouter({
           title: true,
           url: true,
           summary: true,
+          brief: true,
           content: true,
           tier: true,
           importance: true,
@@ -51,6 +52,7 @@ export const newsRouter = createTRPCRouter({
         title: true,
         url: true,
         summary: true,
+        brief: true,
         tier: true,
         publishedAt: true,
         source: { select: { name: true } },
@@ -145,7 +147,10 @@ export const newsRouter = createTRPCRouter({
       2,
     );
     // 自选股段不做宏观标注（都是个股）。
-    return collapsed.map(({ entityKeys: _k, ...r }) => ({ ...r, macro: false }));
+    return collapsed.map(({ entityKeys: _k, ...r }) => ({
+      ...r,
+      macro: false,
+    }));
   }),
 
   /** 最新资讯：按时间倒序的游标分页流，供首页「最新」时间线。filter：全部 / 一手(PRIMARY) / 重磅(importance≥阈值)。 */
@@ -174,6 +179,7 @@ export const newsRouter = createTRPCRouter({
           title: true,
           url: true,
           summary: true,
+          brief: true,
           tier: true,
           importance: true,
           eventType: true,
@@ -216,6 +222,7 @@ export const newsRouter = createTRPCRouter({
           title: true,
           url: true,
           summary: true,
+          brief: true,
           tier: true,
           publishedAt: true,
           source: { select: { name: true } },

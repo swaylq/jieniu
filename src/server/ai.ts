@@ -1,5 +1,9 @@
 import { env } from "~/env";
-import { parseThesis, type ThesisData, type ThesisDimension } from "~/lib/thesis";
+import {
+  parseThesis,
+  type ThesisData,
+  type ThesisDimension,
+} from "~/lib/thesis";
 import { parseSignals, type SignalOut } from "~/lib/thesis-match";
 
 export type NewsInput = {
@@ -74,6 +78,28 @@ async function chat(
 /** 中性结构化解读。 */
 export function generateNeutralInterpretation(n: NewsInput): Promise<string> {
   return chat(NEUTRAL_SYSTEM, neutralUserPrompt(n));
+}
+
+/**
+ * 事件摘要（一次生成、入库复用）：**一句话**说清「发生了什么 + 为什么值得看」。
+ *
+ * 与 `generateNeutralInterpretation` 的分工：那个是点开才生成的长解读（900 tokens）；
+ * 这个是卡片上直接显示的一句话，`max_tokens=160` 压到最小——只给「最新+重磅+
+ * 有投资逻辑的公司」的少量资讯做，控成本（省 token 铁律④）。
+ * 合规同样收口：不给买卖指令、不给目标价、不预测涨跌（铁律②）。
+ */
+export function generateEventBrief(n: NewsInput): Promise<string> {
+  const system = `${NEUTRAL_SYSTEM}
+额外要求：只输出一句话（不超过 60 个汉字），不要 Markdown、不要小标题、不要换行、不要引号。`;
+  const user = `用一句话概括下面这条 A 股资讯：**发生了什么**，以及**为什么值得关注**。
+要求：先说事实，再说影响面；不预测涨跌、不给买卖建议、不给目标价；不要复述「本公司董事会保证…」这类免责套话。
+
+【标题】${n.title}
+【来源】${n.sourceName ?? "未知"}
+【内容】${(n.content ?? n.summary).slice(0, 1200)}`;
+  // 160 而非 110：实测 110 会把「…销售激增，」这类句子拦腰截断，
+  // 半截话比没有更糟；留出余量再由调用方做收尾清理。
+  return chat(system, user, 160);
 }
 
 /**
@@ -209,7 +235,9 @@ function thesisUserPrompt(e: ThesisEntityInput): string {
 }
 
 /** 为一家公司生成投资逻辑监控框架（AI，结构化 JSON）。非投资建议。 */
-export async function generateThesis(e: ThesisEntityInput): Promise<ThesisData> {
+export async function generateThesis(
+  e: ThesisEntityInput,
+): Promise<ThesisData> {
   const raw = await chat(THESIS_SYSTEM, thesisUserPrompt(e), 3600);
   try {
     return parseThesis(raw);
@@ -238,8 +266,8 @@ ${n.eventType ? `【事件】${n.eventType}` : ""}
 
 该公司的投资逻辑维度（dimensionKey 只能取下列某个 key 原文）：
 ${JSON.stringify(
-    dims.map((d) => ({ key: d.key, watch: d.watch, bull: d.bull, bear: d.bear })),
-  )}
+  dims.map((d) => ({ key: d.key, watch: d.watch, bull: d.bull, bear: d.bear })),
+)}
 
 **只输出一个 JSON 数组**，元素形如：
 { "dimensionKey": "<上面某维度的 key 原文>", "direction": "bull|bear|neutral", "materiality": <0-100 整数>, "note": "<一句话：为什么命中/影响>" }
@@ -292,7 +320,9 @@ ${i.toneHint ? `【语气提示】${i.toneHint}` : ""}
 }
 
 /** 生成 Thesis Drift 挑战话术（AI，仅在 shouldChallenge 时调用）。促自查、非投资建议、不编数字。 */
-export async function generateDriftChallenge(i: DriftChallengeInput): Promise<string> {
+export async function generateDriftChallenge(
+  i: DriftChallengeInput,
+): Promise<string> {
   const raw = await chat(DRIFT_SYSTEM, driftUserPrompt(i), 700);
   return raw.trim();
 }
@@ -317,7 +347,9 @@ ${acts}
 }
 
 /** 从决策史归纳一句投资画像（AI）。自我认知镜子，非风险测评、非投资建议、不编数字。 */
-export async function summarizeInvestorProfile(i: ProfileSummaryInput): Promise<string> {
+export async function summarizeInvestorProfile(
+  i: ProfileSummaryInput,
+): Promise<string> {
   const raw = await chat(PROFILE_SYSTEM, profileUserPrompt(i), 300);
   return raw.trim();
 }

@@ -5,7 +5,7 @@ import { PasswordCard } from "../_components/password-card";
 import { LogoutButton } from "../_components/logout-button";
 import { ThemeToggle } from "../_components/theme-toggle";
 import { ColorblindToggle } from "../_components/colorblind-toggle";
-import { SectionHead } from "../_components/section-head";
+import { SectionHead, displayCls } from "../_components/section-head";
 import { LogoMark } from "../_components/logo";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +20,7 @@ export default async function SettingsPage() {
       <header className="pb-4 pt-1">
         <div className="flex items-center gap-2.5">
           <span className="h-6 w-1.5 rounded-full bg-brand" aria-hidden />
-          <h1 className="text-2xl font-extrabold tracking-tight text-ink">
+          <h1 className={`text-2xl ${displayCls}`}>
             设置
           </h1>
         </div>

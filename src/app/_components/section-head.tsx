@@ -1,5 +1,12 @@
 import type { ReactNode } from "react";
 
+/**
+ * 页面级大标题（h1 masthead / hero）专用：衬线 display 字族，给「研究简报」的编辑感。
+ * 只给 `<h1>` 用——正文/按钮/分区小标题一律无衬线。尺寸由调用方给（各页需求不同）。
+ * 见 DESIGN.md「Typography」。
+ */
+export const displayCls = "font-display font-bold tracking-tight text-ink";
+
 /** 统一分区标题：ink 粗体 + 可选 hint + 可选右侧动作。全 App 各页分区共用。 */
 export function SectionHead({
   title,

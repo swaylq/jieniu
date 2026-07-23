@@ -6,6 +6,11 @@
   --font-sans: var(--font-geist-sans), "PingFang SC", "Hiragino Sans GB",
     ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
     "Segoe UI Symbol", "Noto Color Emoji";
+  /* 页面级大标题专用衬线（研究简报的编辑感 / 权威感）。只用于 h1 display，
+     正文与控件一律 --font-sans。见 DESIGN.md「Typography」。 */
+  --font-display: "Songti SC", "Noto Serif SC", "Source Han Serif SC",
+    "Source Han Serif CN", "STSong", "SimSun", ui-serif, Georgia,
+    "Times New Roman", serif;
   --color-brand: #f5a623;
   --color-brand-dark: #d98c00;
   /* 暖色系「私人投研工作台」皮肤：近黑暖墨 + 暖米画布 + 白卡 */

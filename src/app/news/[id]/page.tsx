@@ -26,7 +26,7 @@ import { NewsActions } from "../../_components/news-actions";
 import { BookmarkButton } from "../../_components/bookmark-button";
 import { BackButton } from "../../_components/back-button";
 import { NewsCard } from "../../_components/news-card";
-import { SectionHead } from "../../_components/section-head";
+import { SectionHead, displayCls } from "../../_components/section-head";
 
 export const dynamic = "force-dynamic";
 
@@ -116,7 +116,7 @@ export default async function NewsPage({
             </time>
           </div>
 
-          <h1 className="mt-2 text-balance text-2xl font-bold leading-snug text-ink lg:text-3xl">
+          <h1 className={`mt-2 text-balance text-2xl leading-snug lg:text-3xl ${displayCls}`}>
             {n.title}
           </h1>
 

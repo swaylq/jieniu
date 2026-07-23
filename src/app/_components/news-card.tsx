@@ -17,6 +17,7 @@ export type NewsCardItem = {
   title: string;
   url: string;
   summary: string;
+  brief?: string | null; // 事件摘要（一次生成）：一句话说清发生了什么、为什么值得看
   tier: SourceTier;
   publishedAt: Date;
   source: { name: string };
@@ -48,16 +49,20 @@ export function NewsCard({
   // 新信息程度（省 token 纯规则）：由来源等级 + 同事件文章数推导，帮用户略过重复/跟进报道
   const nov = classifyNovelty({ tier: n.tier, clusterCount: n.event?.count });
   const novText =
-    n.event && n.event.count > 1 ? `${nov.label} · ${n.event.count} 篇` : nov.label;
+    n.event && n.event.count > 1
+      ? `${nov.label} · ${n.event.count} 篇`
+      : nov.label;
 
   return (
     <li
-      className={`rounded-2xl border bg-surface p-4 shadow-sm transition-shadow hover:shadow-md ${
-        unread ? "border-brand/40 ring-1 ring-brand/40" : "border-line/70"
+      className={`bg-surface rounded-2xl border p-4 shadow-sm transition-shadow hover:shadow-md ${
+        unread ? "border-brand/40 ring-brand/40 ring-1" : "border-line/70"
       }`}
     >
-      <div className="mb-2.5 flex items-center gap-2 text-xs text-muted">
-        <span className={tierBadgeClass(n.tier)}>{sourceTierLabel(n.tier)}</span>
+      <div className="text-muted mb-2.5 flex items-center gap-2 text-xs">
+        <span className={tierBadgeClass(n.tier)}>
+          {sourceTierLabel(n.tier)}
+        </span>
         <span>{n.source.name}</span>
         <span aria-hidden>·</span>
         <time
@@ -69,7 +74,7 @@ export function NewsCard({
         </time>
         {unread ? (
           <span
-            className="rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand"
+            className="bg-brand/10 text-brand rounded-full px-2 py-0.5 text-[11px] font-medium"
             aria-label="未读"
           >
             新
@@ -79,7 +84,7 @@ export function NewsCard({
         {nov.tone === "weak" ? (
           <span
             title={nov.hint}
-            className="rounded border border-line px-1.5 py-0.5 text-[11px] font-medium text-muted"
+            className="border-line text-muted rounded border px-1.5 py-0.5 text-[11px] font-medium"
           >
             {novText}
           </span>
@@ -90,7 +95,7 @@ export function NewsCard({
             href={n.url}
             target="_blank"
             rel="noreferrer"
-            className="shrink-0 text-muted transition-colors hover:text-brand"
+            className="text-muted hover:text-brand shrink-0 transition-colors"
             aria-label="查看原文"
           >
             原文 ↗
@@ -99,17 +104,26 @@ export function NewsCard({
       </div>
       <Link
         href={`/news/${n.id}`}
-        className="block text-balance text-[15px] font-semibold leading-snug text-ink transition-colors hover:text-brand"
+        className="text-ink hover:text-brand block text-[15px] leading-snug font-semibold text-balance transition-colors"
       >
         {n.title}
       </Link>
+      {/* 有事件摘要就优先显示它（一句话说清「发生了什么+为什么值得看」），
+          原文摘录降为次级；没有摘要时摘录仍是主角。 */}
+      {n.brief ? (
+        <p className="text-ink/90 mt-2 text-sm leading-relaxed">{n.brief}</p>
+      ) : null}
       {showSummary && (
-        <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-muted">
+        <p
+          className={`text-muted mt-2 line-clamp-2 leading-relaxed ${
+            n.brief ? "text-xs" : "text-sm"
+          }`}
+        >
           {excerpt}
         </p>
       )}
       {n.burstCount && n.burstCount > 0 ? (
-        <p className="mt-2 text-xs text-muted">
+        <p className="text-muted mt-2 text-xs">
           同日另有 {n.burstCount} 份公告（同一事件的程序性文件，已折叠）
         </p>
       ) : null}

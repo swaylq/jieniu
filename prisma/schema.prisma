@@ -217,6 +217,9 @@ model NewsItem {
     publishedAt DateTime
     summary     String
     content     String?
+    // 事件摘要（一次生成、入库复用）：一句话说清「发生了什么 + 为什么值得看」。
+    // 只给「最新 + 重磅 + 属于有投资逻辑的公司」的少量资讯生成，控成本（省 token 铁律④）。
+    brief       String?
     hash        String       @unique
     importance  Int          @default(0)
     eventType   String?
