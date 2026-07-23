@@ -8,8 +8,46 @@
 import { PrismaClient, Prisma } from "../../generated/prisma";
 import { generateThesis } from "~/server/ai";
 import { HOT_SECTOR_NAMES } from "../lib/hot-universe";
+import { IMPORTANT_THRESHOLD } from "../lib/importance";
 
 const db = new PrismaClient();
+
+const DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * `--queue=material`：按「近 7 天有重磅资讯、却没有 thesis」挑（不限热门板块）。
+ * 依据 effective-coverage.ts 的诊断②——**有重磅=真有料可判断**，比按公司数凑覆盖率靠谱。
+ * 不用「资讯多」而用「重磅多」：资讯多可能只是被媒体刷屏，重磅才代表真发生了事。
+ */
+async function pickByMaterialNews(limit: number) {
+  const since = new Date(Date.now() - 7 * DAY);
+  const companies = await db.entity.findMany({
+    where: { type: "COMPANY", thesis: { is: null } },
+    select: { id: true },
+  });
+  const ids = companies.map((c) => c.id);
+  if (ids.length === 0) return [];
+  const material = await db.newsEntity.groupBy({
+    by: ["entityId"],
+    where: {
+      entityId: { in: ids },
+      news: { publishedAt: { gte: since }, importance: { gte: IMPORTANT_THRESHOLD } },
+    },
+    _count: { entityId: true },
+  });
+  material.sort((a, b) => b._count.entityId - a._count.entityId);
+  const batch = material.slice(0, limit);
+  const rows = await db.entity.findMany({
+    where: { id: { in: batch.map((m) => m.entityId) } },
+    select: { id: true, name: true, ticker: true },
+  });
+  const order = new Map(batch.map((m, i) => [m.entityId, i]));
+  rows.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  console.log(
+    `诊断②队列：近7天有重磅(importance≥${IMPORTANT_THRESHOLD})却无 thesis 的公司 ${material.length} 家 → 本轮补最有料的 ${rows.length} 家`,
+  );
+  return rows;
+}
 
 async function sectorNameFor(entityId: string): Promise<string | null> {
   const rel = await db.entityRelation.findFirst({
@@ -19,9 +57,54 @@ async function sectorNameFor(entityId: string): Promise<string | null> {
   return rel?.to.name ?? null;
 }
 
+/** 生成并入库一批 thesis（两种挑选模式共用）。单家失败只记录、不中断整批。 */
+async function runBatch(targets: { id: string; name: string; ticker: string | null }[]) {
+  const model = process.env.OPENROUTER_MODEL ?? null;
+  let ok = 0;
+  for (const e of targets) {
+    try {
+      const sector = await sectorNameFor(e.id);
+      const t = await generateThesis({ name: e.name, ticker: e.ticker, sector });
+      const row = {
+        summary: t.summary,
+        bullCase: t.bullCase,
+        bearCase: t.bearCase,
+        dimensions: t.dimensions as unknown as Prisma.InputJsonValue,
+        catalysts: t.catalysts as unknown as Prisma.InputJsonValue,
+        invalidations: t.invalidations as unknown as Prisma.InputJsonValue,
+        keyLevels: t.keyLevels,
+        model,
+      };
+      await db.thesis.upsert({
+        where: { entityId: e.id },
+        create: { entityId: e.id, ...row },
+        update: row,
+      });
+      ok++;
+      console.log(`\u2713 ${e.name}\uff08${sector ?? "\u65e0\u677f\u5757"}\uff09: ${t.dimensions.length} \u7ef4\u5ea6`);
+    } catch (err) {
+      console.error(`\u2717 ${e.name}:`, (err as Error).message);
+    }
+  }
+  console.log(`\n\u5b8c\u6210 ${ok}/${targets.length}`);
+  return ok;
+}
+
 async function main() {
   const limitArg = process.argv.find((a) => a.startsWith("--limit="));
   const limit = limitArg ? Number(limitArg.slice("--limit=".length)) : 8;
+
+  // --queue=material：走诊断②优先队列（不限热门板块）
+  const queueArg = process.argv.find((a) => a.startsWith("--queue="));
+  if (queueArg?.slice("--queue=".length) === "material") {
+    const targets = await pickByMaterialNews(Number.isFinite(limit) ? limit : 8);
+    if (targets.length === 0) {
+      console.log("诊断②队列为空：近7天有重磅却无 thesis 的公司已补齐。");
+      return;
+    }
+    await runBatch(targets);
+    return;
+  }
 
   const secs = await db.entity.findMany({
     where: { type: "SECTOR", name: { in: HOT_SECTOR_NAMES } },
@@ -63,34 +146,8 @@ async function main() {
     `热门股缺 thesis ${missing.length} 只 → 本轮补最热的 ${targets.length} 只（deepseek）`,
   );
 
-  const model = process.env.OPENROUTER_MODEL ?? null;
-  let ok = 0;
-  for (const e of targets) {
-    try {
-      const sector = await sectorNameFor(e.id);
-      const t = await generateThesis({ name: e.name, ticker: e.ticker, sector });
-      const row = {
-        summary: t.summary,
-        bullCase: t.bullCase,
-        bearCase: t.bearCase,
-        dimensions: t.dimensions as unknown as Prisma.InputJsonValue,
-        catalysts: t.catalysts as unknown as Prisma.InputJsonValue,
-        invalidations: t.invalidations as unknown as Prisma.InputJsonValue,
-        keyLevels: t.keyLevels,
-        model,
-      };
-      await db.thesis.upsert({
-        where: { entityId: e.id },
-        create: { entityId: e.id, ...row },
-        update: row,
-      });
-      ok++;
-      console.log(`✓ ${e.name}（${sector ?? "无板块"}）: ${t.dimensions.length} 维度`);
-    } catch (err) {
-      console.error(`✗ ${e.name}:`, (err as Error).message);
-    }
-  }
-  console.log(`\n完成 ${ok}/${targets.length}，热门股仍缺 ${missing.length - ok} 只。`);
+  await runBatch(targets);
+  console.log(`热门股仍缺 ${missing.length} 只待补（本轮已处理 ${targets.length}）。`);
 }
 
 main()

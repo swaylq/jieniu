@@ -97,6 +97,24 @@ async function main() {
     const S = (method, params = {}) => send(method, params, sessionId);
     await S("Page.enable");
     await S("Runtime.enable");
+    // --console：把浏览器控制台错误/异常打到 stdout。SSR 返 200 但客户端 hydration 崩溃时，
+    // curl 看不出问题（HTML 是好的），只有真浏览器的 console 能给出真因。
+    if (argv.includes("--console")) {
+      listeners.add((m) => {
+        if (m.method === "Runtime.consoleAPICalled" && m.params?.type === "error") {
+          const txt = (m.params.args ?? [])
+            .map((a: { value?: unknown; description?: string }) => a.description ?? String(a.value))
+            .join(" ");
+          console.log(`  [console.error] ${txt.slice(0, 400)}`);
+        }
+        if (m.method === "Runtime.exceptionThrown") {
+          const d = m.params?.exceptionDetails;
+          console.log(
+            `  [exception] ${d?.exception?.description ?? d?.text ?? ""}`.slice(0, 600),
+          );
+        }
+      });
+    }
     await S("Emulation.setDeviceMetricsOverride", {
       width: w,
       height: h,
