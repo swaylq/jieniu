@@ -9,6 +9,7 @@ import { auth } from "~/server/auth";
 import { entityTypeLabel, formatMarketCap } from "~/lib/format";
 import { hasValuation } from "~/lib/quote";
 import { collapseAnnouncementBursts } from "~/lib/announcements";
+import { groupByMonth, isExpanded, spanSummary } from "~/lib/milestones";
 import { BUCKET_LABEL, type RelationBucket } from "~/lib/entity-graph";
 import { fetchQuote, fetchKline, fetchValuation } from "~/server/quote";
 import { asStringArray, type ThesisDimension } from "~/lib/thesis";
@@ -82,7 +83,7 @@ export async function generateMetadata({
   };
 }
 
-type Tab = "news" | "announce" | "relation";
+type Tab = "news" | "announce" | "milestone" | "relation";
 
 function QuoteStat({ label, value }: { label: string; value: number }) {
   return (
@@ -113,11 +114,14 @@ export default async function EntityPage({
   const { id } = await params;
   const sp = await searchParams;
   const tab: Tab =
-    sp.tab === "announce" || sp.tab === "relation" ? sp.tab : "news";
+    sp.tab === "announce" || sp.tab === "relation" || sp.tab === "milestone"
+      ? sp.tab
+      : "news";
 
   const [
     data,
     rawNews,
+    milestoneItems,
     session,
     followers,
     scorecard,
@@ -127,6 +131,7 @@ export default async function EntityPage({
   ] = await Promise.all([
     getEntityData(id),
     api.entity.newsById({ id }),
+    api.entity.milestones({ id, months: 12 }),
     auth(),
     api.entity.followerCount({ id }),
     api.entity.scorecard({ id }),
@@ -168,9 +173,14 @@ export default async function EntityPage({
         Awaited<ReturnType<typeof api.userThesis.get>>,
       ]);
 
+  // 一年大事记：只收重磅事件，按月倒序分组（回填一年后「资讯」流只够看最近几个月）。
+  const milestoneMonths = groupByMonth(milestoneItems);
   const tabs: { key: Tab; label: string }[] = [
     { key: "news", label: `资讯 ${news.length}` },
     { key: "announce", label: `公告 ${announcements.length}` },
+    ...(milestoneItems.length > 0
+      ? [{ key: "milestone" as Tab, label: `大事记 ${milestoneItems.length}` }]
+      : []),
     { key: "relation", label: "关系" },
   ];
   const listItems = tab === "announce" ? announcements : news;
@@ -229,6 +239,32 @@ export default async function EntityPage({
               </section>
             ))
           )
+        ) : tab === "milestone" ? (
+          <div>
+            <p className="mb-3 text-xs text-muted">
+              过去一年的重磅事件，按月折叠 · {spanSummary(milestoneMonths)}
+              　例行治理类公告不计入，完整清单见「公告」
+            </p>
+            {milestoneMonths.map((m, i) => (
+              <details
+                key={m.key}
+                open={isExpanded(i)}
+                className="mb-2 rounded-xl border border-line bg-surface"
+              >
+                <summary className="flex cursor-pointer list-none items-baseline justify-between px-4 py-2.5 text-sm font-semibold text-ink">
+                  <span>{m.label}</span>
+                  <span className="tabular text-xs font-normal text-muted">
+                    {m.items.length} 条
+                  </span>
+                </summary>
+                <ul className="space-y-3 border-t border-line p-3">
+                  {m.items.map((n) => (
+                    <NewsCard key={n.id} n={n} />
+                  ))}
+                </ul>
+              </details>
+            ))}
+          </div>
         ) : listItems.length === 0 ? (
           <p className="text-sm text-muted">{emptyMsg}</p>
         ) : (

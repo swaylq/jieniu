@@ -4,6 +4,7 @@ import {
   isLowValueTitle,
   stripEntityPrefix,
   crossSourceKey,
+  historicalKey,
 } from "./dedupe";
 
 describe("normalizeTitle", () => {
@@ -63,5 +64,41 @@ describe("crossSourceKey", () => {
     expect(crossSourceKey("某公告", ["a", "b"])).toBe(
       crossSourceKey("某公告", ["b", "a"]),
     );
+  });
+});
+
+describe("historicalKey", () => {
+  const d = (s: string) => new Date(`${s}T08:00:00.000Z`);
+
+  it("同一份公告在东财/巨潮两个源里 key 相同（跨源重复照样杀掉）", () => {
+    const a = historicalKey(
+      "恒力石化:恒力石化2026年半年度业绩预增公告",
+      ["e1"],
+      d("2026-03-14"),
+    );
+    const b = historicalKey(
+      "恒力石化2026年半年度业绩预增公告",
+      ["e1"],
+      d("2026-03-14"),
+    );
+    expect(a).toBe(b);
+  });
+
+  it("同名但不同日期的周期性公告 key 不同（回填一年不会把 12 次回购进展并成 1 条）", () => {
+    const jan = historicalKey("关于回购公司股份进展的公告", ["e1"], d("2026-01-05"));
+    const feb = historicalKey("关于回购公司股份进展的公告", ["e1"], d("2026-02-04"));
+    expect(jan).not.toBe(feb);
+  });
+
+  it("同日同名但不同公司 key 不同", () => {
+    const a = historicalKey("关于回购公司股份进展的公告", ["a"], d("2026-01-05"));
+    const b = historicalKey("关于回购公司股份进展的公告", ["b"], d("2026-01-05"));
+    expect(a).not.toBe(b);
+  });
+
+  it("非法日期不抛异常", () => {
+    expect(() =>
+      historicalKey("某公告", ["e1"], new Date("not-a-date")),
+    ).not.toThrow();
   });
 });

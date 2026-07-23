@@ -4,6 +4,9 @@ import {
   sourceTierLabel,
   streamStamp,
   formatMarketCap,
+  isNotifiable,
+  notifyWindowStart,
+  NOTIFY_WINDOW_DAYS,
 } from "./format";
 
 describe("formatMarketCap", () => {
@@ -45,5 +48,27 @@ describe("sourceTierLabel", () => {
     expect(sourceTierLabel("PRIMARY")).toBe("一手");
     expect(sourceTierLabel("MEDIA")).toBe("媒体");
     expect(sourceTierLabel("DERIVED")).toBe("衍生");
+  });
+});
+
+describe("isNotifiable（历史回填闸门）", () => {
+  const now = new Date("2026-07-23T12:00:00.000Z");
+  const daysAgo = (n: number) =>
+    new Date(now.getTime() - n * 24 * 60 * 60 * 1000);
+
+  it("窗口起点就是 now - NOTIFY_WINDOW_DAYS 天", () => {
+    expect(notifyWindowStart(now).getTime()).toBe(
+      daysAgo(NOTIFY_WINDOW_DAYS).getTime(),
+    );
+  });
+
+  it("近期发布的资讯可以进提醒", () => {
+    expect(isNotifiable(daysAgo(0), now)).toBe(true);
+    expect(isNotifiable(daysAgo(NOTIFY_WINDOW_DAYS - 1), now)).toBe(true);
+  });
+
+  it("一年前回填进来的公告永远进不了提醒", () => {
+    expect(isNotifiable(daysAgo(365), now)).toBe(false);
+    expect(isNotifiable(daysAgo(NOTIFY_WINDOW_DAYS + 1), now)).toBe(false);
   });
 });

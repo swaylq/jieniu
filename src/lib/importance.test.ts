@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { detectEventType, eventScore, scoreImportance } from "./importance";
+import {
+  detectEventType,
+  eventScore,
+  scoreImportance,
+  surfacingSince,
+  SURFACING_WINDOW_DAYS,
+} from "./importance";
 
 describe("eventScore", () => {
   it("picks the highest matching event weight", () => {
@@ -52,5 +58,19 @@ describe("市场公告事件识别（一手全市场化后）", () => {
   it("重大公告(PRIMARY)高于重大动态阈值", () => {
     expect(scoreImportance({ tier: "PRIMARY", eventType: "控制权" })).toBe(90);
     expect(scoreImportance({ tier: "PRIMARY", eventType: "权益变动" })).toBeGreaterThanOrEqual(55);
+  });
+});
+
+describe("surfacingSince（重要性优先流的时间窗）", () => {
+  it("起点是 now - SURFACING_WINDOW_DAYS 天", () => {
+    const now = new Date("2026-07-23T12:00:00.000Z");
+    const expected = now.getTime() - SURFACING_WINDOW_DAYS * 86_400_000;
+    expect(surfacingSince(now).getTime()).toBe(expected);
+  });
+
+  it("回填进来的一年前重磅落在窗口外（不会霸占首页）", () => {
+    const now = new Date("2026-07-23T12:00:00.000Z");
+    const yearAgo = new Date(now.getTime() - 365 * 86_400_000);
+    expect(yearAgo.getTime()).toBeLessThan(surfacingSince(now).getTime());
   });
 });

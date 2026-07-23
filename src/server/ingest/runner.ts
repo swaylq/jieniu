@@ -8,7 +8,12 @@ import {
   type EntityDictEntry,
 } from "../../lib/entity-tagging";
 import { scoreImportance, detectEventType } from "../../lib/importance";
-import { normalizeTitle, isLowValueTitle, crossSourceKey } from "../../lib/dedupe";
+import {
+  normalizeTitle,
+  isLowValueTitle,
+  crossSourceKey,
+  historicalKey,
+} from "../../lib/dedupe";
 import { cleanText, cleanInline, screenQuality } from "../../lib/quality";
 import {
   isRoundupNews,
@@ -16,6 +21,7 @@ import {
   isIntermediaryRole,
   isIntermediaryName,
   isInstitutionOpinionAboutOthers,
+  isReportPublisherOf,
   isBoilerplateFiling,
   isForeignMarketNoise,
   isForeignFinancialNoise,
@@ -30,12 +36,35 @@ export type IngestResult = {
 };
 
 /**
+ * 历史回填模式。
+ *
+ * 实时抓取的判重集合按 `createdAt >= 近 7 天` 载入——这对每 30 分钟跑一次的 ingest 是对的，
+ * 但回填一年会踩两个坑：
+ *  ① 早已入库、createdAt 超过 7 天的旧条目看不见（实测已有 3,360 条巨潮 + 600 条东财公告
+ *    落在窗口外），同一份公告会在东财/巨潮两个源下各存一份；
+ *  ② 反过来，若把窗口简单拉长到一年，「回购进展公告」这类一年重复十几次、标题一字不差的
+ *    公告又会被按标题误并成一条。
+ * 所以回填模式改为：**按目标实体 + 发布时间区间**载入判重集合，判重键带上发布日
+ * （见 dedupe.historicalKey）。
+ */
+export type BackfillScope = {
+  entityIds: string[];
+  publishedFrom: Date;
+  publishedTo: Date;
+};
+
+export type IngestOptions = {
+  backfill?: BackfillScope;
+};
+
+/**
  * 抓一个源 → 归一化 → hash 去重 → 词典标注实体 → 重要性打分 → 入库。
  * db 由调用方注入（脚本用独立 PrismaClient，路由/cron 用 ctx.db）。
  */
 export async function ingestSource(
   db: PrismaClient,
   def: SourceDef,
+  opts: IngestOptions = {},
 ): Promise<IngestResult> {
   const source = await db.source.upsert({
     where: { key: def.key },
@@ -78,18 +107,37 @@ export async function ingestSource(
   const raws = await def.fetch(dict);
 
   // 跨源去重 + 无价值公告过滤：载入近 7 天标题（归一）比对，避免同一新闻多源刷屏。
+  // 回填模式则改按「目标实体 + 发布区间」载入（理由见 BackfillScope）。
+  const bf = opts.backfill;
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const recent = await db.newsItem.findMany({
-    where: { createdAt: { gte: since } },
-    select: { title: true, entities: { select: { entityId: true } } },
+    where: bf
+      ? {
+          publishedAt: { gte: bf.publishedFrom, lte: bf.publishedTo },
+          entities: { some: { entityId: { in: bf.entityIds } } },
+        }
+      : { createdAt: { gte: since } },
+    select: {
+      title: true,
+      publishedAt: true,
+      entities: { select: { entityId: true } },
+    },
   });
-  const seenTitles = new Set(recent.map((n) => normalizeTitle(n.title)));
+  // 回填时**不**做整标题判重：一年里同名的周期性公告（回购进展/重大合同）是不同的真实事件。
+  const seenTitles = bf
+    ? new Set<string>()
+    : new Set(recent.map((n) => normalizeTitle(n.title)));
   // 跨源判重（run7）：同一公告东财带「公司名:」前缀、巨潮不带，整标题判重漏掉；
   // 按 (绑定实体集 + 去前缀正文标题) 再判一次，避免个股「公告」页/自选早报同一公告出现两条。
   const seenCross = new Set(
     recent
       .filter((n) => n.entities.length > 0)
-      .map((n) => crossSourceKey(n.title, n.entities.map((e) => e.entityId))),
+      .map((n) => {
+        const ids = n.entities.map((e) => e.entityId);
+        return bf
+          ? historicalKey(n.title, ids, n.publishedAt)
+          : crossSourceKey(n.title, ids);
+      }),
   );
 
   let inserted = 0;
@@ -150,14 +198,24 @@ export async function ingestSource(
     entityIds = entityIds.filter((id) => {
       if (!intermediaryIds.has(id)) return true;
       const e = dictById.get(id);
-      return !e || !isInstitutionOpinionAboutOthers(title, e.name);
+      if (!e) return true;
+      // 「机构名：观点」前缀 与 研报的「（发布机构）」后缀，都是发声者而非主体，剪掉其自身绑定。
+      return (
+        !isInstitutionOpinionAboutOthers(title, e.name) &&
+        !isReportPublisherOf(title, e)
+      );
     });
     // 海外投行/银行谈自家业绩/大宗/海外央行、且不涉任何 A 股实体的碎讯——非 A 股噪声，不入库。
     // 「高盛恢复跟踪宁德时代A股」这类有 A 股绑定的会命中 entityIds>0 而保留。
     if (entityIds.length === 0 && isForeignFinancialNoise(title)) continue;
 
     // 跨源重复：同公司同公告，东财记「公司名:标题」、巨潮记「标题」——按(实体集+去前缀标题)再判一次。
-    const ckey = entityIds.length > 0 ? crossSourceKey(title, entityIds) : null;
+    const ckey =
+      entityIds.length === 0
+        ? null
+        : bf
+          ? historicalKey(title, entityIds, r.publishedAt)
+          : crossSourceKey(title, entityIds);
     if (ckey && seenCross.has(ckey)) continue;
     // 所有源统一识别事件类型：源已显式给出则用之，否则从 标题+摘要+正文 检测。
     // 修复：此前仅 cninfo 设 eventType，媒体源恒为 30 分、永远进不了「重大动态」/通知。

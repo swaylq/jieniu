@@ -192,6 +192,24 @@ async function main() {
       await sleep(800);
     }
 
+    // --scroll=选择器：滚到该元素再截图。长页面（个股页）的下半部分——tab 列表、大事记——
+    // 在首屏之外，不滚动就只能截到页头，等于没验证到改动。比 --full 省：不必截出一张几万像素高的图。
+    const scrollArg = argv.find((a) => a.startsWith("--scroll="));
+    if (scrollArg) {
+      const sel = scrollArg.slice("--scroll=".length);
+      const r = await S("Runtime.evaluate", {
+        expression: `(() => {
+          const el = document.querySelector(${JSON.stringify(sel)});
+          if (!el) return "no-el";
+          el.scrollIntoView({ block: "start" });
+          return "scrolled";
+        })()`,
+        returnByValue: true,
+      });
+      console.log(`  scroll(${sel}) -> ${r.result?.value}`);
+      await sleep(600);
+    }
+
     // --type=文本：往页面首个搜索输入框键入文本（React 受控 input：原生 setter + input 事件），
     // 等 tRPC 查询返回 + 渲染后再截图。用于截「搜索空态 / 自助加股入口」等需交互才出现的界面。
     const typeArg = argv.find((a) => a.startsWith("--type="));

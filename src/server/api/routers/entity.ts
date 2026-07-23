@@ -7,7 +7,7 @@ import {
   protectedProcedure,
 } from "~/server/api/trpc";
 import { groupRelations, type GraphRelation } from "~/lib/entity-graph";
-import { IMPORTANT_THRESHOLD } from "~/lib/importance";
+import { IMPORTANT_THRESHOLD, surfacingSince } from "~/lib/importance";
 import { selectPeers } from "~/lib/ecosystem";
 import { strongMasters } from "~/lib/master-compass";
 import { buildScorecard } from "~/lib/scorecard";
@@ -127,7 +127,11 @@ export const entityRouter = createTRPCRouter({
 
       const [sectorNews, peerNewsRows] = await Promise.all([
         ctx.db.newsItem.findMany({
-          where: { entities: { some: { entityId: { in: sectorIds } } } },
+          where: {
+            entities: { some: { entityId: { in: sectorIds } } },
+            // 时间窗（见 surfacingSince）：板块动态也是重要性优先，回填后必须挡住陈年旧闻。
+            publishedAt: { gte: surfacingSince(new Date()) },
+          },
           orderBy: [{ importance: "desc" }, { publishedAt: "desc" }],
           take: 5,
           select: newsSelect,
@@ -296,7 +300,9 @@ export const entityRouter = createTRPCRouter({
         where: { entities: { some: { entityId: input.id } } },
         orderBy: [{ publishedAt: "desc" }, { importance: "desc" }],
         // 多取些：一次定增/重组的同日公告轰炸会吃掉几十条，折叠(collapseAnnouncementBursts)后才好露出其它动态。
-        take: 60,
+        // 一年回填后每家有上百条，60 条只够看两个月——提到 120，「资讯/公告」两个 tab 都更厚。
+        // 更早的脉络由「大事记」tab 负责（只收重磅、按月折叠），两者分工：近况 vs 一年。
+        take: 120,
         select: {
           id: true,
           title: true,
@@ -311,6 +317,41 @@ export const entityRouter = createTRPCRouter({
         },
       }),
     ),
+
+  /**
+   * 一年大事记（2026-07-23 一年回填）：只取**重磅**事件，跨度一年，供个股页按月分组展示。
+   * 「资讯」流按时间倒序取 60 条，回填后只够看最近几个月；大事记补的是「一年脉络」这一视角。
+   * 门槛沿用重磅线（importance ≥ IMPORTANT_THRESHOLD）——例行治理公告进不来，不糊墙。
+   */
+  milestones: publicProcedure
+    .input(
+      z.object({ id: z.string(), months: z.number().min(1).max(24).default(12) }),
+    )
+    .query(({ ctx, input }) => {
+      const since = new Date();
+      since.setMonth(since.getMonth() - input.months);
+      return ctx.db.newsItem.findMany({
+        where: {
+          entities: { some: { entityId: input.id } },
+          importance: { gte: IMPORTANT_THRESHOLD },
+          publishedAt: { gte: since },
+        },
+        orderBy: [{ publishedAt: "desc" }],
+        take: 200,
+        select: {
+          id: true,
+          title: true,
+          url: true,
+          summary: true,
+          brief: true,
+          tier: true,
+          importance: true,
+          publishedAt: true,
+          source: { select: { name: true } },
+          event: { select: { count: true } },
+        },
+      });
+    }),
 
   search: publicProcedure
     .input(z.object({ q: z.string() }))

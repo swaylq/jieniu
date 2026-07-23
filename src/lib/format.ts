@@ -132,6 +132,26 @@ export function notificationUnread(createdAt: Date, seenAt: Date | null): boolea
   return seenAt === null || createdAt.getTime() > seenAt.getTime();
 }
 
+/**
+ * 通知中心的「发布时间」窗口（天）。
+ *
+ * 未读判定用 createdAt（入库时刻）——这对实时抓取是对的：刚入库的就是新动态。
+ * 但历史回填的 createdAt 也是「现在」，一年前的公告会整批变成未读，把提醒中心冲垮。
+ * 所以再加一道 publishedAt 窗口：**只有近期发布的资讯才可能成为通知**，
+ * 回填进来的旧资讯只进个股页/时间线，永远不进提醒。
+ */
+export const NOTIFY_WINDOW_DAYS = 30;
+
+/** 通知窗口起点（now - NOTIFY_WINDOW_DAYS 天）。 */
+export function notifyWindowStart(now: Date): Date {
+  return new Date(now.getTime() - NOTIFY_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+}
+
+/** 该资讯是否够新、可以进提醒中心（挡住历史回填）。 */
+export function isNotifiable(publishedAt: Date, now: Date): boolean {
+  return publishedAt.getTime() >= notifyWindowStart(now).getTime();
+}
+
 /** 摘要与标题几乎重复时不必再显示（巨潮公告常 summary==title）。 */
 export function summaryIsRedundant(title: string, summary: string): boolean {
   const t = title.trim();

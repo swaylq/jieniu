@@ -20,6 +20,25 @@ export function crossSourceKey(title: string, entityIds: string[]): string {
   return `${[...entityIds].sort().join(",")}::${normalizeTitle(stripEntityPrefix(title))}`;
 }
 
+/**
+ * 历史回填判重 key：跨源 key **再加发布日**。
+ *
+ * 回填一年不能只按标题判重——「关于回购公司股份进展的公告」同一家公司一年要发十几次，
+ * 标题一字不差；按标题去重会把十几个真实事件删成一个。而同一份公告在两个源里
+ * （东财 art_code / 巨潮 adjunctUrl，hash 不同）发布日是一致的，所以「实体+标题+发布日」
+ * 既杀得掉跨源重复，又保得住同名的周期性事件。
+ */
+export function historicalKey(
+  title: string,
+  entityIds: string[],
+  publishedAt: Date,
+): string {
+  const day = Number.isNaN(publishedAt.getTime())
+    ? "?"
+    : publishedAt.toISOString().slice(0, 10);
+  return `${crossSourceKey(title, entityIds)}::${day}`;
+}
+
 /** 无价值 / 纯样板公告标题——入库时跳过，避免刷屏「最新」流。 */
 const LOW_VALUE: RegExp[] = [
   /翌日披露报表/,

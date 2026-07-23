@@ -5,7 +5,7 @@ import {
   publicProcedure,
   protectedProcedure,
 } from "~/server/api/trpc";
-import { IMPORTANT_THRESHOLD } from "~/lib/importance";
+import { IMPORTANT_THRESHOLD, surfacingSince } from "~/lib/importance";
 import { digestSince, DIGEST_TAKE_DEEP } from "~/lib/digest";
 import {
   rankDigest,
@@ -44,7 +44,11 @@ export const newsRouter = createTRPCRouter({
   /** 重大动态：全站高重要性资讯，按重要性×时间倒序，供首页 surfacing。 */
   important: publicProcedure.query(({ ctx }) =>
     ctx.db.newsItem.findMany({
-      where: { importance: { gte: IMPORTANT_THRESHOLD } },
+      where: {
+        importance: { gte: IMPORTANT_THRESHOLD },
+        // 时间窗（见 surfacingSince）：否则一年前的停牌/重组会永久霸占首页第一条。
+        publishedAt: { gte: surfacingSince(new Date()) },
+      },
       orderBy: [{ importance: "desc" }, { publishedAt: "desc" }],
       take: 10,
       select: {

@@ -83,6 +83,39 @@ export function isInstitutionOpinionAboutOthers(
   return !OWN_CORP_EVENT.test(title);
 }
 
+/**
+ * 标题是否带「（发布机构）」后缀——解牛收录券商研报时自己加的机构后缀
+ * （见 sources/eastmoney-report.ts：加后缀是为了让不同券商同日的同名研报不被判重并掉）。
+ *
+ * 与上面的前缀判据分开写、且**不**走 OWN_CORP_EVENT 例外：后缀里的机构是解牛写进去的
+ * 发布者，身份确定无疑，绝不是研报主体。不剪的话券商 feed 会被自家研报再次淹没（run3 旧疾）。
+ */
+export function isReportPublisherSuffix(
+  title: string,
+  institutionName: string,
+): boolean {
+  return title.endsWith(`（${institutionName}）`);
+}
+
+/**
+ * 同上，但比对实体的**全部叫法**（name / 去掉「(代码)」后缀的 name / shortName / 别名）。
+ *
+ * 实测（6699 篇研报体检）：只比 `name` 会漏——实体名存作「第一创业(002797)」，
+ * 研报后缀写的是「（第一创业）」，对不上，那篇研报就绑到了发布机构自己。
+ */
+export function isReportPublisherOf(
+  title: string,
+  entity: { name: string; shortName?: string | null; aliases?: string[] },
+): boolean {
+  const names = [
+    entity.name,
+    entity.name.replace(/[（(][^）)]*[）)]\s*$/, ""),
+    entity.shortName ?? "",
+    ...(entity.aliases ?? []),
+  ].filter((n) => n.length > 0);
+  return names.some((n) => isReportPublisherSuffix(title, n));
+}
+
 // 纯程序性/样板公告 & 海外行情碎讯（产品质量循环 2026-07-15 run5·数据质量）。
 // 巨潮公告里大量「法律意见书 / 公司章程 / 会计师鉴证报告 / 市值管理制度 / H股通函」——标题只是
 // 文件类型或治理文书、无实质投资信息，堆在个股「公告」页是噪声（近 7 天入库 49% 无实体绑定）。

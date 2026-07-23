@@ -15,6 +15,7 @@ vi.mock("~/server/stocks", () => ({
 
 import { createCallerFactory } from "~/server/api/trpc";
 import { entityRouter } from "./entity";
+import { IMPORTANT_THRESHOLD } from "~/lib/importance";
 
 function makeCaller(db: unknown, session: unknown = null) {
   const createCaller = createCallerFactory(entityRouter);
@@ -181,6 +182,50 @@ describe("entityRouter.newsById", () => {
     const arg = findMany.mock.calls[0]?.[0] as { where: unknown; take: number };
     expect(arg.where).toEqual({ entities: { some: { entityId: "c1" } } });
     // 多取供同日公告轰炸折叠(collapseAnnouncementBursts)用，露出被淹的其它动态。
-    expect(arg.take).toBe(60);
+    // 一年回填后每家上百条，60 条只够看两个月，故提到 120。
+    expect(arg.take).toBe(120);
+  });
+});
+
+describe("entityRouter.milestones", () => {
+  it("只取重磅事件、限定近 N 个月、按发布时间倒序", async () => {
+    const rows = [{ id: "n1", title: "签订重大合同", importance: 65 }];
+    const findMany = vi.fn().mockResolvedValue(rows);
+    const res = await makeCaller({ newsItem: { findMany } }).milestones({
+      id: "c1",
+      months: 12,
+    });
+    expect(res).toEqual(rows);
+    const arg = findMany.mock.calls[0]?.[0] as {
+      where: {
+        entities: unknown;
+        importance: { gte: number };
+        publishedAt: { gte: Date };
+      };
+      orderBy: unknown;
+      take: number;
+    };
+    expect(arg.where.entities).toEqual({ some: { entityId: "c1" } });
+    // 重磅线：例行治理公告进不来，回填一年也不会糊墙
+    expect(arg.where.importance.gte).toBe(IMPORTANT_THRESHOLD);
+    expect(arg.orderBy).toEqual([{ publishedAt: "desc" }]);
+    expect(arg.take).toBe(200);
+
+    // 起点应落在约 12 个月前（允许月份长度差异，用天数区间断言）
+    const days =
+      (Date.now() - arg.where.publishedAt.gte.getTime()) / 86_400_000;
+    expect(days).toBeGreaterThan(355);
+    expect(days).toBeLessThan(375);
+  });
+
+  it("months 默认 12", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    await makeCaller({ newsItem: { findMany } }).milestones({ id: "c1" });
+    const arg = findMany.mock.calls[0]?.[0] as {
+      where: { publishedAt: { gte: Date } };
+    };
+    const days =
+      (Date.now() - arg.where.publishedAt.gte.getTime()) / 86_400_000;
+    expect(days).toBeGreaterThan(355);
   });
 });

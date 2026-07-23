@@ -5,6 +5,8 @@ import {
   isIntermediaryRole,
   isIntermediaryName,
   isInstitutionOpinionAboutOthers,
+  isReportPublisherSuffix,
+  isReportPublisherOf,
   isBoilerplateFiling,
   isForeignMarketNoise,
   isForeignFinancialNoise,
@@ -224,5 +226,66 @@ describe("isForeignFinancialNoise", () => {
     ]) {
       expect(isForeignFinancialNoise(t)).toBe(false);
     }
+  });
+});
+
+describe("isReportPublisherSuffix（研报「（发布机构）」后缀）", () => {
+  it("认出后缀里的发布机构（该机构是发声者，须剪掉自身绑定）", () => {
+    expect(
+      isReportPublisherSuffix("盈利能力表现稳健，份额稳中有升（国信证券）", "国信证券"),
+    ).toBe(true);
+  });
+
+  it("不误伤研报主体本身", () => {
+    expect(
+      isReportPublisherSuffix("盈利能力表现稳健（国信证券）", "宁德时代"),
+    ).toBe(false);
+  });
+
+  it("与前缀式判据互不干扰", () => {
+    expect(isReportPublisherSuffix("中信证券：看好算力", "中信证券")).toBe(false);
+  });
+
+  it("后缀式不走「自身业绩」例外——机构名是解牛写进去的发布者，一定要剪", () => {
+    expect(
+      isReportPublisherSuffix("上半年净利润同比增长69%（中信证券）", "中信证券"),
+    ).toBe(true);
+  });
+});
+
+describe("isReportPublisherOf（比对实体全部叫法）", () => {
+  it("实体名带「(代码)」后缀时也能对上（6699 篇体检里漏掉的那一篇）", () => {
+    expect(
+      isReportPublisherOf("新品收入高增，省外扩张顺利（第一创业）", {
+        name: "第一创业(002797)",
+      }),
+    ).toBe(true);
+  });
+
+  it("靠 shortName 对上", () => {
+    expect(
+      isReportPublisherOf("产能爬坡顺利（中信建投）", {
+        name: "中信建投证券股份有限公司",
+        shortName: "中信建投",
+      }),
+    ).toBe(true);
+  });
+
+  it("靠别名对上", () => {
+    expect(
+      isReportPublisherOf("需求回暖（华泰）", {
+        name: "华泰证券",
+        aliases: ["华泰"],
+      }),
+    ).toBe(true);
+  });
+
+  it("不误伤研报主体（后缀里不是它）", () => {
+    expect(
+      isReportPublisherOf("需求根基稳固（中邮证券）", {
+        name: "贵州茅台(600519)",
+        shortName: "茅台",
+      }),
+    ).toBe(false);
   });
 });

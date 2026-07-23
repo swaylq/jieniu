@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { normalizeAlertPrefs } from "~/lib/alert-protocol";
+import { notifyWindowStart } from "~/lib/format";
 import {
   normalizeUserDimensions,
   userDimensionStatus,
@@ -22,8 +23,10 @@ export const notificationsRouter = createTRPCRouter({
       where: {
         importance: { gte: IMPORTANT_GTE },
         entities: { some: { entityId: { in: ids } } },
+        // 历史回填闸门：回填资讯的 createdAt 也是「现在」，不设发布时间窗会整批变成新动态。
+        publishedAt: { gte: notifyWindowStart(new Date()) },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: { publishedAt: "desc" },
       take: 30,
       select: {
         id: true,
@@ -221,10 +224,13 @@ export const notificationsRouter = createTRPCRouter({
     const where: {
       importance: { gte: number };
       entities: { some: { entityId: { in: string[] } } };
+      publishedAt: { gte: Date };
       createdAt?: { gt: Date };
     } = {
       importance: { gte: IMPORTANT_GTE },
       entities: { some: { entityId: { in: ids } } },
+      // 与 list 同一道闸门：回填的历史资讯不计入未读，否则未读数会瞬间上万。
+      publishedAt: { gte: notifyWindowStart(new Date()) },
     };
     if (seenAt) where.createdAt = { gt: seenAt };
     return ctx.db.newsItem.count({ where });

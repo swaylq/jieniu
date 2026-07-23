@@ -28,6 +28,22 @@ const BANNED: { pattern: RegExp; label: string }[] = [
   },
 ];
 
+/**
+ * 券商研报标题里的「评级/目标价」表述（铁律②：不荐股、不喊价）。
+ *
+ * 解牛收录研报是当作**事件**（谁、什么时候、发了什么主题的研报），不是当作推荐。
+ * 因此评级字段（emRatingName / indvAimPrice…）一律不入库，标题命中评级语言的整条丢弃。
+ * 刻意**不**拦单独出现的「增持/减持」——「大股东增持彰显信心」是真实事件而非评级，
+ * 只拦「维持/上调/下调/首次 + 增持/推荐/持有/减持」这种明确的评级动作。
+ */
+const RATING_HEADLINE =
+  /评级|目标价|买入|强烈推荐|谨慎推荐|跑赢(行业|大市)|优于大市|(维持|上调|下调|首次)\s*(增持|推荐|持有|减持)/;
+
+/** 研报标题是否含评级/目标价表述（含则不收录）。 */
+export function isRatingHeadline(title: string): boolean {
+  return RATING_HEADLINE.test(title);
+}
+
 /** 免责声明。 */
 export const DISCLAIMER =
   "本内容由 AI 基于公开信息生成，仅供信息参考与投资者教育，不构成任何投资建议。市场有风险，决策需谨慎。";
