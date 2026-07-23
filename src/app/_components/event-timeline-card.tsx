@@ -59,7 +59,8 @@ export function EventTimeline({ items }: { items: TimelineItem[] }) {
                   <span className="tabular text-[11px] text-muted">
                     {streamStamp(new Date(it.at))}
                   </span>
-                  <span className="rounded bg-brand/15 px-1.5 py-0.5 text-[11px] font-medium text-brand">
+                  {/* 维度徽标每条信号都有 → 中性；琥珀留给 FollowUpBadge 的 accent 态与「你的判断」 */}
+                  <span className="rounded bg-line/60 px-1.5 py-0.5 text-[11px] font-medium text-muted">
                     {it.dimensionKey}
                   </span>
                   <FollowUpBadge f={it.followUp} />

@@ -162,10 +162,10 @@ export function MyThesisCard({
             {shown.slice(0, 8).map((s, i) => (
               <li
                 key={`${s.dimensionKey}-${i}`}
-                className="border-l-2 border-brand/40 pl-3"
+                className="border-l-2 border-line pl-3"
               >
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
-                  <span className="rounded bg-brand/15 px-1.5 py-0.5 font-medium text-brand">
+                  <span className="rounded bg-line/60 px-1.5 py-0.5 font-medium text-muted">
                     {s.dimensionKey}
                   </span>
                   <span className="text-muted">

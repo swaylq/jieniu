@@ -35,7 +35,8 @@ export function CatalystCalendar({
                 key={n.key}
                 className="flex items-center gap-3 rounded-xl border border-line/70 bg-canvas px-3 py-2.5"
               >
-                <div className="flex w-12 shrink-0 flex-col items-center justify-center rounded-lg bg-brand/10 py-1 text-brand">
+                {/* 日期块每条都有 → 中性；琥珀留给下面条件触发的「临近」，那才是要跳出来的信号 */}
+                <div className="flex w-12 shrink-0 flex-col items-center justify-center rounded-lg bg-line/60 py-1 text-ink">
                   <span className="tabular text-sm font-bold">
                     {fmtDeadline(n.deadline)}
                   </span>

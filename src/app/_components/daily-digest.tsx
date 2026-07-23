@@ -35,7 +35,8 @@ function DigestRow({
 }) {
   return (
     <li className="flex gap-3">
-      <span className="tabular mt-0.5 w-4 shrink-0 text-right text-sm font-bold text-brand">
+      {/* 序号是序数信息、每条都有，不是焦点：走静默色，别和真正的强调抢琥珀。见 DESIGN.md */}
+      <span className="tabular mt-0.5 w-4 shrink-0 text-right text-sm font-bold text-faint">
         {index}
       </span>
       <div className="min-w-0 flex-1">
@@ -48,11 +49,11 @@ function DigestRow({
         {minimal ? null : (
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
             {n.macro ? (
-              <span className="rounded bg-brand/15 px-1.5 py-0.5 font-medium text-brand">
+              <span className="rounded bg-line/60 px-1.5 py-0.5 font-medium text-muted">
                 宏观
               </span>
             ) : n.eventType ? (
-              <span className="rounded bg-brand/10 px-1.5 py-0.5 font-medium text-brand">
+              <span className="rounded bg-line/60 px-1.5 py-0.5 font-medium text-muted">
                 {eventTypeLabel(n.eventType)}
               </span>
             ) : null}

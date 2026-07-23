@@ -77,7 +77,8 @@ export function ThesisAlerts({
                 >
                   {a.entityName}
                 </Link>
-                <span className="rounded bg-brand/15 px-1.5 py-0.5 text-[11px] font-medium text-brand">
+                {/* 维度徽标每条都有 → 中性；琥珀留给未读「新」标记与卡片高亮环 */}
+                <span className="rounded bg-line/60 px-1.5 py-0.5 text-[11px] font-medium text-muted">
                   {a.priority ? "★ " : ""}
                   {a.dimensionKey}
                 </span>

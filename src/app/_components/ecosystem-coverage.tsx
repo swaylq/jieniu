@@ -78,7 +78,7 @@ export function EcosystemCoverage({
                 <li key={`${n.id}-${i}`} className="flex items-baseline gap-2 text-xs">
                   <Link
                     href={`/entity/${n.entityId}`}
-                    className="shrink-0 rounded bg-brand/10 px-1.5 py-0.5 font-medium text-brand transition-colors hover:bg-brand/20"
+                    className="shrink-0 rounded bg-line/60 px-1.5 py-0.5 font-medium text-ink transition-colors hover:bg-brand/15 hover:text-brand"
                   >
                     {n.entityName}
                   </Link>
