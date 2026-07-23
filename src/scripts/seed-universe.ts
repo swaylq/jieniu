@@ -1,5 +1,5 @@
 import { PrismaClient } from "../../generated/prisma";
-import { exchangeFromCode, isSeedableStock } from "../lib/universe";
+import { exchangeFromCode, isSeedableStock, hasTempPrefix } from "../lib/universe";
 
 const db = new PrismaClient();
 const UA = "Mozilla/5.0 (jieniu-ingest)";
@@ -89,11 +89,18 @@ async function main() {
   let newCo = 0;
   let newStk = 0;
   let skipped = 0;
+  let tempPrefixed = 0;
   for (const t of top) {
     // 东财把短名 pad 成「五 粮 液」，去掉内部空白再入库——否则与巨潮 hint/新闻标题里的「五粮液」对不上，绑不上公告。
     t.name = t.name.replace(/\s+/g, "");
     if (!isSeedableStock(t.name)) {
       skipped++;
+      continue;
+    }
+    // 除权除息日抓到的名字是「XD华电新」——带前缀且被截断，真名当天无源可还原。
+    // 用它建实体会①新建重复公司②进词典后永远绑不上资讯③真名搜不到。故当天跳过，次日正常名再收。
+    if (hasTempPrefix(t.name)) {
+      tempPrefixed++;
       continue;
     }
     let company = await db.entity.findFirst({
@@ -135,7 +142,7 @@ async function main() {
 
   const total = await db.entity.count();
   console.log(
-    `seed-universe(TOP_N=${TOP_N}): +${newSectors} 板块, +${newCo} 公司, +${newStk} 股票, 跳过 ${skipped}(ETF/ST/退市) → 实体总数 ${total}`,
+    `seed-universe(TOP_N=${TOP_N}): +${newSectors} 板块, +${newCo} 公司, +${newStk} 股票, 跳过 ${skipped}(ETF/ST/退市) + ${tempPrefixed}(除权除息临时名,次日再收) → 实体总数 ${total}`,
   );
 }
 

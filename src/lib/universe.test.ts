@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { exchangeFromCode, isSeedableStock, isDelistingNoise } from "./universe";
+import {
+  exchangeFromCode,
+  isSeedableStock,
+  isDelistingNoise,
+  hasTempPrefix,
+} from "./universe";
 
 describe("exchangeFromCode", () => {
   it("maps code prefixes to exchanges", () => {
@@ -58,5 +63,38 @@ describe("isDelistingNoise", () => {
     expect(isDelistingNoise("贵州茅台", "2026年半年度业绩预告")).toBe(false);
     expect(isDelistingNoise("宁德时代", "关于对外投资建设电池工厂的公告")).toBe(false);
     expect(isDelistingNoise("兆易创新", "关于回购公司股份的进展公告")).toBe(false);
+  });
+});
+
+describe("hasTempPrefix（交易所临时简称前缀 / 回归测试）", () => {
+  it("认出除权除息日的 XD / XR / DR 前缀", () => {
+    // 真实踩过的坑：seed 撞上除息日，抓到「XD华电新」(真名 华电新能，还被截断一个字)
+    expect(hasTempPrefix("XD华电新")).toBe(true);
+    expect(hasTempPrefix("XD金山办")).toBe(true);
+    expect(hasTempPrefix("XR宁德时")).toBe(true);
+    expect(hasTempPrefix("DR贵州茅")).toBe(true);
+  });
+
+  it("不误伤正常公司名", () => {
+    expect(hasTempPrefix("华电新能")).toBe(false);
+    expect(hasTempPrefix("中芯国际")).toBe(false);
+    expect(hasTempPrefix("金山办公")).toBe(false);
+  });
+
+  it("不误伤以英文起头的正常名与 ST 系列", () => {
+    // TCL/N 等不是除权除息标记：TCL 是名字本身，N 是新股首日标记（另有 isSeedableStock 管 ST）
+    expect(hasTempPrefix("TCL科技")).toBe(false);
+    expect(hasTempPrefix("ST生物")).toBe(false);
+    expect(hasTempPrefix("*ST海核")).toBe(false);
+    expect(hasTempPrefix("N英搏")).toBe(false);
+  });
+
+  it("前缀后必须紧跟中文才算（避免 XDA 之类英文名误判）", () => {
+    expect(hasTempPrefix("XDATA")).toBe(false);
+    expect(hasTempPrefix("DRAM存储")).toBe(false); // DRAM 是词、不是 DR+中文
+  });
+
+  it("容忍首尾空白", () => {
+    expect(hasTempPrefix("  XD华电新 ")).toBe(true);
   });
 });

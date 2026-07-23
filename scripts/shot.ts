@@ -157,6 +157,23 @@ async function main() {
 
     await nav(`${BASE}${path}`);
 
+    // --click=选择器：点一下再截图，用于验证折叠/展开这类交互态（如提醒协议「设置」）。
+    const clickArg = argv.find((a) => a.startsWith("--click="));
+    if (clickArg) {
+      const sel = clickArg.slice("--click=".length);
+      const r = await S("Runtime.evaluate", {
+        expression: `(() => {
+          const el = document.querySelector(${JSON.stringify(sel)});
+          if (!el) return "no-el";
+          el.click();
+          return "clicked";
+        })()`,
+        returnByValue: true,
+      });
+      console.log(`  click(${sel}) -> ${r.result?.value}`);
+      await sleep(800);
+    }
+
     // --type=文本：往页面首个搜索输入框键入文本（React 受控 input：原生 setter + input 事件），
     // 等 tRPC 查询返回 + 渲染后再截图。用于截「搜索空态 / 自助加股入口」等需交互才出现的界面。
     const typeArg = argv.find((a) => a.startsWith("--type="));

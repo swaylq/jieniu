@@ -10,7 +10,14 @@ import { brandBtn, fieldClsSm } from "./section-head";
  * 到价提醒控件（#3b）。合规：用户自设阈值、只是「到价通知我」——非荐买/荐卖（铁律②）。
  * 触发由 cron 比价，提醒中心露出；这里管设置 / 查看 / 删除。
  */
-export function PriceAlertCard({ entityId }: { entityId: string }) {
+export function PriceAlertCard({
+  entityId,
+  bare = false,
+}: {
+  entityId: string;
+  /** true = 并入「我的」合并卡：不渲染自带卡壳/大标题/说明段（合规提示由外层统一给）。 */
+  bare?: boolean;
+}) {
   const utils = api.useUtils();
   const list = api.priceAlert.listByEntity.useQuery({ entityId });
   const [direction, setDirection] = useState<AlertDirection>("above");
@@ -30,17 +37,34 @@ export function PriceAlertCard({ entityId }: { entityId: string }) {
   const priceNum = Number(price);
   const canSubmit = Number.isFinite(priceNum) && priceNum > 0 && !create.isPending;
 
-  return (
-    <section className="rounded-xl border border-line bg-surface p-4 shadow-sm">
-      <div className="flex items-center gap-2">
-        <span aria-hidden>🔔</span>
-        <h3 className="text-sm font-bold text-ink">到价提醒</h3>
-      </div>
-      <p className="mt-1 text-[11px] leading-relaxed text-muted">
-        股价触及你设的价位时通知你。你自己设的观察位，非解牛荐买卖。
-      </p>
+  const Shell = ({ children }: { children: React.ReactNode }) =>
+    bare ? (
+      <div>{children}</div>
+    ) : (
+      <section className="rounded-xl border border-line bg-surface p-4 shadow-sm">
+        {children}
+      </section>
+    );
 
-      <div className="mt-3 flex items-center gap-2">
+  return (
+    <Shell>
+      <div className="flex items-center gap-2">
+        {bare ? (
+          <h4 className="text-xs font-semibold text-muted">到价提醒</h4>
+        ) : (
+          <>
+            <span aria-hidden>🔔</span>
+            <h3 className="text-sm font-bold text-ink">到价提醒</h3>
+          </>
+        )}
+      </div>
+      {!bare ? (
+        <p className="mt-1 text-[11px] leading-relaxed text-muted">
+          股价触及你设的价位时通知你。你自己设的观察位，非解牛荐买卖。
+        </p>
+      ) : null}
+
+      <div className="mt-2 flex items-center gap-2">
         <select
           aria-label="方向"
           value={direction}
@@ -106,6 +130,6 @@ export function PriceAlertCard({ entityId }: { entityId: string }) {
           ))}
         </ul>
       ) : null}
-    </section>
+    </Shell>
   );
 }

@@ -42,7 +42,7 @@ export function LogicTracker({
       <div className="hidden grid-cols-[1fr_auto_auto] gap-2 border-b border-line/60 px-3 pb-1.5 text-[11px] font-medium text-muted sm:grid">
         <span>投资命题</span>
         <span className="w-16 text-center">当前状态</span>
-        <span className="w-16 text-center">变化</span>
+        <span className="w-20 text-center">变化</span>
       </div>
       <ul className="divide-y divide-line/60">
         {dims.map((d) => {
@@ -56,15 +56,25 @@ export function LogicTracker({
                     {t.statusLabel}
                   </span>
                 </span>
-                <span className="sm:w-16 sm:text-center">
-                  <span className={impactBadgeClass(t.impact.tone)}>
-                    {t.impact.label}
-                  </span>
+                <span className="sm:w-20 sm:text-center">
+                  {/* 没有任何信号时不再显示「无实质影响」徽章——「未验证」状态已表达同一事实，
+                      逐行重复只会把真正的内容(盯什么)淹掉。留一个破折号占位保持列对齐。 */}
+                  {t.hitCount === 0 ? (
+                    <span className="text-[11px] text-muted" aria-label="暂无变化">
+                      —
+                    </span>
+                  ) : (
+                    <span className={impactBadgeClass(t.impact.tone)}>
+                      {t.impact.label}
+                    </span>
+                  )}
                 </span>
               </div>
               <p className="mt-1 text-[11px] leading-relaxed text-muted">
                 盯：{d.watch}
               </p>
+              {/* 无证据时不再逐行写「暂无触及该命题的资讯，待验证。」——「未验证」徽章已说明，
+                  且卡片头部还有一句「近期无实质动态触及投资逻辑，静音中」，三处重复同一件事。 */}
               {t.latest ? (
                 <p className="mt-1 text-xs leading-relaxed text-ink/85">
                   <span className="text-muted">
@@ -76,11 +86,7 @@ export function LogicTracker({
                   </span>
                   {t.latest.note}
                 </p>
-              ) : (
-                <p className="mt-1 text-[11px] text-muted">
-                  暂无触及该命题的资讯，待验证。
-                </p>
-              )}
+              ) : null}
             </li>
           );
         })}

@@ -74,8 +74,13 @@ export default async function DiscoverPage() {
       {radar.length > 0 ? (
         <section className="mt-8">
           <SectionHead title="有新进展的标的" hint="近 3 天资讯热度 · 纯规则" />
-          <p className="-mt-1 mb-3 text-xs text-muted">
-            按近期资讯热度排序，标注哪些是「有原始进展」（值得细看）、哪些「多为跟进报道」（关注高但新事实少）。价格与估值类机会需行情数据，暂未纳入。
+          {/* 徽章含义在这里统一说明一次即可——原来每张卡还各自重复一遍同样的解释句
+              （同一 flag 的 hint 是常量，4 张卡 4 句一模一样），属纯重复，已从卡片移除。 */}
+          <p className="-mt-1 mb-3 text-xs leading-relaxed text-muted">
+            按近期资讯热度排序：<span className="font-medium text-ink">有原始进展</span>
+            ＝一手信息多、值得细看；<span className="font-medium text-ink">多为跟进报道</span>
+            ＝关注高但新事实少、留意是否被情绪推动；
+            <span className="font-medium text-ink">关注升温</span>＝资讯量上升、一手与跟进参半。价格与估值类机会需行情数据，暂未纳入。
           </p>
           <ul className="grid gap-2 sm:grid-cols-2">
             {radar.map((item) => (
@@ -95,9 +100,6 @@ export default async function DiscoverPage() {
                         </span>
                       ) : null}
                     </div>
-                    <p className="mt-1 line-clamp-2 text-xs text-muted">
-                      {item.hint}
-                    </p>
                     <p className="tabular mt-1.5 text-xs text-muted">
                       近 3 天 {item.total} 条
                       {item.primary > 0 ? ` · 一手 ${item.primary}` : ""}

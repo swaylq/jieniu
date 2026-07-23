@@ -23,9 +23,12 @@ const numOrNull = (s: string) => {
 export function HoldingEditor({
   entityId,
   initial,
+  bare = false,
 }: {
   entityId: string;
   initial: HoldingInitial;
+  /** true = 并入「我的」合并卡：不渲染自带卡壳/大标题/空态说明段。 */
+  bare?: boolean;
 }) {
   const router = useRouter();
   const isHolding = initial?.status === "HOLDING";
@@ -65,11 +68,28 @@ export function HoldingEditor({
       </div>
     );
 
+  // bare：并入个股页「我的」合并卡时用——去掉自带卡壳与标题（由外层统一提供），
+  // 空态也不再写整段说明文案（三张卡各写一段是信息过载的主因）。
+  const Shell = ({ children }: { children: React.ReactNode }) =>
+    bare ? (
+      <div>{children}</div>
+    ) : (
+      <section className="rounded-xl border border-brand/30 bg-brand/[0.04] p-4">
+        {children}
+      </section>
+    );
+
   return (
-    <section className="rounded-xl border border-brand/30 bg-brand/[0.04] p-4">
+    <Shell>
       <div className="flex items-center gap-2">
-        <span aria-hidden>📌</span>
-        <h3 className="text-sm font-bold text-ink">我的持仓</h3>
+        {bare ? (
+          <h4 className="text-xs font-semibold text-muted">持仓</h4>
+        ) : (
+          <>
+            <span aria-hidden>📌</span>
+            <h3 className="text-sm font-bold text-ink">我的持仓</h3>
+          </>
+        )}
         {isHolding ? (
           <span className="ml-auto rounded-full bg-brand/15 px-2 py-0.5 text-[11px] font-medium text-brand">
             持仓中
@@ -79,7 +99,7 @@ export function HoldingEditor({
 
       {!open ? (
         isHolding ? (
-          <div className="mt-3">
+          <div className="mt-2">
             <div className="grid grid-cols-3 gap-2">
               {stat("成本", initial?.costBasis ?? null)}
               {stat("仓位", initial?.weight ?? null, "%")}
@@ -91,20 +111,22 @@ export function HoldingEditor({
             <button
               type="button"
               onClick={() => setOpen(true)}
-              className="mt-3 text-xs font-semibold text-brand hover:underline"
+              className="mt-2 text-xs font-semibold text-brand hover:underline"
             >
               编辑持仓 ›
             </button>
           </div>
         ) : (
-          <div className="mt-3">
-            <p className="text-xs leading-relaxed text-muted">
-              标记为持仓后，解牛会围绕你的成本与仓位判断「今天的事有没有动你的逻辑」。
-            </p>
+          <div className="mt-2">
+            {!bare ? (
+              <p className="text-xs leading-relaxed text-muted">
+                标记为持仓后，解牛会围绕你的成本与仓位判断「今天的事有没有动你的逻辑」。
+              </p>
+            ) : null}
             <button
               type="button"
               onClick={() => setOpen(true)}
-              className="mt-3 rounded-lg border border-brand/40 bg-brand/10 px-3 py-1.5 text-xs font-semibold text-brand transition-colors hover:bg-brand/20"
+              className={`${bare ? "" : "mt-3 "}rounded-lg border border-brand/40 bg-brand/10 px-3 py-1.5 text-xs font-semibold text-brand transition-colors hover:bg-brand/20`}
             >
               ＋ 记为持仓
             </button>
@@ -186,6 +208,6 @@ export function HoldingEditor({
           </p>
         </div>
       )}
-    </section>
+    </Shell>
   );
 }

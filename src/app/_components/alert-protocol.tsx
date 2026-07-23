@@ -11,20 +11,47 @@ import { ALERT_CATEGORIES, type AlertPrefs } from "~/lib/alert-protocol";
  */
 export function AlertProtocol({ initial }: { initial: AlertPrefs }) {
   const [prefs, setPrefs] = useState<AlertPrefs>(initial);
+  // 设置面板默认收起：提醒中心是**每天来读**的内容页，而分类开关是**极少改**的设置。
+  // 原来展开态独占首屏 ~450px，把真正的提醒挤到折叠下方——改成一行摘要，按需展开。
+  const [open, setOpen] = useState(false);
   const set = api.notifications.setAlertPref.useMutation({
     onSuccess: (next) => setPrefs(next),
   });
 
+  const onLabels = ALERT_CATEGORIES.filter((c) => c.available && prefs[c.key]).map(
+    (c) => c.label,
+  );
+  const offLabels = ALERT_CATEGORIES.filter(
+    (c) => c.available && !prefs[c.key],
+  ).map((c) => c.label);
+
   return (
-    <section className="mb-6 rounded-xl border border-line bg-surface p-4">
-      <div className="flex items-center gap-2">
+    <section className="mb-6 rounded-xl border border-line bg-surface px-4 py-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 text-left"
+      >
         <span aria-hidden>🔔</span>
-        <h2 className="text-base font-bold text-ink">提醒协议</h2>
-      </div>
-      <p className="mt-1 text-xs leading-relaxed text-muted">
-        选择哪些「变化」值得打扰你——解牛只在你选的类别**真的发生变化**时提醒，而不是每条新闻都推。
+        <h2 className="text-sm font-bold text-ink">提醒协议</h2>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted">
+          {onLabels.length > 0 ? `已开：${onLabels.join("、")}` : "全部已关"}
+          {offLabels.length > 0 ? ` · 已关：${offLabels.join("、")}` : ""}
+        </span>
+        <span className="shrink-0 text-xs font-medium text-brand">
+          {open ? "收起" : "设置"}
+        </span>
+      </button>
+
+      {!open ? null : (
+        <>
+      <p className="mt-2 text-xs leading-relaxed text-muted">
+        选择哪些「变化」值得打扰你——解牛只在你选的类别
+        <span className="font-medium text-ink">真的发生变化</span>
+        时提醒，而不是每条新闻都推。
       </p>
-      <ul className="mt-3 divide-y divide-line/60">
+      <ul className="mt-2 divide-y divide-line/60">
         {ALERT_CATEGORIES.map((c) => {
           const on = prefs[c.key];
           const disabled = !c.available || set.isPending;
@@ -70,6 +97,8 @@ export function AlertProtocol({ initial }: { initial: AlertPrefs }) {
           );
         })}
       </ul>
+        </>
+      )}
     </section>
   );
 }

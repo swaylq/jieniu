@@ -286,12 +286,16 @@ export default async function EntityPage({
               />
             ) : null}
           </dl>
-          <p className="mt-2 text-[11px] leading-relaxed text-muted">
-            来源 东方财富 · 客观估值指标，非评级、非投资建议、不代表高估或低估判断
-          </p>
         </div>
       ) : null}
-      <p className="mt-3 text-xs text-muted">行情数据仅供参考，非投资建议</p>
+      {/* 免责合并成一条：原本估值段尾与卡片底部各一条、都以「非投资建议」结尾，紧挨着重复。
+          合并后顺带补上行情来源（原先只标了估值来源，行情没标）。 */}
+      <p className="mt-3 text-[11px] leading-relaxed text-muted">
+        行情来自新浪 / 腾讯
+        {valuation && hasValuation(valuation) ? "、估值来自东方财富" : ""} · 仅供参考，
+        {valuation && hasValuation(valuation) ? "非评级、" : ""}非投资建议
+        {valuation && hasValuation(valuation) ? "、不代表高估或低估判断" : ""}
+      </p>
     </div>
   ) : null;
 
@@ -394,45 +398,69 @@ export default async function EntityPage({
 
       {hasRail ? (
         <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-8">
-          <aside className="space-y-4 lg:sticky lg:top-4 lg:col-start-2 lg:row-start-1 lg:self-start">
-            {quoteCard}
-            {session?.user ? (
-              <HoldingEditor entityId={id} initial={holding} />
+          {/* 移动端内容层级：原来右栏整块排在主内容**前面**，手机上要先滚过 行情/我的/记分卡/相关
+              四张卡（约 1600px）才看得到「投资逻辑」——产品最核心的内容被上下文信息压在下面。
+              这里用 display:contents 让 aside 的子卡在移动端直接成为网格项、可各自 order：
+              行情(1) → 我的(2) → **主内容(3)** → 记分卡(4) → 相关(5)。
+              lg 起 aside 恢复块级（连续 + sticky 右栏），桌面布局完全不变。 */}
+          <aside className="contents lg:block lg:space-y-4 lg:sticky lg:top-4 lg:col-start-2 lg:row-start-1 lg:self-start">
+            {quoteCard ? (
+              <div className="order-1 lg:order-none">{quoteCard}</div>
             ) : null}
-            {session?.user && quoteTicker ? (
-              <PriceAlertCard entityId={id} />
-            ) : null}
+            {/* 「我的」合并卡：持仓 / 到价提醒 / 决策记录三件「我在这只股上的动作」原本是三张
+                独立卡，各带卡壳+图标+大标题+一段说明文案，占满整个右栏、把真正的信息
+                （记分卡/相关）推到很下面。合并成一张、用小标题分段、说明文案收敛成底部一行。 */}
             {session?.user ? (
               <section
                 id="decision"
-                className="scroll-mt-20 rounded-xl border border-line bg-surface p-4 shadow-sm"
+                className="order-2 scroll-mt-20 divide-y divide-line rounded-xl border border-brand/25 bg-brand/[0.03] shadow-sm lg:order-none"
               >
-                <div className="flex items-center gap-2">
-                  <span aria-hidden>📝</span>
-                  <h3 className="text-sm font-bold text-ink">决策记录</h3>
+                <div className="flex items-center gap-2 px-4 pt-3 pb-2">
+                  <span aria-hidden>📌</span>
+                  <h3 className="text-sm font-bold text-ink">我的</h3>
+                </div>
+
+                <div className="px-4 py-3">
+                  <HoldingEditor entityId={id} initial={holding} bare />
+                </div>
+
+                {quoteTicker ? (
+                  <div className="px-4 py-3">
+                    <PriceAlertCard entityId={id} bare />
+                  </div>
+                ) : null}
+
+                <div className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-semibold text-muted">决策记录</h4>
+                    {decisions.length > 0 ? (
+                      <span className="ml-auto text-[11px] text-muted">
+                        {decisions.length}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="mt-2">
+                    <DecisionEditor entityId={id} />
+                  </div>
                   {decisions.length > 0 ? (
-                    <span className="ml-auto text-[11px] text-muted">
-                      {decisions.length}
-                    </span>
+                    <div className="mt-3">
+                      <DecisionList decisions={decisions} />
+                    </div>
                   ) : null}
                 </div>
-                <div className="mt-3">
-                  <DecisionEditor entityId={id} />
-                </div>
-                {decisions.length > 0 ? (
-                  <div className="mt-3">
-                    <DecisionList decisions={decisions} />
-                  </div>
-                ) : (
-                  <p className="mt-2 text-[11px] leading-relaxed text-muted">
-                    记下买/卖/加/减的理由，日后逻辑有变时解牛帮你对照当初的判断。
-                  </p>
-                )}
+
+                <p className="px-4 py-2.5 text-[11px] leading-relaxed text-muted">
+                  持仓与价位都是你自己记的观察位，解牛据此判断「今天的事有没有动你的逻辑」——非投资建议、不荐买卖、不计盈亏。
+                </p>
               </section>
             ) : null}
-            {news.length > 0 ? <NewsScorecard data={scorecard} /> : null}
+            {news.length > 0 ? (
+              <div className="order-4 lg:order-none">
+                <NewsScorecard data={scorecard} />
+              </div>
+            ) : null}
             {relatedFlat.length > 0 && (
-              <section className="rounded-xl border border-line bg-surface p-4">
+              <section className="order-5 rounded-xl border border-line bg-surface p-4 lg:order-none">
                 <SectionHead title="相关" hint={`${relatedFlat.length}`} />
                 <ul className="flex flex-wrap gap-2">
                   {relatedFlat.slice(0, 12).map((e) => (
@@ -446,7 +474,7 @@ export default async function EntityPage({
               </section>
             )}
           </aside>
-          <div className="min-w-0 lg:col-start-1 lg:row-start-1">
+          <div className="order-3 min-w-0 lg:order-none lg:col-start-1 lg:row-start-1">
             {thesisBlock}
             {timelineBlock}
             {catalystBlock}

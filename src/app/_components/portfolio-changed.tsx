@@ -32,22 +32,36 @@ export function PortfolioChanged({ items }: { items: PortfolioChangeItem[] }) {
   }
 
   const { changed, muted } = partitionPortfolioChange(items);
+  // 全静时收敛：首页 hero 已经说过「今天都很平静，没有需要复核的变化」，统计卡也已给出
+  // 需要复核 0 / 今日静音 N。这里再用一张高亮大卡复述一遍纯属重复——降级成中性紧凑卡，
+  // 只保留真正有信息量的那行（哪几支静音）。有变化时维持原来的高亮强调。
+  const quiet = changed.length === 0;
 
   return (
-    <section className="rounded-2xl border border-brand/30 bg-brand/[0.05] p-5">
+    <section
+      className={
+        quiet
+          ? "rounded-2xl border border-line bg-surface p-4"
+          : "rounded-2xl border border-brand/30 bg-brand/[0.05] p-5"
+      }
+    >
       <div className="flex items-center gap-2">
-        <span aria-hidden>🐂</span>
-        <h2 className="text-base font-bold text-ink">今天你的组合变了什么</h2>
+        {!quiet ? <span aria-hidden>🐂</span> : null}
+        <h2
+          className={
+            quiet
+              ? "text-sm font-semibold text-muted"
+              : "text-base font-bold text-ink"
+          }
+        >
+          今天你的组合变了什么
+        </h2>
         <span className="ml-auto shrink-0 text-[11px] text-muted">
           近 7 天 · 只看动了逻辑的
         </span>
       </div>
 
-      {changed.length === 0 ? (
-        <p className="mt-3 text-sm leading-relaxed text-muted">
-          你的 {items.length} 支持仓近期都没有触及投资逻辑的实质动态——今日无需关注。宁静也是一种信号。
-        </p>
-      ) : (
+      {quiet ? null : (
         <ul className="mt-3 space-y-2.5">
           {changed.map((c) => {
             const accent = changeTone(c.direction) === "accent";
@@ -92,13 +106,19 @@ export function PortfolioChanged({ items }: { items: PortfolioChangeItem[] }) {
       )}
 
       {muted.length > 0 ? (
-        <p className="mt-3 border-t border-line/60 pt-3 text-[11px] leading-relaxed text-muted">
+        <p
+          className={`text-[11px] leading-relaxed text-muted ${
+            quiet ? "mt-2" : "mt-3 border-t border-line/60 pt-3"
+          }`}
+        >
           今日无异动 · {muted.length} 支已静音：{muted.map((m) => m.name).join("、")}
         </p>
       ) : null}
 
-      <p className="mt-3 text-[11px] leading-relaxed text-muted">
-        仅汇总触及你持仓监控维度的动态，帮你判断「今天要不要重看逻辑」；非投资建议、不构成买卖依据、不预测涨跌。
+      <p className="mt-2 text-[11px] leading-relaxed text-muted">
+        {quiet
+          ? "非投资建议、不预测涨跌。"
+          : "仅汇总触及你持仓监控维度的动态，帮你判断「今天要不要重看逻辑」；非投资建议、不构成买卖依据、不预测涨跌。"}
       </p>
     </section>
   );

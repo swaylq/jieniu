@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import {
   CHANGE_LABEL,
+  partitionPortfolioChange,
   type ChangeDirection,
   type PortfolioChangeItem,
 } from "~/lib/portfolio-change";
@@ -34,6 +35,7 @@ export function WorkbenchRail({
   current: CurrentCard | null;
   changes: PortfolioChangeItem[];
 }) {
+  const { changed: changedOnly } = partitionPortfolioChange(changes);
   return (
     <div className="space-y-4">
       {current ? (
@@ -91,8 +93,15 @@ export function WorkbenchRail({
               全部 {changes.length} 项
             </Link>
           </div>
+          {/* 只列真正动了的；全稳时逐条重复「逻辑未变 / 稳定 →」是纯噪音（首页 hero
+              与统计卡都已说明今天很平静），收敛成一行。 */}
+          {changedOnly.length === 0 ? (
+            <p className="mt-2 text-[11px] leading-relaxed text-muted">
+              {changes.length} 支持仓逻辑均未变——无需复核。
+            </p>
+          ) : (
           <ul className="mt-2.5 space-y-2.5">
-            {changes.map((c) => {
+            {changedOnly.map((c) => {
               const { label, accent } = dirTag(c.direction);
               return (
                 <li key={c.entityId} className="flex items-start justify-between gap-2">
@@ -121,6 +130,7 @@ export function WorkbenchRail({
               );
             })}
           </ul>
+          )}
         </section>
       ) : null}
     </div>
