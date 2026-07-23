@@ -4,6 +4,7 @@ import {
   tickerToSymbol,
   tickerToSecid,
   parseSinaQuote,
+  parseSinaIndex,
   parseTencentQuote,
   parseValuation,
   hasValuation,
@@ -36,6 +37,46 @@ describe("parseSinaQuote", () => {
 
   it("returns null for an empty payload (halted / unknown symbol)", () => {
     expect(parseSinaQuote('var hq_str_sh000000="";')).toBeNull();
+  });
+});
+
+// 报文均为线上实抓（2026-07-23），三个市场字段布局完全不同，故必须分派解析。
+describe("parseSinaIndex", () => {
+  it("cn: computes changePct from prevClose (最新在第 3 位、昨收第 2 位)", () => {
+    const raw =
+      'var hq_str_sh000001="上证指数,3868.0871,3867.0336,3876.7774,3878.8318,3851.7058,0,0,562122601,1025875517700,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2026-07-23,15:30:36,00,";';
+    const q = parseSinaIndex(raw, "cn");
+    expect(q?.price).toBeCloseTo(3876.7774, 4);
+    expect(q?.changePct).toBeCloseTo(0.2522, 3);
+  });
+
+  it("hk: takes 最新(第 6 位) 与 涨跌幅(第 8 位)", () => {
+    const raw =
+      'var hq_str_rt_hkHSI="HSI,恒生指数,24966.530,24892.660,25267.390,24876.830,25210.811,318.150,1.280,0.000,0.000,233480363.901,11416668992,0.000,0.000,28056.100,22518.000,2026/07/23,16:08:28,,,,,,";';
+    const q = parseSinaIndex(raw, "hk");
+    expect(q?.price).toBeCloseTo(25210.811, 3);
+    expect(q?.changePct).toBeCloseTo(1.28, 2);
+  });
+
+  it("us: 涨跌幅接口直接给（第 2 位），不自算", () => {
+    const raw =
+      'var hq_str_gb_dji="道琼斯,52218.5781,-0.01,2026-07-23 04:43:46,-6.0600,52287.1406,52511.2109,52148.8711,53289.3008,43340.6797,449101175,459090077,0,0.00,--,0.00,0.00,0.00,0.00,0,0,0.0000,0.00,0.0000,,Jul 22 04:43PM EDT,52224.6406,0,1,2026";';
+    const q = parseSinaIndex(raw, "us");
+    expect(q?.price).toBeCloseTo(52218.5781, 4);
+    expect(q?.changePct).toBeCloseTo(-0.01, 4);
+  });
+
+  it("用错市场布局会解析出错值——这正是不能共用 parseSinaQuote 的原因", () => {
+    const us =
+      'var hq_str_gb_dji="道琼斯,52218.5781,-0.01,2026-07-23 04:43:46,-6.0600";';
+    // 按 cn 布局解析美股报文：会把「涨跌幅 -0.01」当成昨收 → 价格/涨跌幅全错
+    expect(parseSinaIndex(us, "us")?.price).toBeCloseTo(52218.5781, 4);
+    expect(parseSinaIndex(us, "cn")?.price).not.toBeCloseTo(52218.5781, 4);
+  });
+
+  it("空报文 / 字段不足返回 null（不抛）", () => {
+    expect(parseSinaIndex('var hq_str_gb_dji="";', "us")).toBeNull();
+    expect(parseSinaIndex('var hq_str_rt_hkHSI="HSI,恒生指数";', "hk")).toBeNull();
   });
 });
 

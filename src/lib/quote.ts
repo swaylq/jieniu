@@ -128,6 +128,48 @@ export function parseSinaQuote(raw: string): Quote | null {
   );
 }
 
+/** 指数所属市场。决定新浪返回的字段布局，同时供 UI 分组展示。 */
+export type IndexMarket = "cn" | "hk" | "us";
+
+/**
+ * 解析新浪指数行情。**三个市场的字段布局完全不同**，不能共用 parseSinaQuote：
+ * - `cn` `sh000001`：名称,今开,昨收,**最新**,最高,最低…      → 昨收自算涨跌幅
+ * - `hk` `rt_hkHSI`：代码,名称,今开,昨收,最高,最低,**最新**,涨跌额,**涨跌幅**…
+ * - `us` `gb_dji`  ：名称,**最新**,**涨跌幅**,时间,涨跌额…   → 涨跌幅接口直接给
+ * 任一字段不可用返回 null（不抛），调用方跳过该条。
+ */
+export function parseSinaIndex(
+  raw: string,
+  market: IndexMarket,
+): { price: number; changePct: number } | null {
+  const payload = /="([^"]*)"/.exec(raw)?.[1] ?? "";
+  if (!payload) return null;
+  const f = payload.split(",");
+  const num = (i: number) => Number(f[i] ?? "");
+
+  let price: number;
+  let changePct: number;
+  if (market === "us") {
+    if (f.length < 3) return null;
+    price = num(1);
+    changePct = num(2);
+  } else if (market === "hk") {
+    if (f.length < 9) return null;
+    price = num(6);
+    changePct = num(8);
+  } else {
+    if (f.length < 4) return null;
+    price = num(3);
+    const prevClose = num(2);
+    if (!Number.isFinite(prevClose) || prevClose <= 0) return null;
+    changePct = ((price - prevClose) / prevClose) * 100;
+  }
+
+  if (!Number.isFinite(price) || price <= 0) return null;
+  if (!Number.isFinite(changePct)) return null;
+  return { price, changePct };
+}
+
 /** 腾讯：v_xxx="1~名称~代码~现价~昨收~今开~..."; */
 export function parseTencentQuote(raw: string): Quote | null {
   const payload = /="([^"]*)"/.exec(raw)?.[1] ?? "";

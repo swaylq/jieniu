@@ -1,10 +1,12 @@
 // 相对导入（不用 ~ 别名）：让 cron 脚本走 tsx 也能引用 fetchQuote（tsx 不解析 tsconfig paths）。
 import {
+  parseSinaIndex,
   parseSinaQuote,
   parseTencentQuote,
   parseValuation,
   tickerToSecid,
   tickerToSymbol,
+  type IndexMarket,
   type Quote,
   type Valuation,
 } from "../lib/quote";
@@ -97,41 +99,56 @@ export async function fetchKline(ticker: string, days = 30): Promise<number[]> {
   }
 }
 
-const INDEX_SYMBOLS = [
-  { symbol: "sh000001", label: "上证指数" },
-  { symbol: "sz399001", label: "深证成指" },
-  { symbol: "sz399006", label: "创业板指" },
-  { symbol: "sh000688", label: "科创50" },
-  { symbol: "sh000300", label: "沪深300" },
-] as const;
+/** 概览条覆盖的指数：沪深 → 港股 → 美股，顺序即展示顺序。 */
+const INDEX_SYMBOLS: { symbol: string; label: string; market: IndexMarket }[] = [
+  { symbol: "sh000001", label: "上证指数", market: "cn" },
+  { symbol: "sz399001", label: "深证成指", market: "cn" },
+  { symbol: "sz399006", label: "创业板指", market: "cn" },
+  { symbol: "sh000688", label: "科创50", market: "cn" },
+  { symbol: "sh000300", label: "沪深300", market: "cn" },
+  { symbol: "rt_hkHSI", label: "恒生指数", market: "hk" },
+  { symbol: "rt_hkHSTECH", label: "恒生科技", market: "hk" },
+  { symbol: "gb_dji", label: "道琼斯", market: "us" },
+  { symbol: "gb_ixic", label: "纳斯达克", market: "us" },
+  { symbol: "gb_inx", label: "标普500", market: "us" },
+];
 
 export type IndexQuote = {
   symbol: string;
   label: string;
+  market: IndexMarket;
   price: number;
   changePct: number;
 };
 
-/** 抓主要指数行情（新浪，一次批量）；失败返回 []（不抛）。供首页市场概览条。 */
+/**
+ * 抓主要指数行情（新浪，A股/港股/美股一次批量拿——实测混合 symbol 同一请求可返回）。
+ * 港美在 A 股交易时段显示的是上一交易日收盘，属正常（各家财经端一致），UI 按市场分组标注。
+ * 失败返回 []（不抛）。供首页市场概览条。
+ */
 export async function fetchIndexQuotes(): Promise<IndexQuote[]> {
   try {
     const list = INDEX_SYMBOLS.map((i) => i.symbol).join(",");
     const res = await fetch(`https://hq.sinajs.cn/list=${list}`, {
       headers: { Referer: "https://finance.sina.com.cn" },
       cache: "no-store",
+      signal: AbortSignal.timeout(6000),
     });
     if (!res.ok) return [];
     const raw = new TextDecoder("gbk").decode(await res.arrayBuffer());
     const lines = raw.split("\n");
     const out: IndexQuote[] = [];
     for (const idx of INDEX_SYMBOLS) {
-      const line = lines.find((l) => l.includes(idx.symbol));
+      // 精确匹配 `hq_str_<symbol>=`：symbol 之间存在子串关系（rt_hkHSI ⊂ 不了 HSTECH，
+      // 但 sh000300/sh000688 之类未来易撞），松匹配会串行拿到别的指数。
+      const line = lines.find((l) => l.includes(`hq_str_${idx.symbol}=`));
       if (!line) continue;
-      const q = parseSinaQuote(line);
+      const q = parseSinaIndex(line, idx.market);
       if (q) {
         out.push({
           symbol: idx.symbol,
           label: idx.label,
+          market: idx.market,
           price: q.price,
           changePct: q.changePct,
         });
