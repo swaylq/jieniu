@@ -1,7 +1,5 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
-
 import { api } from "~/trpc/react";
 import { type IndexMarket } from "~/lib/quote";
 
@@ -15,7 +13,11 @@ const MARKET_LABEL: Record<IndexMarket, string> = {
 
 /**
  * 首页顶部市场概览条：沪深 / 港股 / 美股主要指数（红涨绿跌，只展示不预测）。
- * 按市场分组标注——港美在 A 股交易时段显示的是上一交易日收盘，分组后不会被误读成实时。
+ *
+ * 布局：**自动换行、不横向滚动**——十个指数横排会溢出，滚动会把港美藏在视野外
+ * （用户不滑就不知道有）。每个市场是一个 flex-wrap 单元：分组标签始终贴着自己的指数，
+ * 组内窄屏可再换行，组与组之间自然排布。港美在 A 股时段是上一交易日收盘，靠分组标注区分。
+ *
  * 数据失败则整条隐藏。
  */
 export function MarketStrip() {
@@ -24,26 +26,12 @@ export function MarketStrip() {
     staleTime: 30_000,
   });
 
-  // 覆盖三个市场后条目会横向溢出（桌面端也会）。渐隐提示按「实际是否溢出」显示，
-  // 而不是写死移动端断点——否则桌面用户根本不知道右边还有港股/美股。
-  const scrollerRef = useRef<HTMLDivElement>(null);
-  const [overflowing, setOverflowing] = useState(false);
-  useEffect(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    const check = () => setOverflowing(el.scrollWidth > el.clientWidth + 4);
-    check();
-    const ro = new ResizeObserver(check);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [data]);
-
   if (isPending) {
     return (
       <div className="rounded-xl border border-line bg-surface px-4 py-3">
-        <div className="no-scrollbar flex items-center gap-x-6 overflow-x-auto">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="flex shrink-0 items-baseline gap-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="flex items-baseline gap-2">
               <div className="h-3 w-14 animate-pulse rounded bg-muted/20" />
               <div className="h-3 w-16 animate-pulse rounded bg-muted/20" />
             </div>
@@ -61,50 +49,42 @@ export function MarketStrip() {
   })).filter((g) => g.items.length > 0);
 
   return (
-    <div className="relative rounded-xl border border-line bg-surface">
-      <div
-        ref={scrollerRef}
-        className="no-scrollbar flex snap-x items-center gap-x-4 overflow-x-auto scroll-px-4 px-4 py-3"
-      >
-        {groups.map((g, gi) => (
-          <Fragment key={g.market}>
-            {gi > 0 ? (
-              <span className="h-3.5 w-px shrink-0 bg-line" aria-hidden />
-            ) : null}
-            <div className="flex shrink-0 snap-start items-center gap-x-4">
-              <span className="shrink-0 text-[11px] font-medium text-faint">
-                {MARKET_LABEL[g.market]}
-              </span>
-              {g.items.map((idx) => {
-                const up = idx.changePct >= 0;
-                const tone = up ? "text-up" : "text-down";
-                return (
-                  <div
-                    key={idx.symbol}
-                    className="flex shrink-0 items-baseline gap-2"
-                  >
-                    <span className="text-xs text-muted">{idx.label}</span>
-                    <span className={`tabular text-sm font-semibold ${tone}`}>
-                      {idx.price.toFixed(2)}
-                    </span>
-                    <span className={`tabular text-xs ${tone}`}>
-                      {up ? "+" : ""}
-                      {idx.changePct.toFixed(2)}%
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </Fragment>
+    <div className="rounded-xl border border-line bg-surface px-4 py-3">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        {groups.map((g) => (
+          <div
+            key={g.market}
+            className="flex flex-wrap items-center gap-x-4 gap-y-2"
+          >
+            <span className="text-[11px] font-medium text-faint">
+              {MARKET_LABEL[g.market]}
+            </span>
+            {g.items.map((idx) => {
+              // 按显示精度判定三态。0 必须是中性色：港美盘前新浪会把涨跌幅重置为 0.00、
+              // 最新价仍是上一交易日收盘，若沿用「>=0 即涨」会渲染成红色 +0.00%，
+              // 读起来像「今天平盘」，实际是「今天还没开盘」——财经产品不能这么误导。
+              const pct = Number(idx.changePct.toFixed(2));
+              const tone =
+                pct > 0 ? "text-up" : pct < 0 ? "text-down" : "text-muted";
+              return (
+                <div key={idx.symbol} className="flex items-baseline gap-2">
+                  <span className="text-xs text-muted">{idx.label}</span>
+                  <span className={`tabular text-sm font-semibold ${tone}`}>
+                    {idx.price.toFixed(2)}
+                  </span>
+                  <span className={`tabular text-xs ${tone}`}>
+                    {pct > 0 ? "+" : ""}
+                    {pct.toFixed(2)}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         ))}
-        <span className="ml-auto hidden shrink-0 pl-4 text-[11px] text-muted sm:block">
+        <span className="ml-auto hidden pl-4 text-[11px] text-muted sm:block">
           行情仅供参考
         </span>
       </div>
-      {/* 右侧渐隐：仅在真的溢出时出现，提示可横滑（右边还有港股/美股），并把裁切处收干净 */}
-      {overflowing ? (
-        <div className="pointer-events-none absolute inset-y-px right-px w-10 rounded-r-xl bg-gradient-to-l from-surface to-transparent" />
-      ) : null}
     </div>
   );
 }
