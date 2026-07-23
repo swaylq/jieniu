@@ -229,3 +229,71 @@ describe("entityRouter.milestones", () => {
     expect(days).toBeGreaterThan(355);
   });
 });
+
+describe("entityRouter.newsPage", () => {
+  it("按 tier 直接分页取公告（不是在资讯里筛），并返回两个 tab 的总数", async () => {
+    const rows = [{ id: "n1", title: "回购进展", tier: "PRIMARY" }];
+    const findMany = vi.fn().mockResolvedValue(rows);
+    const count = vi
+      .fn()
+      .mockResolvedValueOnce(352) // 资讯总数
+      .mockResolvedValueOnce(240); // 公告总数
+    const res = await makeCaller({
+      newsItem: { findMany, count },
+    }).newsPage({ id: "c1", tab: "announce", page: 3, perPage: 40 });
+
+    expect(res.newsTotal).toBe(352);
+    expect(res.announceTotal).toBe(240);
+    expect(res.page).toBe(3);
+    expect(res.pages).toBe(6); // ceil(240/40)
+    expect(res.items).toEqual(rows);
+
+    const arg = findMany.mock.calls[0]?.[0] as {
+      where: { tier?: string };
+      skip: number;
+      take: number;
+      orderBy: unknown;
+    };
+    expect(arg.where.tier).toBe("PRIMARY");
+    expect(arg.skip).toBe(80);
+    expect(arg.take).toBe(40);
+    expect(arg.orderBy).toEqual([{ publishedAt: "desc" }, { id: "desc" }]);
+  });
+
+  it("资讯 tab 不加 tier 过滤，页数按资讯总数算", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const count = vi.fn().mockResolvedValueOnce(90).mockResolvedValueOnce(30);
+    const res = await makeCaller({ newsItem: { findMany, count } }).newsPage({
+      id: "c1",
+      perPage: 40,
+    });
+    const arg = findMany.mock.calls[0]?.[0] as { where: { tier?: string } };
+    expect(arg.where.tier).toBeUndefined();
+    expect(res.pages).toBe(3); // ceil(90/40)
+  });
+
+  it("没有任何资讯时页数仍为 1（不出现 0 页）", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const count = vi.fn().mockResolvedValue(0);
+    const res = await makeCaller({ newsItem: { findMany, count } }).newsPage({
+      id: "c1",
+    });
+    expect(res.pages).toBe(1);
+  });
+});
+
+describe("entityRouter.listByTypePage", () => {
+  it("分页浏览全部公司", async () => {
+    const items = [{ id: "e1", name: "宁德时代", ticker: null }];
+    const findMany = vi.fn().mockResolvedValue(items);
+    const count = vi.fn().mockResolvedValue(802);
+    const res = await makeCaller({ entity: { findMany, count } }).listByTypePage(
+      { type: "COMPANY", page: 2, perPage: 120 },
+    );
+    expect(res.total).toBe(802);
+    expect(res.pages).toBe(7); // ceil(802/120)
+    const arg = findMany.mock.calls[0]?.[0] as { skip: number; take: number };
+    expect(arg.skip).toBe(120);
+    expect(arg.take).toBe(120);
+  });
+});

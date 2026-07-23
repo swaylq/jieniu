@@ -100,6 +100,8 @@ export function eastmoneyReportsForCodes(
     name: "东方财富·券商研报",
     tier: "MEDIA",
     kind: "json-api",
+    // 研报主体唯一且源已给出（stockName + stockCode）——标题里的行业词不是它的主体。
+    subjectOnly: true,
     async fetch(): Promise<RawNewsItem[]> {
       const out: RawNewsItem[] = [];
       for (const code of codes) {

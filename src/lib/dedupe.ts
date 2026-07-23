@@ -39,6 +39,38 @@ export function historicalKey(
   return `${crossSourceKey(title, entityIds)}::${day}`;
 }
 
+/** 已入库的同名公告：发布时刻 + 来源。 */
+export type PriorFiling = { publishedAt: Date; sourceKey: string };
+
+/**
+ * 跨源同一份公告的允许日期误差（天）。
+ *
+ * 东财记 `notice_date`（官方公告日），巨潮记 `announcementTime`（实际披露时刻），
+ * 晚间披露会跨天——同一份公告两个源常差 1 天。实测因此漏判 697 组。
+ */
+export const CROSS_SOURCE_DAY_TOLERANCE = 2;
+
+/**
+ * 这条公告是否只是**另一个源**里已有那份的重复。
+ *
+ * 刻意只并跨源：同一个源里出现两条同名公告（恒瑞一周内两次「获得药物临床试验批准通知书」）
+ * 更可能是两件真事，日期再近也不并——那种情况本来就有 hash 兜底防重复入库。
+ */
+export function isCrossSourceRepeat(
+  priors: PriorFiling[],
+  publishedAt: Date,
+  sourceKey: string,
+): boolean {
+  if (Number.isNaN(publishedAt.getTime())) return false;
+  return priors.some((p) => {
+    if (p.sourceKey === sourceKey) return false;
+    if (Number.isNaN(p.publishedAt.getTime())) return false;
+    const gapDays =
+      Math.abs(p.publishedAt.getTime() - publishedAt.getTime()) / 86_400_000;
+    return gapDays <= CROSS_SOURCE_DAY_TOLERANCE;
+  });
+}
+
 /** 无价值 / 纯样板公告标题——入库时跳过，避免刷屏「最新」流。 */
 const LOW_VALUE: RegExp[] = [
   /翌日披露报表/,

@@ -5,6 +5,7 @@ import { api } from "~/trpc/server";
 import { EntitySearch } from "../_components/entity-search";
 import { SectionHead, chipClass, displayCls } from "../_components/section-head";
 import { HotSectorGrid } from "../_components/hot-sector-grid";
+import { Pager } from "../_components/pager";
 import { entityTypeLabel } from "~/lib/format";
 import { abs, openGraph, twitter } from "~/lib/seo";
 import type { EntityType } from "../../../generated/prisma";
@@ -35,7 +36,62 @@ function flagClass(tone: "up" | "neutral") {
     : "shrink-0 rounded-full border border-line px-2 py-0.5 text-xs font-medium text-muted";
 }
 
-export default async function DiscoverPage() {
+const TYPE_KEYS = new Set<string>(TYPES);
+
+export default async function DiscoverPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ type?: string; page?: string }>;
+}) {
+  const sp = await searchParams;
+  // ?type=COMPANY → 进入「某一类的完整分页列表」；不带则是原来的总览页。
+  const browseType =
+    sp.type && TYPE_KEYS.has(sp.type) ? (sp.type as EntityType) : null;
+  if (browseType) {
+    const page = Math.max(1, Number(sp.page) || 1);
+    const data = await api.entity.listByTypePage({ type: browseType, page });
+    return (
+      <main className="mx-auto max-w-2xl p-4 lg:max-w-5xl lg:px-8">
+        <header className="pt-1">
+          <Link href="/discover" className="text-sm text-muted hover:text-brand">
+            ← 机会雷达
+          </Link>
+          <h1 className={`mt-2 text-2xl ${displayCls}`}>
+            全部{entityTypeLabel(browseType)}
+          </h1>
+          <p className="mt-1.5 text-sm text-muted">
+            共 {data.total} 个 · 按名称排序
+          </p>
+        </header>
+        <div className="mt-4">
+          <EntitySearch />
+        </div>
+        <ul className="mt-6 flex flex-wrap gap-2">
+          {data.items.map((e) => (
+            <li key={e.id}>
+              <Link href={`/entity/${e.id}`} className={chipClass}>
+                {e.name}
+                {e.ticker ? (
+                  <span className="tabular ml-1.5 text-xs text-muted">
+                    {e.ticker}
+                  </span>
+                ) : null}
+              </Link>
+            </li>
+          ))}
+        </ul>
+        <Pager
+          basePath="/discover"
+          params={{ type: browseType }}
+          page={data.page}
+          pages={data.pages}
+          total={data.total}
+          unit="个"
+        />
+      </main>
+    );
+  }
+
   const [hot, radar, sections] = await Promise.all([
     api.entity.hotSectors(),
     api.entity.radar(),
@@ -142,7 +198,13 @@ export default async function DiscoverPage() {
               </ul>
               {items.length > DISPLAY_CAP ? (
                 <p className="mt-3 text-xs text-muted">
-                  已显示前 {DISPLAY_CAP} / 共 {items.length}，用上方搜索按名称 / 代码查找更多 →
+                  已显示前 {DISPLAY_CAP} / 共 {items.length} ·{" "}
+                  <Link
+                    href={`/discover?type=${type}`}
+                    className="font-medium text-brand hover:underline"
+                  >
+                    查看全部 →
+                  </Link>
                 </p>
               ) : null}
             </section>

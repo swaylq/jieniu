@@ -115,3 +115,35 @@ describe("hasCoveredEntity", () => {
     expect(hasCoveredEntity(["不存在"], byId)).toBe(false);
   });
 });
+
+describe("机构名裹住公司名的误配（2026-07-23 质量审计）", () => {
+  const dict = [
+    {
+      id: "boc",
+      type: "COMPANY" as const,
+      name: "中国银行",
+      shortName: null,
+      aliases: [],
+      ticker: "601988",
+    },
+  ];
+
+  it("别家公司「收到中国银行间市场交易商协会通知书」不绑到中国银行", () => {
+    expect(
+      matchEntities(
+        "甘肃能源:关于收到中国银行间市场交易商协会《接受注册通知书》的公告",
+        dict,
+      ),
+    ).toEqual([]);
+  });
+
+  it("中国银行自己的公告照常绑上", () => {
+    expect(
+      matchEntities("中国银行股份有限公司2026年半年度业绩快报", dict),
+    ).toEqual(["boc"]);
+  });
+
+  it("代码仍可命中", () => {
+    expect(matchEntities("601988 回购进展", dict)).toEqual(["boc"]);
+  });
+});

@@ -5,6 +5,8 @@ import {
   stripEntityPrefix,
   crossSourceKey,
   historicalKey,
+  isCrossSourceRepeat,
+  CROSS_SOURCE_DAY_TOLERANCE,
 } from "./dedupe";
 
 describe("normalizeTitle", () => {
@@ -100,5 +102,57 @@ describe("historicalKey", () => {
     expect(() =>
       historicalKey("某公告", ["e1"], new Date("not-a-date")),
     ).not.toThrow();
+  });
+});
+
+describe("isCrossSourceRepeat", () => {
+  const d = (s: string) => new Date(`${s}T08:00:00.000Z`);
+
+  it("跨源、日期差 1 天 → 判为同一份（东财 notice_date vs 巨潮 announcementTime 常差一天）", () => {
+    const priors = [
+      { publishedAt: d("2026-05-27"), sourceKey: "eastmoney-announcement" },
+    ];
+    expect(
+      isCrossSourceRepeat(priors, d("2026-05-28"), "cninfo-announcement"),
+    ).toBe(true);
+  });
+
+  it("同源同名不并——可能是两件真事（恒瑞一周两次临床批准）", () => {
+    const priors = [
+      { publishedAt: d("2026-07-15"), sourceKey: "eastmoney-announcement" },
+    ];
+    expect(
+      isCrossSourceRepeat(priors, d("2026-07-16"), "eastmoney-announcement"),
+    ).toBe(false);
+  });
+
+  it("跨源但日期隔得远 → 是周期性公告，不并", () => {
+    const priors = [
+      { publishedAt: d("2026-01-05"), sourceKey: "eastmoney-announcement" },
+    ];
+    expect(
+      isCrossSourceRepeat(priors, d("2026-02-04"), "cninfo-announcement"),
+    ).toBe(false);
+  });
+
+  it("边界：正好等于容差天数仍算同一份", () => {
+    const priors = [
+      { publishedAt: d("2026-05-27"), sourceKey: "eastmoney-announcement" },
+    ];
+    const at = new Date(
+      d("2026-05-27").getTime() + CROSS_SOURCE_DAY_TOLERANCE * 86_400_000,
+    );
+    expect(isCrossSourceRepeat(priors, at, "cninfo-announcement")).toBe(true);
+  });
+
+  it("无历史 / 非法日期都不误判", () => {
+    expect(isCrossSourceRepeat([], d("2026-05-27"), "x")).toBe(false);
+    expect(
+      isCrossSourceRepeat(
+        [{ publishedAt: d("2026-05-27"), sourceKey: "a" }],
+        new Date("bad"),
+        "b",
+      ),
+    ).toBe(false);
   });
 });

@@ -20,6 +20,7 @@ import { PriceAlertCard } from "../../_components/price-alert-card";
 import { DecisionEditor } from "../../_components/decision-editor";
 import { DecisionList, type DecisionItem } from "../../_components/decision-list";
 import { NewsCard } from "../../_components/news-card";
+import { Pager } from "../../_components/pager";
 import { NewsScorecard } from "../../_components/news-scorecard";
 import { PriceChart } from "../../_components/price-chart";
 import { SectionHead, chipClass, displayCls } from "../../_components/section-head";
@@ -109,7 +110,7 @@ export default async function EntityPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; page?: string }>;
 }) {
   const { id } = await params;
   const sp = await searchParams;
@@ -117,10 +118,12 @@ export default async function EntityPage({
     sp.tab === "announce" || sp.tab === "relation" || sp.tab === "milestone"
       ? sp.tab
       : "news";
+  const pageNum = Math.max(1, Number(sp.page) || 1);
+  const listTab = tab === "announce" ? "announce" : "news";
 
   const [
     data,
-    rawNews,
+    newsPage,
     milestoneItems,
     session,
     followers,
@@ -130,7 +133,7 @@ export default async function EntityPage({
     ecosystem,
   ] = await Promise.all([
     getEntityData(id),
-    api.entity.newsById({ id }),
+    api.entity.newsPage({ id, tab: listTab, page: pageNum }),
     api.entity.milestones({ id, months: 12 }),
     auth(),
     api.entity.followerCount({ id }),
@@ -141,7 +144,8 @@ export default async function EntityPage({
   ]);
   if (!data) notFound();
   // 折叠同日一手公告轰炸（定增/重组当天甩十几份程序性文档）——两个 tab 都受益，避免单事件刷屏。
-  const news = collapseAnnouncementBursts(rawNews);
+  // 折叠只作用于**当前这一页**：全量条数以库里的 total 为准，见下方分页条。
+  const news = collapseAnnouncementBursts(newsPage.items);
   const { entity, groups } = data;
   // 公司页本身没有 ticker，取其发行股票(关系里的 STOCK)的代码，让行情/走势也出现在公司页。
   const relatedTicker = Object.values(groups)
@@ -158,7 +162,8 @@ export default async function EntityPage({
   const buckets = (Object.keys(groups) as RelationBucket[]).filter(
     (b) => groups[b].length > 0,
   );
-  const announcements = news.filter((n) => n.tier === "PRIMARY");
+  // 「公告」tab 现在由服务端按 tier 直接分页取（不再是在资讯里筛），这里只是当前页的条目。
+  const announcements = news;
   const [following, holding, decisions, userThesis] = session?.user
     ? await Promise.all([
         api.watchlist.isFollowing({ entityId: id }),
@@ -176,8 +181,8 @@ export default async function EntityPage({
   // 一年大事记：只收重磅事件，按月倒序分组（回填一年后「资讯」流只够看最近几个月）。
   const milestoneMonths = groupByMonth(milestoneItems);
   const tabs: { key: Tab; label: string }[] = [
-    { key: "news", label: `资讯 ${news.length}` },
-    { key: "announce", label: `公告 ${announcements.length}` },
+    { key: "news", label: `资讯 ${newsPage.newsTotal}` },
+    { key: "announce", label: `公告 ${newsPage.announceTotal}` },
     ...(milestoneItems.length > 0
       ? [{ key: "milestone" as Tab, label: `大事记 ${milestoneItems.length}` }]
       : []),
@@ -202,7 +207,7 @@ export default async function EntityPage({
         {tabs.map((t) => (
           <Link
             key={t.key}
-            href={`/entity/${id}?tab=${t.key}`}
+            href={`/entity/${id}?tab=${t.key}`}  /* 切 tab 回到第 1 页 */
             className={`-mb-px border-b-2 px-3 py-2 text-sm transition-colors ${
               tab === t.key
                 ? "border-brand font-semibold text-brand"
@@ -268,11 +273,24 @@ export default async function EntityPage({
         ) : listItems.length === 0 ? (
           <p className="text-sm text-muted">{emptyMsg}</p>
         ) : (
-          <ul className="space-y-3">
-            {listItems.map((n) => (
-              <NewsCard key={n.id} n={n} />
-            ))}
-          </ul>
+          <>
+            <ul className="space-y-3">
+              {listItems.map((n) => (
+                <NewsCard key={n.id} n={n} />
+              ))}
+            </ul>
+            <Pager
+              basePath={`/entity/${id}`}
+              params={{ tab }}
+              page={newsPage.page}
+              pages={newsPage.pages}
+              total={
+                tab === "announce"
+                  ? newsPage.announceTotal
+                  : newsPage.newsTotal
+              }
+            />
+          </>
         )}
       </div>
     </>

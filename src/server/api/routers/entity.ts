@@ -176,6 +176,38 @@ export const entityRouter = createTRPCRouter({
     ),
 
   /**
+   * 按分类分页浏览（2026-07-23）：发现页原来每类只列前 90 个、其余「靠搜索找」——
+   * 覆盖 802 家公司时等于**没有入口能看到全部**。这里给一个真正能翻到底的列表。
+   */
+  listByTypePage: publicProcedure
+    .input(
+      z.object({
+        type: z.enum(["SECTOR", "COMPANY", "STOCK", "PERSON"]),
+        page: z.number().min(1).max(500).default(1),
+        perPage: z.number().min(20).max(200).default(120),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const where = { type: input.type };
+      const [total, items] = await Promise.all([
+        ctx.db.entity.count({ where }),
+        ctx.db.entity.findMany({
+          where,
+          orderBy: { name: "asc" },
+          skip: (input.page - 1) * input.perPage,
+          take: input.perPage,
+          select: { id: true, name: true, ticker: true },
+        }),
+      ]);
+      return {
+        items,
+        total,
+        page: input.page,
+        pages: Math.max(1, Math.ceil(total / input.perPage)),
+      };
+    }),
+
+  /**
    * 机会雷达（P5-4）：近 3 天资讯热度最高的公司/股票，标注「有原始进展 / 多为跟进报道 / 关注升温」。
    * 纯规则、零 AI——把「高关注但低新信息」和「有真实新事实」区分开。价格类机会（买点/估值）需 P4-10 数值行情，暂缺不假装。
    */
@@ -317,6 +349,59 @@ export const entityRouter = createTRPCRouter({
         },
       }),
     ),
+
+  /**
+   * 个股页「资讯 / 公告」分页（2026-07-23）。
+   *
+   * 回填一年后单只股可有上百条（广发证券 352 条），原来 newsById 一次取 120 条封顶，
+   * 后面的**根本没有入口能看到**。这里改成服务端分页，并顺带修掉一个老毛病：
+   * 「公告」tab 原本是在那 120 条里筛 PRIMARY，媒体多的公司会显得没几条公告——
+   * 现在按 tier 直接查库，公告页看到的就是这家公司真正的全部公告。
+   */
+  newsPage: publicProcedure
+    .input(
+      z.object({
+        id: z.string(),
+        tab: z.enum(["news", "announce"]).default("news"),
+        page: z.number().min(1).max(500).default(1),
+        perPage: z.number().min(10).max(100).default(40),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const base = { entities: { some: { entityId: input.id } } };
+      const where =
+        input.tab === "announce" ? { ...base, tier: "PRIMARY" as const } : base;
+      const [total, announceTotal, items] = await Promise.all([
+        ctx.db.newsItem.count({ where: base }),
+        ctx.db.newsItem.count({ where: { ...base, tier: "PRIMARY" } }),
+        ctx.db.newsItem.findMany({
+          where,
+          orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
+          skip: (input.page - 1) * input.perPage,
+          take: input.perPage,
+          select: {
+            id: true,
+            title: true,
+            url: true,
+            summary: true,
+            brief: true,
+            tier: true,
+            importance: true,
+            publishedAt: true,
+            source: { select: { name: true } },
+            event: { select: { count: true } },
+          },
+        }),
+      ]);
+      const shown = input.tab === "announce" ? announceTotal : total;
+      return {
+        items,
+        newsTotal: total,
+        announceTotal,
+        page: input.page,
+        pages: Math.max(1, Math.ceil(shown / input.perPage)),
+      };
+    }),
 
   /**
    * 一年大事记（2026-07-23 一年回填）：只取**重磅**事件，跨度一年，供个股页按月分组展示。

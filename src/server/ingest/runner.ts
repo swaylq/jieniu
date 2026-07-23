@@ -13,6 +13,8 @@ import {
   isLowValueTitle,
   crossSourceKey,
   historicalKey,
+  isCrossSourceRepeat,
+  type PriorFiling,
 } from "../../lib/dedupe";
 import { cleanText, cleanInline, screenQuality } from "../../lib/quality";
 import {
@@ -120,6 +122,7 @@ export async function ingestSource(
     select: {
       title: true,
       publishedAt: true,
+      source: { select: { key: true } },
       entities: { select: { entityId: true } },
     },
   });
@@ -139,6 +142,25 @@ export async function ingestSource(
           : crossSourceKey(n.title, ids);
       }),
   );
+  // 回填还需按「不看日期」的 key 再索引一次：两个源对同一份公告的日期常差 1 天，
+  // 带日期的 key 判不到一起（实测漏判 697 组）。跨源且日期相差 ≤2 天 → 判为同一份。
+  const priorsByTitle = new Map<string, PriorFiling[]>();
+  if (bf) {
+    for (const n of recent) {
+      if (n.entities.length === 0) continue;
+      const k = crossSourceKey(
+        n.title,
+        n.entities.map((e) => e.entityId),
+      );
+      const arr = priorsByTitle.get(k);
+      const entry: PriorFiling = {
+        publishedAt: n.publishedAt,
+        sourceKey: n.source.key,
+      };
+      if (arr) arr.push(entry);
+      else priorsByTitle.set(k, [entry]);
+    }
+  }
 
   let inserted = 0;
   let tagged = 0;
@@ -177,7 +199,10 @@ export async function ingestSource(
     }
 
     // 只按 标题+摘要 打标：正文里顺带提到的公司/板块词多不代表这条"关于"它，纳入会大量误配。
-    const textIds = matchEntities(`${title}\n${summary}`, dict);
+    // subjectOnly 体裁（研报）跳过文本匹配：主体由源权威给出，标题里的行业词不是它的主体。
+    const textIds = def.subjectOnly
+      ? []
+      : matchEntities(`${title}\n${summary}`, dict);
     let entityIds = Array.from(
       new Set([...textIds, ...resolveHints(r.entityHints, dict)]),
     );
@@ -217,6 +242,12 @@ export async function ingestSource(
           ? historicalKey(title, entityIds, r.publishedAt)
           : crossSourceKey(title, entityIds);
     if (ckey && seenCross.has(ckey)) continue;
+    // 跨源同一份公告（日期差 1–2 天）：只并跨源，同源同名不动（可能是两件真事）。
+    if (bf && entityIds.length > 0) {
+      const loose = crossSourceKey(title, entityIds);
+      const priors = priorsByTitle.get(loose);
+      if (priors && isCrossSourceRepeat(priors, r.publishedAt, def.key)) continue;
+    }
     // 所有源统一识别事件类型：源已显式给出则用之，否则从 标题+摘要+正文 检测。
     // 修复：此前仅 cninfo 设 eventType，媒体源恒为 30 分、永远进不了「重大动态」/通知。
     const eventType =
@@ -240,6 +271,16 @@ export async function ingestSource(
     });
     if (norm) seenTitles.add(norm);
     if (ckey) seenCross.add(ckey);
+    if (bf && entityIds.length > 0) {
+      const loose = crossSourceKey(title, entityIds);
+      const arr = priorsByTitle.get(loose);
+      const entry: PriorFiling = {
+        publishedAt: r.publishedAt,
+        sourceKey: def.key,
+      };
+      if (arr) arr.push(entry);
+      else priorsByTitle.set(loose, [entry]);
+    }
     inserted++;
     tagged += entityIds.length;
   }
