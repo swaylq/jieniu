@@ -7,6 +7,7 @@ import {
   tierBadgeClass,
 } from "~/lib/format";
 import { classifyNovelty } from "~/lib/novelty";
+import { filingExcerpt, excerptIsEmpty } from "~/lib/filing-excerpt";
 import type { SourceTier } from "../../../generated/prisma";
 import { InterpretationPanel } from "./interpretation-panel";
 import { NewsActions } from "./news-actions";
@@ -23,17 +24,38 @@ export type NewsCardItem = {
   burstCount?: number; // 同日一手公告轰炸折叠后、当日其余份数（run10），可选
 };
 
-/** 单条新闻卡片：来源等级徽标 + 来源 + 相对时间 + 标题(→详情页) + 摘要 + AI 解读。首页/feed/实体页/收藏共用。 */
-export function NewsCard({ n }: { n: NewsCardItem }) {
+/**
+ * 单条新闻卡片：来源等级徽标 + 来源 + 相对时间 + 标题(→详情页) + 摘要 + AI 解读。首页/feed/实体页/收藏共用。
+ *
+ * 本组件根元素就是 `<li>`，调用方必须直接放进 `<ul>`，**不要再包一层 `<li>`/`<div>`**——
+ * `<li>` 嵌 `<li>` 是非法 HTML，浏览器会强行闭合外层并把卡片重新挂到上层容器，
+ * 导致卡片逃出内容列、撑满整宽（提醒中心曾因此炸掉）。未读高亮走 `unread` 参数。
+ */
+export function NewsCard({
+  n,
+  unread = false,
+}: {
+  n: NewsCardItem;
+  unread?: boolean;
+}) {
   const published = new Date(n.publishedAt);
-  const showSummary = !summaryIsRedundant(n.title, n.summary);
+  // 卡片摘录：库里的 summary 其实是正文前 128 字截断，而公告开头恒定是法定套话
+  // （证券代码/公告编号/公司名/「保证…承担法律责任」），导致卡片看着满、信息量为零。
+  // 这里用纯规则剥掉样板取「必要摘录」，剥完没实质内容就干脆不显示（宁缺毋滥）。
+  const excerpt = filingExcerpt(n.title, n.summary);
+  const showSummary =
+    !summaryIsRedundant(n.title, n.summary) && !excerptIsEmpty(excerpt);
   // 新信息程度（省 token 纯规则）：由来源等级 + 同事件文章数推导，帮用户略过重复/跟进报道
   const nov = classifyNovelty({ tier: n.tier, clusterCount: n.event?.count });
   const novText =
     n.event && n.event.count > 1 ? `${nov.label} · ${n.event.count} 篇` : nov.label;
 
   return (
-    <li className="rounded-2xl border border-line/70 bg-surface p-4 shadow-sm transition-shadow hover:shadow-md">
+    <li
+      className={`rounded-2xl border bg-surface p-4 shadow-sm transition-shadow hover:shadow-md ${
+        unread ? "border-brand/40 ring-1 ring-brand/40" : "border-line/70"
+      }`}
+    >
       <div className="mb-2.5 flex items-center gap-2 text-xs text-muted">
         <span className={tierBadgeClass(n.tier)}>{sourceTierLabel(n.tier)}</span>
         <span>{n.source.name}</span>
@@ -45,6 +67,14 @@ export function NewsCard({ n }: { n: NewsCardItem }) {
         >
           {relativeTime(published)}
         </time>
+        {unread ? (
+          <span
+            className="rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand"
+            aria-label="未读"
+          >
+            新
+          </span>
+        ) : null}
         {/* 只给「低新信息」项打标（跟进/媒体/评论），让一手原始信息自然凸显、不冗余 */}
         {nov.tone === "weak" ? (
           <span
@@ -75,7 +105,7 @@ export function NewsCard({ n }: { n: NewsCardItem }) {
       </Link>
       {showSummary && (
         <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-muted">
-          {n.summary}
+          {excerpt}
         </p>
       )}
       {n.burstCount && n.burstCount > 0 ? (

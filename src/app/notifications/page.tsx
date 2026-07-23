@@ -137,25 +137,16 @@ export default async function NotificationsPage() {
           {shownItems.length > 0 ? (
             <section>
               <h2 className="mb-2 text-base font-bold text-ink">重磅资讯</h2>
+              {/* NewsCard 根元素就是 <li>，必须直接放进 <ul>：多包一层 <li>/<div> 会触发
+                  非法嵌套，浏览器把卡片重新挂到上层容器，导致卡片逃出内容列撑满整宽。 */}
               <ul className="space-y-3">
-                {shownItems.map((n) => {
-                  const unread = notificationUnread(n.createdAt, seenAt);
-                  return (
-                    <li key={n.id} className="relative">
-                      {unread && (
-                        <span
-                          className="absolute right-3 top-3 z-10 rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand"
-                          aria-label="未读"
-                        >
-                          新
-                        </span>
-                      )}
-                      <div className={unread ? "rounded-xl ring-1 ring-brand/40" : ""}>
-                        <NewsCard n={n} />
-                      </div>
-                    </li>
-                  );
-                })}
+                {shownItems.map((n) => (
+                  <NewsCard
+                    key={n.id}
+                    n={n}
+                    unread={notificationUnread(n.createdAt, seenAt)}
+                  />
+                ))}
               </ul>
             </section>
           ) : null}
