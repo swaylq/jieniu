@@ -25,12 +25,32 @@
 ## 重启生产服务器
 
 ```bash
-lsof -ti:3838 | xargs kill 2>/dev/null
 cd /Users/mac/claudeclaw/finance-agent/projects/jieniu
 NODE_ENV=development npm install --include=dev   # 依赖有变时（NODE_ENV=production 会漏装 devDeps）
-NODE_ENV=production npm run build                 # 代码有变时
-NODE_ENV=production PORT=3838 nohup npm run start > /Users/mac/jieniu-prod.log 2>&1 & disown
+NODE_ENV=production npm run build                 # 代码有变时；必须 exit 0 才往下走
+scripts/start-prod.sh                             # 停旧进程 → secret exec 注入密钥 → 起 → 自检
 ```
+
+**只用 `scripts/start-prod.sh` 启动，别手敲 `npm run start`。** `ALI_KEY` / `ALI_SECRET` /
+`OPENROUTER_API_KEY` 不在 `.env` 里，只在 `secret` store 里，全靠脚本里的 `secret exec` 注入。
+裸起进程照样监听 3838、首页照样 200，但这三个 key **静默**缺失 —— AI 全线（问解牛 / 解读 /
+thesis / drift / 画像 / 事件摘要）每次调用秒失败，登录验证码也发不出去。2026-07-25 的事故就是这么来的。
+
+脚本等价于（自检部分从略）：
+
+```bash
+lsof -ti:3838 | xargs kill 2>/dev/null
+secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY -- \
+  env NODE_ENV=production PORT=3838 \
+      MAIL_FROM="解牛 <noreply@mail.auramate.net>" ALI_REGION=cn-hangzhou \
+      nohup npm run start > /Users/mac/jieniu-prod.log 2>&1 & disown
+```
+
+**build 与 start 必须分两步跑**，别用 `;` 串成一条：build 失败时 `;` 照样往下执行，
+线上会被杀掉又用坏构建拉起来。脚本本身不做 build，就是为了守住这条。
+
+启动后日志第一行 `[boot] ✓ 密钥齐全` 表示密钥进了进程；`[boot] ✗ 缺少密钥 …` 说明启动方式不对，
+脚本会以非 0 退出。
 
 ## 注意
 

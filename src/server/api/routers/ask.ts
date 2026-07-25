@@ -117,7 +117,13 @@ export const askRouter = createTRPCRouter({
           context: built.contextText,
           hasMemory: built.hasMemory,
         });
-      } catch {
+      } catch (e) {
+        // 一定要打日志：以前这里是裸 `catch {}`，AI 层挂了整整一天，
+        // 日志里只有一行「ask.answer took 30ms」，查不出任何原因。
+        console.error(
+          "[ask] AI 作答失败:",
+          e instanceof Error ? e.message : e,
+        );
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: "解牛暂时无法作答，请稍后再试。",
