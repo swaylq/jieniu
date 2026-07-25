@@ -55,8 +55,11 @@
   --color-down: #60a5fa;
 }
 
+/* 应用外壳：整页固定，不随内容上下滚动——工作台像一个原生应用，而不是一张长网页。
+   根滚动锁在这里；真正的滚动容器是 layout 的 #main-content 和侧栏的自选列表。 */
 html {
   -webkit-tap-highlight-color: transparent;
+  overflow: hidden;
 }
 
 body {
@@ -64,8 +67,9 @@ body {
   color: var(--color-ink);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* 全局兜底：任何页面内容都不该把整页横向撑出滚动条 */
-  overflow-x: hidden;
+  /* 外壳自身永不滚动；橡皮筋 / 下拉刷新一并关掉，避免整块画布被拖动 */
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 /* 金融数字等宽对齐 */

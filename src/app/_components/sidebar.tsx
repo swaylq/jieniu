@@ -72,8 +72,8 @@ export function Sidebar({
   const navItems = [...PRIMARY_NAV, NOTIFICATION_NAV];
 
   return (
-    <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-sb-line bg-sb text-sb-ink md:flex">
-      <div className="p-3.5">
+    <aside className="hidden h-full w-64 shrink-0 flex-col overflow-hidden border-r border-sb-line bg-sb text-sb-ink md:flex">
+      <div className="shrink-0 p-3.5">
         <Link
           href="/"
           aria-label="解牛首页"
@@ -198,7 +198,7 @@ export function Sidebar({
         )}
       </div>
 
-      <div className="border-t border-sb-line p-3.5">
+      <div className="shrink-0 border-t border-sb-line p-3.5">
         <div className="mb-1.5 flex items-center justify-between px-1">
           <span className="text-xs text-sb-muted">深色 / 浅色</span>
           <ThemeToggle />

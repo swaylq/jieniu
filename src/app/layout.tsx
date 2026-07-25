@@ -1,5 +1,6 @@
 import "~/styles/globals.css";
 
+import { Suspense } from "react";
 import { type Metadata, type Viewport } from "next";
 import { Geist } from "next/font/google";
 import Link from "next/link";
@@ -14,6 +15,7 @@ import { Sidebar } from "./_components/sidebar";
 import { CommandPaletteProvider } from "./_components/command-palette";
 import { Logo } from "./_components/logo";
 import { AskJieniu } from "./_components/ask-jieniu";
+import { ScrollReset } from "./_components/scroll-reset";
 import {
   SITE_URL,
   SITE_NAME,
@@ -99,15 +101,19 @@ export default async function RootLayout({
         >
           跳到主内容
         </a>
+        <Suspense fallback={null}>
+          <ScrollReset />
+        </Suspense>
         <TRPCReactProvider>
           <CommandPaletteProvider>
-            <div className="flex min-h-screen w-full">
+            {/* 应用外壳：高度锁死在一屏（h-dvh），自身不滚动。滚动只发生在 #main-content 内。 */}
+            <div className="flex h-dvh w-full overflow-hidden">
               <Sidebar
                 loggedIn={!!session?.user}
                 email={session?.user?.email ?? null}
               />
-              <div className="flex min-w-0 flex-1 flex-col">
-              <header className="sticky top-0 z-30 flex min-h-14 items-center justify-between border-b border-line bg-surface/85 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-lg md:hidden">
+              <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+              <header className="z-30 flex min-h-14 shrink-0 items-center justify-between border-b border-line bg-surface/85 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-lg md:hidden">
                 <Link href="/" aria-label="解牛首页">
                   <Logo />
                 </Link>
@@ -126,10 +132,11 @@ export default async function RootLayout({
                   )}
                 </div>
               </header>
+              {/* 唯一的主滚动容器：min-h-0 让它在 flex 列里能被压缩，overflow-y-auto 承接页面滚动 */}
               <div
                 id="main-content"
                 tabIndex={-1}
-                className="flex-1 pb-[calc(4rem+env(safe-area-inset-bottom))] focus:outline-none md:pb-0"
+                className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] focus:outline-none md:pb-0"
               >
                 {children}
               </div>
