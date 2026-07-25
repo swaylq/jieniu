@@ -22,7 +22,8 @@ type Article = {
   mediaName?: string;
 };
 
-async function fetchStockNews(name: string, code: string, pageSize = 5): Promise<RawNewsItem[]> {
+// 每股媒体资讯抓取条数——从 5 提到 20，充实个股页深度（sway：确保用户进来看到丰富内容）。
+async function fetchStockNews(name: string, code: string, pageSize = 20): Promise<RawNewsItem[]> {
   const param = encodeURIComponent(
     JSON.stringify({
       uid: "",
@@ -69,6 +70,7 @@ async function fetchStockNews(name: string, code: string, pageSize = 5): Promise
 /** 定向个股资讯源（给一组 {name,code} 就只搜这些股）——用于覆盖公司的资讯回填/轮转刷新。 */
 export function eastmoneyStockNewsForCodes(
   pairs: { name: string; code: string }[],
+  pageSize = 20,
 ): SourceDef {
   return {
     key: "eastmoney-stocknews",
@@ -79,7 +81,7 @@ export function eastmoneyStockNewsForCodes(
       const out: RawNewsItem[] = [];
       for (const p of pairs) {
         try {
-          out.push(...(await fetchStockNews(p.name, p.code)));
+          out.push(...(await fetchStockNews(p.name, p.code, pageSize)));
         } catch {
           // 单只失败不影响整批
         }

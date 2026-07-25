@@ -26,6 +26,30 @@ function detailUrl(stockCode: string, artCode: string): string {
   return `https://data.eastmoney.com/notices/detail/${stockCode}/${artCode}.html`;
 }
 
+/**
+ * 解析东财公告的发布时刻。**优先 `display_time`（毫秒精度），而非 `notice_date`**。
+ *
+ * 实测（2026-07-24）：`notice_date` 恒为当日 `00:00:00`（日期精度，等于没有时刻），
+ * `display_time` 才是真实披露时刻（如 `2026-07-24 11:43:04:552`）。曾用 `notice_date`
+ * 导致全库公告 publishedAt 全落当日 00:00，在时间倒序流里沉到当天所有快讯下面。
+ *
+ * 两个坑：① `display_time` 毫秒前是**冒号**（`:552`）不是点——不能把空格换 `T`（会变
+ * `...04:552` 非法 ISO → 兜底成抓取时刻）；② 空格格式按**本机时区**解析，换 UTC 机器整体
+ * 偏 8 小时。故显式转成 `YYYY-MM-DDTHH:MM:SS.mmm+08:00` 再解析。
+ */
+export function parseAnnTime(displayTime?: string, noticeDate?: string): Date {
+  const dt = (displayTime ?? "").trim();
+  const withMs = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}):(\d{1,3})$/.exec(dt);
+  if (withMs) return new Date(`${withMs[1]}T${withMs[2]}.${withMs[3]}+08:00`);
+  const noMs = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})$/.exec(dt);
+  if (noMs) return new Date(`${noMs[1]}T${noMs[2]}+08:00`);
+  // 兜底 notice_date（仅日期精度，按东八区零点）。
+  const nd = (noticeDate ?? "").trim();
+  const dateOnly = /^(\d{4}-\d{2}-\d{2})/.exec(nd);
+  if (dateOnly) return new Date(`${dateOnly[1]}T00:00:00+08:00`);
+  return toValidDate(displayTime ?? noticeDate ?? "");
+}
+
 /** 一条东财公告 → RawNewsItem；无归属代码 / 空标题 / 退市噪声 返回 null。 */
 function toRawItem(a: EmAnn): RawNewsItem | null {
   const code = a.codes?.[0];
@@ -40,7 +64,7 @@ function toRawItem(a: EmAnn): RawNewsItem | null {
     title,
     url: detailUrl(code.stock_code, a.art_code),
     summary: title,
-    publishedAt: toValidDate(a.notice_date ?? a.display_time ?? ""),
+    publishedAt: parseAnnTime(a.display_time, a.notice_date),
     eventType: detectEventType(title),
     entityHints: [code.short_name, code.stock_code].filter(Boolean),
   };

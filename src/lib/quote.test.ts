@@ -7,8 +7,31 @@ import {
   parseSinaIndex,
   parseTencentQuote,
   parseValuation,
+  parseTencentValuation,
   hasValuation,
 } from "./quote";
+
+describe("parseTencentValuation (push2 不可达时的估值兜底)", () => {
+  it("extracts PE/PB/turnover/marketCap from the ~-delimited tencent quote", () => {
+    // 腾讯 qt.gtimg：[38]换手% [39]市盈TTM [44]流通市值(亿) [45]总市值(亿) [46]市净率
+    const f = Array<string>(47).fill("");
+    f[0] = "1"; f[1] = "贵州茅台"; f[2] = "600519"; f[3] = "1297.41";
+    f[38] = "0.29"; f[39] = "19.61"; f[44] = "16218.68"; f[45] = "16218.68"; f[46] = "6.96";
+    const v = parseTencentValuation(`v_sh600519="${f.join("~")}";`);
+    expect(v.pe).toBe(19.61);
+    expect(v.pb).toBe(6.96);
+    expect(v.turnover).toBe(0.29);
+    // 亿元 → 元
+    expect(v.marketCap).toBe(1621868000000);
+    expect(v.floatCap).toBe(1621868000000);
+  });
+
+  it("returns all-null for an empty payload", () => {
+    expect(parseTencentValuation('v_x="";')).toEqual({
+      pe: null, pb: null, marketCap: null, floatCap: null, turnover: null,
+    });
+  });
+});
 
 describe("tickerToSymbol", () => {
   it("maps A-share tickers to market symbols by leading digit", () => {

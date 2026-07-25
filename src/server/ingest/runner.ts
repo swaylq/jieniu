@@ -208,7 +208,9 @@ export async function ingestSource(
     );
     // 综述/榜单/大盘类（收评、涨停潮、基金二季报…）：标题/摘要顺带罗列多只个股，非"关于"某只。
     // 只保留板块归属，不绑到 COMPANY/STOCK/PERSON——否则污染「你的自选股」早报与个股页。
-    if (isRoundupNews(title, entityIds.length)) {
+    // subjectOnly 体裁例外：主体由源权威给出（研报/龙虎榜/大宗交易等结构化事件），标题里
+    // 「龙虎榜/大宗交易/前5只证券」等词是事件体裁自带、非「顺带罗列」，不应据此剥掉个股绑定。
+    if (!def.subjectOnly && isRoundupNews(title, entityIds.length)) {
       const sectorIds = new Set(
         dict.filter((d) => d.type === "SECTOR").map((d) => d.id),
       );

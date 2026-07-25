@@ -58,6 +58,23 @@ export const entityRouter = createTRPCRouter({
       return { entity, groups: groupRelations(rels) };
     }),
 
+  /** 个股结构化信号（Phase1b · 资金/治理数据类）：融资余额/一致预期/下次限售解禁。供信号条展示。 */
+  signals: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .query(({ ctx, input }) =>
+      ctx.db.entitySignal.findMany({
+        where: { entityId: input.id },
+        orderBy: { kind: "asc" },
+        select: {
+          kind: true,
+          label: true,
+          numValue: true,
+          detail: true,
+          asOf: true,
+        },
+      }),
+    ),
+
   /** 实体的投资逻辑框架（Phase 3 · AI 生成、共享缓存）。无则 null。 */
   thesis: publicProcedure
     .input(z.object({ id: z.string() }))

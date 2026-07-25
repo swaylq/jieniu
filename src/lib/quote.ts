@@ -74,6 +74,37 @@ export function parseValuation(
   };
 }
 
+/**
+ * 解析腾讯 qt.gtimg 行情串的估值字段——**push2 不可达时的兜底**（push2.eastmoney.com
+ * 对本节点间歇封锁，实测连续多轮 0/10）。腾讯本就是现价备源，加估值兜底零新增依赖。
+ * `~` 分隔：[38]换手率% [39]市盈率TTM [44]流通市值(亿元) [45]总市值(亿元) [46]市净率。
+ * 市值单位「亿元」→ ×1e8 对齐 push2 的「元」。同样 ≤0 记 null，换手率允许 0。
+ */
+export function parseTencentValuation(raw: string): Valuation {
+  const empty: Valuation = {
+    pe: null,
+    pb: null,
+    marketCap: null,
+    floatCap: null,
+    turnover: null,
+  };
+  const payload = /="([^"]*)"/.exec(raw)?.[1] ?? "";
+  const f = payload.split("~");
+  if (f.length < 47) return empty;
+  const pos = (s: string | undefined, mul = 1): number | null => {
+    const n = Number(s);
+    return Number.isFinite(n) && n > 0 ? n * mul : null;
+  };
+  const turnover = Number(f[38]);
+  return {
+    pe: pos(f[39]),
+    pb: pos(f[46]),
+    marketCap: pos(f[45], 1e8),
+    floatCap: pos(f[44], 1e8),
+    turnover: Number.isFinite(turnover) && turnover >= 0 ? turnover : null,
+  };
+}
+
 /** 估值卡是否有任何可展示指标（全 null 则整卡隐藏）。 */
 export function hasValuation(v: Valuation): boolean {
   return (

@@ -37,8 +37,9 @@ async function fetchTopAshare(n: number): Promise<{ code: string; name: string }
   const pz = 100;
   const pages = Math.ceil(n / pz);
   for (let pn = 1; pn <= pages; pn++) {
+    // 主 push2.eastmoney.com 对本节点间歇封锁（UND_ERR_SOCKET）；push2delay 镜像可达、同数据。
     const url =
-      `https://push2.eastmoney.com/api/qt/clist/get?pn=${pn}&pz=${pz}&po=1&np=1` +
+      `https://push2delay.eastmoney.com/api/qt/clist/get?pn=${pn}&pz=${pz}&po=1&np=1` +
       `&fid=f20&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=f12,f14`;
     let diff: { f12: string; f14: string }[] = [];
     for (let attempt = 1; attempt <= 4; attempt++) {

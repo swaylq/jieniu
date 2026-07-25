@@ -23,6 +23,7 @@ import { NewsCard } from "../../_components/news-card";
 import { Pager } from "../../_components/pager";
 import { NewsScorecard } from "../../_components/news-scorecard";
 import { PriceChart } from "../../_components/price-chart";
+import { SignalStrip } from "../../_components/signal-strip";
 import { SectionHead, chipClass, displayCls } from "../../_components/section-head";
 import { ThesisCard } from "../../_components/thesis-card";
 import { MyThesisCard } from "../../_components/my-thesis-card";
@@ -159,6 +160,8 @@ export default async function EntityPage({
         fetchValuation(quoteTicker),
       ])
     : [null, [] as number[], null];
+  // 个股结构化信号（Phase1b）：融资余额/一致预期/下次解禁——独立于实时行情，按实体 id 取。
+  const entitySignals = await api.entity.signals({ id });
   const buckets = (Object.keys(groups) as RelationBucket[]).filter(
     (b) => groups[b].length > 0,
   );
@@ -460,6 +463,11 @@ export default async function EntityPage({
           <aside className="contents lg:block lg:space-y-4 lg:sticky lg:top-4 lg:col-start-2 lg:row-start-1 lg:self-start">
             {quoteCard ? (
               <div className="order-1 lg:order-none">{quoteCard}</div>
+            ) : null}
+            {entitySignals.length > 0 ? (
+              <div className="order-1 lg:order-none">
+                <SignalStrip signals={entitySignals} />
+              </div>
             ) : null}
             {/* 「我的」合并卡：持仓 / 到价提醒 / 决策记录三件「我在这只股上的动作」原本是三张
                 独立卡，各带卡壳+图标+大标题+一段说明文案，占满整个右栏、把真正的信息

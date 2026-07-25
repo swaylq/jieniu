@@ -33,7 +33,7 @@ export function parseJiweiRss(xml: string): RawNewsItem[] {
       const desc = cdata(tag(block, "description"));
       const bodyHtml = encoded !== "" ? encoded : desc;
       const body = stripHtml(bodyHtml);
-      const pub = tag(block, "pubDate");
+      const pub = cdata(tag(block, "pubDate"));
       const d = pub !== "" ? new Date(pub) : new Date();
       return {
         externalId: link,

@@ -105,6 +105,7 @@ model Entity {
     thesisSignals ThesisSignal[]
     userTheses UserThesis[]
     priceAlerts PriceAlert[]
+    signals   EntitySignal[]
 
     @@index([type])
 }
@@ -301,6 +302,25 @@ model PriceAlert {
     @@index([userId])
     @@index([active])
     @@index([ticker])
+}
+
+// 个股结构化信号（资金/治理数据类源）——非「已发生的带日期事件」（那些进 NewsItem），
+// 而是「当前状态/前瞻」：融资余额(margin)、机构一致预期(consensus)、下次限售解禁(unlock)。
+// 每个 (实体, kind) 只存最新一条（upsert）；detail 放 kind 专属字段。展示于个股页信号条。
+// 合规：consensus 只存 覆盖机构数/评级分布/EPS 趋势，**不存目标价**（铁律②不荐股不喊价）。
+model EntitySignal {
+    id        String   @id @default(cuid())
+    entityId  String
+    kind      String // margin | consensus | unlock
+    label     String // 展示文案（如「融资余额7.7亿，占流通6.1%」）
+    numValue  Float? // headline 数值（供排序/着色）
+    detail    Json? // kind 专属：consensus 评级分布 / unlock 解禁比例类型 等
+    asOf      DateTime // 数据 as-of 日期
+    updatedAt DateTime @updatedAt
+    entity    Entity   @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+    @@unique([entityId, kind])
+    @@index([entityId])
 }
 
 // User Memory（P4-6）：投资画像。自我认知工具，非风险测评结论、非荐股依据。回灌 drift 语气与提醒优先级。

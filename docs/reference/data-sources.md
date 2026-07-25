@@ -85,3 +85,142 @@
 8. **抓取方式反直觉**：集微网 JSON `/api/` 有签名+robots 禁→用其 RSS；与非网 wp-json 401+RSS 冻结→走 sitemap；芯东西 RSS 坏→用 wp-json。
 9. **地域限制**：多 CN 主机对非大陆 IP 慢/半通，部分仅 HTTP→抓取节点放大陆或加代理。
 10. **价值在线（ir-online）** `/app/activity/*` 有 AES 签名 + 需先拿 `activityId`，最脆——MVP 跳过，用上证路演中心/全景路演替代。
+
+---
+
+## 2026-07-24 实测补充（数据源调研 loop run 1）
+
+11. **巨潮 orgId 必须实解，不能猜**：`topSearch` 返回的是 `gshk0000981` 这类字符串（不是纯数字）。orgId 填错时 `hisAnnouncement/query` 照返 **HTTP 200 + `announcements: []`**，静默失败不报错。自测脚本里把「200」当成功会直接骗过你。
+    - 实解模板：`POST http://www.cninfo.com.cn/new/information/topSearch/query` body `keyWord=688981&maxNum=10` → `[{"code":"688981","orgId":"gshk0000981","zwjc":"中芯国际"}]`
+
+12. **巨潮 `announcementTime` 约 90% 只有日期精度**：实测 2026-07-24 全市场 szse 90 条里 **82 条是当日 `00:00:00` CST**，仅约 9% 带真实时分秒；定向查 688981 近两月 **20/20 全是 00:00**。`storageTime` 字段全为 `null`。
+    - 对照实验已排除「定向查丢精度」：同一条公告（`adjunctUrl` 匹配）在全市场查与定向查里时间戳完全一致 → 是公告本身分两类。
+    - **后果**：直接拿它当 `publishedAt`，今早发的公告会被打成今天 00:00，在时间倒序流里沉到当天所有快讯下面。要真实披露时刻得跨源对账（如东财公告同条）。
+
+13. **东财快讯 `stockList` 不是新闻主体股**：格式 `["150.516390","150.010806"]`（`<market>.<code>`）。实测 100 条中 47 条有值，但抽查全是 **ETF / 基金 / 指数 / BK 板块**——「高新兴中标信阳项目」挂的是两只 ETF，不是高新兴(300098)。**别拿它当 `entityHints`**，会重演「研报绑板块」那个坑。现有实现忽略它是对的。
+
+14. **华尔街见闻 `symbols[]` 是全池最好的挂载字段，但稀疏**：`{key:"002197.SZ", name:"证通电子"}`，规范代码 + 名称，另有 `related_themes` / `fund_codes`。实测**仅 10/100 条非空**——够用但不能当唯一挂载路径，要「有 hints 走 hints、没 hints 回退文本匹配」。`related_themes` 是主题标签不是主体，**别挂**。
+
+15. **集微网唯一可用 feed 落在 robots `Disallow: /api` 底下**：`https://www.ijiwei.com/api/rss/hbb`（laoyaoba.com 同 robots）。`/rss`、`/feed` 都是 SPA 壳（返 200 但给 HTML）。灰区——feed 本身就是给机器读的格式，但 robots 字面覆盖了它。低频抓（feed 只存 10 条、日更约 1.4 篇，6 小时一次足够）。
+
+16. **RSS 的 `pubDate` 也可能包 CDATA**：集微网返回 `<![CDATA[Thu, 23 Jul 2026 15:51:00 GMT]]>`。写 RSS 解析器时**每个字段都要过 `cdata()`**，不能只处理 title/content——漏一个日期字段，`new Date()` 解析失败兜底成当前时刻，整个源的发布时间就废了（见台账 run 1 的 P1 bug）。
+
+---
+
+## 2026-07-24 实测补充（loop run 2 · 东财系）
+
+17. **东财公告有两个时间字段，只有 `display_time` 能用**：
+    - `GET https://np-anotice-stock.eastmoney.com/api/security/ann?sr=-1&page_size=50&page_index=1&ann_type=A&client_source=web&f_node=0&s_node=0`
+    - `notice_date` = `2026-07-24 00:00:00` —— **50/50 条全是日期精度**，等于没有时刻
+    - `display_time` = `2026-07-24 11:43:04:552` —— **毫秒精度，50/50 条都有**
+    - 跨源对账（14 只股、命中同条 9 条）：巨潮带真实时刻的 4 条与 `display_time` **中位仅差 58.5 秒**，方向一致（巨潮更早、东财转发晚 ~1 分钟）→ **`display_time` 是可靠的披露时刻代理**
+    - ⚠️ **解析陷阱**：`new Date("2026-07-24 11:43:04:552")` ✅ 能解析（V8 容忍空格式）；`new Date("2026-07-24T11:43:04:552")` ❌ Invalid。毫秒前是**冒号不是点**，别顺手把空格换成 `T`「规范化」。空格式按**本机时区**解析——换 UTC 机器会整体偏 8 小时，稳妥写法显式补 `+08:00`。
+
+18. **东财公告自带源侧事件分类 `columns[]`**：98/100 条有值，`column_name` 形如 `发行保荐书` / `借贷` / `调研活动` / `法律意见书` / `首发提示性公告` / `其他增发事项公告`。比关键词猜标题准，可替代/增强 `detectEventType(title)`。`codes[]` 则 100/100 带规范 `stock_code` + `short_name`（A/B 股会给多个）。
+
+19. **东财研报接口是活的，别被个股查询误导**：
+    - 全市场（**不带 `code` 参数**）：`GET https://reportapi.eastmoney.com/report/list?cb=x&qType=0&pageSize=20&pageNo=1&beginTime=2026-06-24&endTime=2026-07-24` → 近 30 天 `hits=393`，最新为**当日** —— 增量抓取应走这个，别逐只查
+    - 个股查询 `hits=0` 往往是**这只股真没新研报**（宁德时代 2026-04-23 之后三个月空窗），不是接口滞后
+    - `publishDate` 只有日期精度（`2026-04-23 00:00:00.000`）
+    - 历史深度：中芯国际 `hits=79` 可回溯到 2022-02-14（≥3 年）
+
+20. **东财个股资讯是关键词搜索，不是个股绑定**：`search-api-web.eastmoney.com/search/jsonp` 按股票**名称**搜，返回的 `cmsArticleWebOld` **不含股票代码**——`entityHints` 完全靠调用方硬绑，搜「中芯国际」可能返回只提了一嘴中芯国际的文章。噪音也最高：实测 104 条过管线只剩 68 条（65%），拦截主力是 ETF 营销 18 条 + 综述稿 18 条。`mediaName` 字段 100% 有值（第一财经/证券时报等）。
+
+21. **robots 补充**：`np-anotice-stock.eastmoney.com/robots.txt` 返回 200 但**内容为空**（无限制）；`search-api-web` / `reportapi` 均 404。三家 G1 均通过。
+
+---
+
+## 2026-07-24 实测补充（loop run 3 · 行情/估值）
+
+22. **行情主源新浪 `hq.sinajs.cn`（GBK）**：`GET https://hq.sinajs.cn/list=sh600519`（**必带 `Referer: https://finance.sina.com.cn`**）。cn 股字段布局：`名称,今开,昨收,现价,最高,最低,…,[30]日期,[31]时间`。响应带真实行情时刻（如 `2026-07-24 11:30:00`）。批量：`list=sym1,sym2,…`（实测一次 40 个正常）。指数/港美股也走它但**字段布局各不相同**（见 `quote.ts:parseSinaIndex` 注释）。
+
+23. **行情备源腾讯 `qt.gtimg.cn`（GBK）**：`GET https://qt.gtimg.cn/q=sh600519`（Referer `https://gu.qq.com`）。`~` 分隔。与新浪现价**逐笔完全一致**（实测 12/12 Δ=0.000%，精确到分）。**完整字段含估值**：`[3]`现价 `[38]`换手率% `[39]`市盈TTM `[44]`流通市值(亿) `[45]`总市值(亿) `[46]`市净率 —— **可作 push2 估值的兜底**（单位「亿」需 ×1e8 对齐 push2 的「元」）。
+
+24. **🔴 `push2.eastmoney.com` 从本节点不可达（估值源）**：`push2.eastmoney.com/api/qt/stock/get`（估值 f116/f117/f162/f167/f168）**TCP 能连、随即被对端关闭**（curl HTTP 000、node `UND_ERR_SOCKET`/"other side closed"）。https/http/带UA/去fields/3 重试全失败。
+    - **主机级、非东财整体**：兄弟主机 `push2his.eastmoney.com`（K线）HTTP 200 正常，`np-anotice-stock` 也正常。疑 push2 这台做了 TLS 指纹/地域过滤。
+    - **生产影响**：`fetchValuation` 打 push2 → 拿不到 → catch 静默返 null → 估值卡在线上为空。**不崩但功能哑火，被 catch 吞掉无告警**。
+    - **对策**：估值改用腾讯 qt.gtimg 兜底（见 #23），它本就是现价备源。
+
+25. **新浪 K线 `quotes.sina.cn`（历史深度）**：`GET https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData?symbol=sh600519&scale=240&ma=no&datalen=1000` → `[{day,open,high,low,close,volume}]`。`datalen` 线性伸缩，1000 可回溯约 4 年（2022-06）。
+
+26. **`tickerToSymbol` 漏北交所 `9` 号段**：`920045` 这类北交所新号段返回 null（函数只认 `8/4` 开头归 bj）。北交所股拿不到行情。补 `9` 前需先确认新浪 `bj920xxx` symbol 是否被接受（**未测，别拍脑袋改**）。
+
+27. **行情源可校准 entity.name 陈旧**：新浪/腾讯返回的 `name` 是最新的（如 603501 已是「豪威集团」而非库内旧名「韦尔股份」）。可用行情 `name` 定期刷新库内 entity.name。
+
+---
+
+## 2026-07-24 实测补充（loop run 4 · 资金面，方向轮换 #1）
+
+28. **东财数据中心统一入口** `datacenter-web.eastmoney.com/api/data/v1/get`（**这台可达，push2* 系列间歇封锁**）：
+    - 通用参数：`reportName=<RPT_名>&columns=ALL&pageNumber=1&pageSize=50&sortColumns=<字段>&sortTypes=-1`（-1 降序 / 1 升序）
+    - Header：真实浏览器 UA + `Referer: https://data.eastmoney.com/`
+    - 按个股过滤：`filter=(SECURITY_CODE="688981")` **URL 编码**；融资融券的代码字段名是 `SCODE` 不是 SECURITY_CODE
+    - 返回：`{success, result:{pages, data:[…]}}`；报表名错时 `success:false, message:"报表配置不存在,XXX"`（HTTP 仍 200）→ **别只看状态码**
+    - robots：`/robots.txt` 返 JSON 报错（无 robots 限制）
+
+29. **资金面 4 张可用报表**（全 T+1，收盘后更新）：
+    | 用途 | reportName | 排序字段 | 关键字段 |
+    |---|---|---|---|
+    | 龙虎榜个股明细 | `RPT_DAILYBILLBOARD_DETAILSNEW` | `TRADE_DATE` | `EXPLANATION`(上榜原因) `BILLBOARD_NET_AMT`(净额) `BUY_SEAT_NEW/SELL_SEAT_NEW`(席位) `D1..D30_CLOSE_ADJCHRATE`(后续涨跌) |
+    | 融资融券个股明细 | `RPTA_WEB_RZRQ_GGMX` | `DATE` | `SCODE` `RZYE`(融资余额) `RQYE`(融券余额) `RZRQYE`(合计) `RZYEZB`(融资余额占比%) `RZMRE3D/5D/10D` |
+    | 大宗交易明细 | `RPT_DATA_BLOCKTRADE` | `TRADE_DATE` | `DEAL_PRICE` `PREMIUM_RATIO`(折溢价%,负=折价) `BUYER_NAME/SELLER_NAME`(营业部) `DEAL_AMT` |
+    | 股东户数(最新) | `RPT_HOLDERNUMLATEST`（历史 `RPT_HOLDERNUM_DET`） | `END_DATE` | `HOLDER_NUM` `HOLDER_NUM_CHANGE` `HOLDER_NUM_RATIO`(环比%) `AVG_HOLD_NUM` |
+    - 🔴 **不存在的报表名（别再试）**：`RPT_RZRQ_LSHJMX` / `RPT_MARGIN_DAILY` / `RPT_RZRQ_STOCK` / `RPT_RZRQ_LSHJ`
+    - 数字自洽（实测恒等式 10/10）：龙虎榜 `NET=BUY-SELL`、两融 `RZRQYE=RZYE+RQYE`
+    - 历史极深：龙虎榜到 2004、两融到 2010、大宗到 2000
+    - 覆盖：两融标的约 3000 只，覆盖库内热门股 96%；龙虎榜/大宗是事件型（触发才有）
+
+---
+
+## 2026-07-24 实测补充（loop run 5 · 产业链价格，方向轮换 #2）
+
+30. **新浪期货实时**（产业链大宗价格，与现有行情源 `hq.sinajs.cn` 同基建同 GBK 处理）：
+    - `GET https://hq.sinajs.cn/list=nf_LC0,nf_SI0,nf_PS0`（**Referer `https://finance.sina.com.cn`**），`nf_<品种>0` = 主力连续
+    - **产业链品种映射**：碳酸锂 `LC`(锂电/新能源/汽车) · 工业硅 `SI`+多晶硅 `PS`(光伏) · 铜 `CU`/铝 `AL`/镍 `NI`(有色/正极) · 金 `AU`/银 `AG`(银浆) · 螺纹 `RB`/铁矿 `I`(黑色)
+    - **字段布局**（44 字段，GBK）：`[0]名称 [1]时间HHMMSS [2]开 [3]高 [4]低 [8]最新价 [10]昨结 [13]持仓 [16]品种 [17]日期`。涨跌幅=(最新−昨结)/昨结
+    - 秒级实时（盘中），G2 10/10 p95 205ms
+    - 日 K：`GET https://stock2.finance.sina.com.cn/futures/api/jsonp.php/x/InnerFuturesNewService.getDailyKLine?symbol=LC0`（新品种回溯到上市日，如碳酸锂 2023-07）
+    - ⚠️ **只覆盖材料驱动型板块**（光伏/锂电/新能源/汽车/有色约 4/15 热门板块），对 AI/算力/半导体/光模块/机器人/医药/白酒/银行/券商无关——**定向接入，别当通用源**
+
+31. **东财期货 `push2.eastmoney.com/api/qt/clist`**：首探 200（872 合约）但随即间歇 `UND_ERR_SOCKET`——push2 系列对本节点间歇封锁。**同数据用新浪，别依赖 push2。**
+
+32. **产业链现货价（生意社 `100ppi.com`/`sci99.com`、上海有色 `smm.cn`）**：主站可达但**返 HTML 无干净 JSON**，需抓取解析；`price-datacenter.smm.cn` fetch failed。半导体/面板/存储/硅料**现货**价（futures 够不着的部分）留待专门一轮做 HTML 抓取。
+
+---
+
+## 2026-07-24 实测补充（loop run 6 · 一致预期，方向轮换 #3）
+
+33. **业绩预告 `RPT_PUBLIC_OP_NEWPREDICT`**（东财数据中心，一手法定披露）：
+    - `GET .../api/data/v1/get?reportName=RPT_PUBLIC_OP_NEWPREDICT&columns=ALL&pageNumber=1&pageSize=50&sortColumns=NOTICE_DATE&sortTypes=-1`
+    - 关键字段：`PREDICT_TYPE`(预增/略增/扭亏/减亏/续亏/预减/略减/续盈) `ADD_AMP_LOWER/UPPER`(净利增幅区间%) `PREDICT_AMT_LOWER/UPPER`(净利金额区间,元) `CHANGE_REASON_EXPLAIN`(变动原因) `NOTICE_DATE`(日期精度) `REPORT_DATE`(报告期)
+    - H 回溯 2003，财报季当天更新；类型↔增幅方向自洽 27/30
+    - ⚠️ **同股多条**（修正稿）：按 `(SECURITY_CODE+REPORT_DATE)` 代码侧去重留最新 NOTICE_DATE；`filter=(IS_LATEST="1")` **返空不可用**
+    - ⚠️ 业绩预告标题已被东财公告源抓入 → 接入须跨源去重，或定位为「给已有预告补结构化字段」
+
+34. **一致预期 `RPT_WEB_RESPREDICT`**（东财数据中心，卖方聚合，**需合规脱敏**）：
+    - `GET .../reportName=RPT_WEB_RESPREDICT&columns=ALL&pageNumber=1&pageSize=50`；按股 `filter=(SECURITY_CODE="300750")`
+    - 合规保留：`RATING_ORG_NUM`(覆盖机构数) `RATING_BUY_NUM/ADD_NUM/NEUTRAL_NUM/REDUCE_NUM`(评级家数) `EPS1..4`+`YEAR1..4`(预测EPS趋势)
+    - 🔴 **铁律②丢弃**：`DEC_AIMPRICEMAX/MIN`(目标价)——不存不展示
+    - 覆盖：全市场 ~1500 只（仅卖方覆盖的股），命中库内热门股 50%；H 未测
+    - **预期差用法**：与业绩预告 `ADD_AMP` 配对，共识买入多 vs 公司预告下滑 = 背离信号（实测宁德时代 26家买入 but 略减-11%）
+
+35. **业绩快报 `RPT_FCI_PERFORMANCEE`**（一手，未深测，端点备用）：实际 `BASIC_EPS` `TOTAL_OPERATE_INCOME` `PARENT_NETPROFIT` `YSTZ`(营收同比) `JLRTBZCL`(净利同比) `NOTICE_DATE`。
+
+---
+
+## 2026-07-24 实测补充（loop run 8 · 海外/映射，方向轮换 #5）
+
+36. **台股月营收 TWSE OpenAPI**（半导体链先行指标，官方干净 JSON，全球可达）：
+    - `GET https://openapi.twse.com.tw/v1/opendata/t187ap05_L`（上市；无鉴权）→ 1082 家数组
+    - 字段：`公司代號 公司名稱 產業別 營業收入-當月營收(千元) 營業收入-去年當月營收 營業收入-去年同月增減(%) 累計營業收入-當月累計營收 資料年月`
+    - ⚠️ **日期是民國年**：`資料年月=11506` 表示民國115年6月=2026-06；`出表日期=1150717`=2026-07-17。入库转公历（+1911）
+    - ⚠️ **仅当月快照**，历史月营收需 MOPS `mopsov.twse.com.tw/mops/web/ajax_t21sc03`（POST，跨境间歇，本机不稳）
+    - 用法：TSMC(2330)/联发科(2454)/日月光(3711) 月营收同比 → A股半导体链景气**先行指标**（间接映射，定向用）
+
+37. **SEC EDGAR 申报数据**（美股供应链财报日历，官方全球可达）：
+    - `GET https://data.sec.gov/submissions/CIK{10位补零}.json`（**UA 必须带联系邮箱**，如 `jieniu-research research@example.com`，否则可能被限）
+    - 返回 `filings.recent.{form[], filingDate[], primaryDocument[]}` —— 申报类型+日期数组。英伟达 CIK=0001045810
+    - `H` 极深（几十年全申报史）；`efts.sec.gov` 全文搜索端点参数难调（本轮 500），优先用 submissions API
+    - 用法：英伟达/AMD/美光财报日 → A股算力/存储链「关注」标记（极间接，很低优先级）
+
+38. **海外映射源的通病**：不挂 A股个股，挂外国实体，须过人工供应链映射才到 A股，只沾半导体/算力/消费电子少数板块 → 按关联广度门控（评分卡 §八）一律**定向/边缘**，别当通用源。新浪不供台股（`rt_tw2330` 返空）。
