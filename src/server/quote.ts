@@ -4,6 +4,8 @@ import {
   parseSinaQuote,
   parseTencentQuote,
   parseValuation,
+  parseTencentValuation,
+  hasValuation,
   tickerToSecid,
   tickerToSymbol,
   type IndexMarket,
@@ -13,24 +15,51 @@ import {
 
 export type LiveQuote = Quote & { symbol: string };
 
-/** 抓客观估值指标（东财 push2 JSON：市盈率动/市净率/总市值/流通市值/换手率）。失败返回 null（不抛）。 */
+/**
+ * 抓客观估值指标（市盈率动/市净率/总市值/流通市值/换手率）。失败返回 null（不抛）。
+ * 主源东财 push2 JSON；**push2 对本节点间歇封锁（实测连续多轮 0/10），失败即回退腾讯
+ * qt.gtimg**（腾讯本就是现价备源，其行情串含全部估值字段，零新增主机依赖）。
+ */
 export async function fetchValuation(ticker: string): Promise<Valuation | null> {
   const secid = tickerToSecid(ticker);
-  if (!secid) return null;
+  if (secid) {
+    try {
+      const res = await fetch(
+        `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}` +
+          `&fields=f116,f117,f162,f167,f168&ut=fa5fd1943c7b386f172d6893dbfba10b`,
+        {
+          headers: { Referer: "https://quote.eastmoney.com" },
+          cache: "no-store",
+          signal: AbortSignal.timeout(6000),
+        },
+      );
+      if (res.ok) {
+        const j = (await res.json()) as {
+          data?: Record<string, unknown> | null;
+        };
+        if (j.data) {
+          const v = parseValuation(j.data);
+          if (hasValuation(v)) return v;
+        }
+      }
+    } catch {
+      // push2 不可达 → 落到腾讯兜底
+    }
+  }
+
+  // 兜底：腾讯 qt.gtimg（GBK，行情串含估值字段）
+  const symbol = tickerToSymbol(ticker);
+  if (!symbol) return null;
   try {
-    const res = await fetch(
-      `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}` +
-        `&fields=f116,f117,f162,f167,f168&ut=fa5fd1943c7b386f172d6893dbfba10b`,
-      {
-        headers: { Referer: "https://quote.eastmoney.com" },
-        cache: "no-store",
-        signal: AbortSignal.timeout(6000),
-      },
-    );
+    const res = await fetch(`https://qt.gtimg.cn/q=${symbol}`, {
+      headers: { Referer: "https://gu.qq.com" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(6000),
+    });
     if (!res.ok) return null;
-    const j = (await res.json()) as { data?: Record<string, unknown> | null };
-    if (!j.data) return null;
-    return parseValuation(j.data);
+    const raw = new TextDecoder("gbk").decode(await res.arrayBuffer());
+    const v = parseTencentValuation(raw);
+    return hasValuation(v) ? v : null;
   } catch {
     return null;
   }
