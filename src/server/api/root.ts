@@ -8,6 +8,7 @@ import { decisionRouter } from "~/server/api/routers/decision";
 import { earningsRouter } from "~/server/api/routers/earnings";
 import { entityRouter } from "~/server/api/routers/entity";
 import { feedRouter } from "~/server/api/routers/feed";
+import { inboxRouter } from "~/server/api/routers/inbox";
 import { interpretRouter } from "~/server/api/routers/interpret";
 import { investorProfileRouter } from "~/server/api/routers/investor-profile";
 import { newsRouter } from "~/server/api/routers/news";
@@ -16,6 +17,7 @@ import { portfolioRouter } from "~/server/api/routers/portfolio";
 import { postRouter } from "~/server/api/routers/post";
 import { priceAlertRouter } from "~/server/api/routers/priceAlert";
 import { quoteRouter } from "~/server/api/routers/quote";
+import { rotationRouter } from "~/server/api/routers/rotation";
 import { userThesisRouter } from "~/server/api/routers/user-thesis";
 import { watchlistRouter } from "~/server/api/routers/watchlist";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
@@ -36,6 +38,7 @@ export const appRouter = createTRPCRouter({
   earnings: earningsRouter,
   entity: entityRouter,
   feed: feedRouter,
+  inbox: inboxRouter,
   interpret: interpretRouter,
   investorProfile: investorProfileRouter,
   news: newsRouter,
@@ -44,6 +47,7 @@ export const appRouter = createTRPCRouter({
   post: postRouter,
   priceAlert: priceAlertRouter,
   quote: quoteRouter,
+  rotation: rotationRouter,
   userThesis: userThesisRouter,
   watchlist: watchlistRouter,
 });

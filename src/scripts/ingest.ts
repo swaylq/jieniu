@@ -18,6 +18,7 @@ import { eastmoneyForecast } from "../server/ingest/sources/eastmoney-forecast";
 import { eastmoneyStockNewsForCodes } from "../server/ingest/sources/eastmoney-stocknews";
 import { populateSignals, populateSectorSignals } from "../server/ingest/signals";
 import { populateDisclosures } from "../server/ingest/disclosure";
+import { populateMarketFlow } from "../server/ingest/market-flow";
 
 const db = new PrismaClient();
 
@@ -114,6 +115,18 @@ async function main() {
     );
   } catch (e) {
     console.error(`[disclosure] FAILED: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // 全市场涨跌幅 + 主力净流入 → EntitySignal(kind=flow)，供板块轮动 / 个股发现。
+  // 全市场 5900 只、每页硬顶 100 条 → ~59 次请求；东财间歇封锁时按页跳过并如实报数，
+  // 下一轮 upsert 补齐。绝不放进请求路径。
+  try {
+    const r = await populateMarketFlow(db);
+    console.log(
+      `[market-flow] fetched=${r.fetched}/${r.total} upserted=${r.upserted} failedPages=${r.failedPages}`,
+    );
+  } catch (e) {
+    console.error(`[market-flow] FAILED: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   // 板块级信号（Phase2·定向）：产业链价格 + 台股月营收 → SECTOR 实体的 EntitySignal。

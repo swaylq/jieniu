@@ -1,10 +1,12 @@
 import Link from "next/link";
+import { HoverPrefetchLink } from "../_components/hover-prefetch-link";
 import { type Metadata } from "next";
 
 import { api } from "~/trpc/server";
 import { EntitySearch } from "../_components/entity-search";
 import { SectionHead, chipClass, displayCls } from "../_components/section-head";
 import { HotSectorGrid } from "../_components/hot-sector-grid";
+import { SectorRotation, StockDiscovery } from "../_components/sector-rotation";
 import { Pager } from "../_components/pager";
 import { entityTypeLabel } from "~/lib/format";
 import { abs, openGraph, twitter } from "~/lib/seo";
@@ -13,16 +15,16 @@ import type { EntityType } from "../../../generated/prisma";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "发现 热门板块与个股",
+  title: "发现 全 A股行业与个股",
   description:
-    "浏览解牛覆盖的热门板块、公司、股票与关键人物 —— 聚焦最火赛道的核心标的，一手资讯与 AI 投资逻辑一站直达。",
+    "浏览解牛覆盖的全 A股行业、公司、股票与关键人物，看一手资讯与 AI 投资逻辑。",
   alternates: { canonical: "/discover" },
   openGraph: openGraph({
     url: abs("/discover"),
-    title: "发现 热门板块与个股 · 解牛",
-    description: "聚焦最火赛道的核心标的，一手资讯与 AI 投资逻辑一站直达。",
+    title: "发现 全 A股行业与个股 · 解牛",
+    description: "全 A股按行业全覆盖，一手资讯与 AI 投资逻辑。",
   }),
-  twitter: twitter({ title: "发现 热门板块与个股 · 解牛" }),
+  twitter: twitter({ title: "发现 全 A股行业与个股 · 解牛" }),
 };
 
 const TYPES: EntityType[] = ["SECTOR", "COMPANY", "STOCK", "PERSON"];
@@ -69,14 +71,14 @@ export default async function DiscoverPage({
         <ul className="mt-6 flex flex-wrap gap-2">
           {data.items.map((e) => (
             <li key={e.id}>
-              <Link href={`/entity/${e.id}`} className={chipClass}>
+              <HoverPrefetchLink href={`/entity/${e.id}`} className={chipClass}>
                 {e.name}
                 {e.ticker ? (
                   <span className="tabular ml-1.5 text-xs text-muted">
                     {e.ticker}
                   </span>
                 ) : null}
-              </Link>
+              </HoverPrefetchLink>
             </li>
           ))}
         </ul>
@@ -92,9 +94,11 @@ export default async function DiscoverPage({
     );
   }
 
-  const [hot, radar, sections] = await Promise.all([
-    api.entity.hotSectors(),
+  const [hot, radar, rotation, sections] = await Promise.all([
+    api.entity.allSectors(),
     api.entity.radar(),
+    // 加进同一个 Promise.all：多一道串行 await 就多一次全额延迟（个股页 278ms 的教训）
+    api.rotation.board({ sectors: 5, stocks: 5 }),
     Promise.all(
       TYPES.map(async (type) => ({
         type,
@@ -113,7 +117,7 @@ export default async function DiscoverPage({
           </h1>
         </div>
         <p className="mt-2 text-sm text-muted">
-          先看重点覆盖的热门板块，再看近期有新进展的标的
+          全 A股按行业全覆盖，再看近期有新进展的标的
         </p>
       </header>
 
@@ -121,9 +125,23 @@ export default async function DiscoverPage({
         <EntitySearch />
       </div>
 
+      {/* 板块轮动 / 个股发现：全部从库里算（EntitySignal kind=flow 由 ingest 定时采集），
+          请求路径上不碰东财——它对本节点间歇封锁，且全市场要翻 59 页。 */}
+      {rotation.sectors.length > 0 ? (
+        <div className="mt-8 space-y-4">
+          <SectorRotation sectors={rotation.sectors} asOf={rotation.asOf} />
+          <StockDiscovery items={rotation.discoveries} asOf={rotation.asOf} />
+        </div>
+      ) : null}
+
       {hot.sectors.length > 0 ? (
         <div className="mt-8">
-          <HotSectorGrid sectors={hot.sectors} totalStocks={hot.totalStocks} />
+          <HotSectorGrid
+            sectors={hot.sectors}
+            totalStocks={hot.totalStocks}
+            full
+            limit={40}
+          />
         </div>
       ) : null}
 
@@ -141,7 +159,7 @@ export default async function DiscoverPage({
           <ul className="grid gap-2 sm:grid-cols-2">
             {radar.map((item) => (
               <li key={item.entityId}>
-                <Link
+                <HoverPrefetchLink
                   href={`/entity/${item.entityId}`}
                   className="flex h-full items-start justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3 transition-colors hover:border-brand/40 hover:bg-canvas"
                 >
@@ -164,7 +182,7 @@ export default async function DiscoverPage({
                   <span className={flagClass(item.flagTone)}>
                     {item.flagLabel}
                   </span>
-                </Link>
+                </HoverPrefetchLink>
               </li>
             ))}
           </ul>
@@ -185,14 +203,14 @@ export default async function DiscoverPage({
               <ul className="flex flex-wrap gap-2">
                 {items.slice(0, DISPLAY_CAP).map((e) => (
                   <li key={e.id}>
-                    <Link href={`/entity/${e.id}`} className={chipClass}>
+                    <HoverPrefetchLink href={`/entity/${e.id}`} className={chipClass}>
                       {e.name}
                       {e.ticker ? (
                         <span className="tabular ml-1.5 text-xs text-muted">
                           {e.ticker}
                         </span>
                       ) : null}
-                    </Link>
+                    </HoverPrefetchLink>
                   </li>
                 ))}
               </ul>
