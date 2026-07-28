@@ -11,6 +11,7 @@ import {
   isMasterLens,
 } from "~/lib/interpretation-lens";
 import { masterCompass } from "~/lib/master-compass";
+import { formatGeneratedAt } from "~/lib/ai-stamp";
 import { InterpretationBody } from "./interpretation-body";
 import { MasterCompass } from "./master-compass";
 
@@ -18,12 +19,23 @@ function BodyBlock({
   content,
   errored,
   authRequired,
+  generatedAt,
 }: {
   content: string | undefined;
   errored: boolean;
   authRequired?: boolean;
+  generatedAt?: string;
 }) {
-  if (content !== undefined) return <InterpretationBody md={content} />;
+  if (content !== undefined)
+    return (
+      <>
+        <InterpretationBody md={content} />
+        {/* 解读按 (newsId,kind) 永久缓存——没有时间戳就分不清是刚生成的还是几个月前的 */}
+        {generatedAt ? (
+          <p className="mt-2 text-[11px] text-muted">生成于 {generatedAt}</p>
+        ) : null}
+      </>
+    );
   if (authRequired)
     return (
       <p className="text-muted">
@@ -65,6 +77,9 @@ export function InterpretationPanel({
   const [content, setContent] = useState<
     Partial<Record<InterpretKind, string>>
   >({});
+  const [stamps, setStamps] = useState<Partial<Record<InterpretKind, string>>>(
+    {},
+  );
   const [errored, setErrored] = useState<Set<InterpretKind>>(new Set());
   const [needLogin, setNeedLogin] = useState(false);
   const mutation = api.interpret.getOrCreate.useMutation();
@@ -82,6 +97,7 @@ export function InterpretationPanel({
       try {
         const res = await mutation.mutateAsync({ newsId, kind });
         setContent((c) => ({ ...c, [kind]: res.content }));
+        setStamps((m) => ({ ...m, [kind]: formatGeneratedAt(res.generatedAt) }));
       } catch (err) {
         const code =
           err && typeof err === "object" && "data" in err
@@ -129,6 +145,7 @@ export function InterpretationPanel({
           content={content[DEFAULT_INTERPRET_LENS]}
           errored={errored.has(DEFAULT_INTERPRET_LENS)}
           authRequired={needLogin}
+          generatedAt={stamps[DEFAULT_INTERPRET_LENS]}
         />
       </div>
 
@@ -161,6 +178,7 @@ export function InterpretationPanel({
                 content={content[masterActive]}
                 errored={errored.has(masterActive)}
                 authRequired={needLogin}
+                generatedAt={stamps[masterActive]}
               />
             </div>
           )}

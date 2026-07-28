@@ -17,6 +17,7 @@ import {
 import { eastmoneyForecast } from "../server/ingest/sources/eastmoney-forecast";
 import { eastmoneyStockNewsForCodes } from "../server/ingest/sources/eastmoney-stocknews";
 import { populateSignals, populateSectorSignals } from "../server/ingest/signals";
+import { populateDisclosures } from "../server/ingest/disclosure";
 
 const db = new PrismaClient();
 
@@ -102,6 +103,17 @@ async function main() {
     console.log(`[signals] margin=${r.margin} consensus=${r.consensus} unlock=${r.unlock}`);
   } catch (e) {
     console.error(`[signals] FAILED: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // 预约披露日：交易所预约披露时间表 → EntitySignal(kind=disclosure)，供催化日历做精确倒计时。
+  // 全市场一次扫未来 150 天（约 12 页），比按股拉快几个数量级；本轮没刷到的旧信号会被清理。
+  try {
+    const r = await populateDisclosures(db);
+    console.log(
+      `[disclosure] upserted=${r.upserted} scanned=${r.scanned} pruned=${r.pruned}`,
+    );
+  } catch (e) {
+    console.error(`[disclosure] FAILED: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   // 板块级信号（Phase2·定向）：产业链价格 + 台股月营收 → SECTOR 实体的 EntitySignal。

@@ -85,7 +85,13 @@ export const interpretRouter = createTRPCRouter({
       const existing = await ctx.db.interpretation.findUnique({
         where: { newsId_kind: { newsId: input.newsId, kind: input.kind } },
       });
-      if (existing) return { content: existing.content, cached: true };
+      // generatedAt：解读按 (newsId,kind) 永久缓存，没有时间戳就看不出是刚算的还是几个月前的。
+      if (existing)
+        return {
+          content: existing.content,
+          cached: true,
+          generatedAt: existing.createdAt,
+        };
 
       // 生成路径（未命中缓存才走）：需登录 + 限流。
       // 缓存命中对匿名开放（解读按 newsId+kind 全局共享），但付费生成只放给登录用户，
@@ -154,10 +160,15 @@ export const interpretRouter = createTRPCRouter({
           const won = await ctx.db.interpretation.findUnique({
             where: { newsId_kind: { newsId: input.newsId, kind: input.kind } },
           });
-          if (won) return { content: won.content, cached: true };
+          if (won)
+            return {
+              content: won.content,
+              cached: true,
+              generatedAt: won.createdAt,
+            };
         }
         throw e;
       }
-      return { content, cached: false };
+      return { content, cached: false, generatedAt: new Date() };
     }),
 });
