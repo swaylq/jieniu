@@ -3,9 +3,15 @@ import { parseEastmoneyKlines, parseSinaKlines, type Bar } from "../lib/kline";
 import { tickerToSecid, tickerToSymbol } from "../lib/quote";
 
 /**
- * 日线抓取：主源东财 push2his，失败回退新浪。
- * 东财 push2 对本节点**间歇封锁**（估值卡已因此加过腾讯兜底），日线同理不押单一主机。
- * 失败返回空数组（不抛）——调用方据此不渲染该模块。
+ * 日线抓取：**主源新浪，失败回退东财 push2his**。
+ *
+ * 顺序不是随便定的：上线后实测东财 `push2his` 从本节点 **0/8 全败**（96ms 快速失败，
+ * 不是超时），新浪 **8/8 全成**（228ms）。原来把东财放主源，等于每次财报页都白付一次
+ * 失败往返。注意区分同为东财的两族主机——`datacenter-web.eastmoney.com`（预约披露 /
+ * 估值分析）完全正常，挂的只有 `push2*` 这一族，与「东财 push2 对本机间歇封锁」一致。
+ *
+ * 仍保留东财做备源：封锁是「间歇」的，哪天恢复了它字段更全（自带涨跌幅，无需由收盘价推算）。
+ * 两源都失败返回空数组（不抛）——调用方据此不渲染该模块。顺序由 `kline.test.ts` 钉住。
  */
 
 const UA =
@@ -55,17 +61,17 @@ export async function fetchDailyBars(
   const beg = `${from.getFullYear()}${String(from.getMonth() + 1).padStart(2, "0")}${String(from.getDate()).padStart(2, "0")}`;
 
   try {
-    const bars = await fromEastmoney(ticker, beg);
+    const bars = await fromSina(ticker, Math.min(1023, years * 250 + 20));
     if (bars.length > 0) return bars;
   } catch (e) {
     // 记日志不静默：源端点变了会 100% 失败，裸 catch 会零痕迹永久跳过。
-    console.error("[kline] eastmoney failed:", e instanceof Error ? e.message : e);
+    console.error("[kline] sina failed:", e instanceof Error ? e.message : e);
   }
 
   try {
-    return await fromSina(ticker, Math.min(1023, years * 250 + 20));
+    return await fromEastmoney(ticker, beg);
   } catch (e) {
-    console.error("[kline] sina failed:", e instanceof Error ? e.message : e);
+    console.error("[kline] eastmoney failed:", e instanceof Error ? e.message : e);
     return [];
   }
 }

@@ -72,6 +72,12 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { id } = await params;
   const data = await getEntityData(id);
+  // 找不到时返回 noindex，**不要**在这里 notFound()。
+  // Next 15.5 对 force-dynamic 路由的行为：notFound() 会被 not-found 边界在流内正常渲染，
+  // 不会冒泡到 app-render 那个设 res.statusCode=404 的 catch（见 app-render.js:1402），
+  // 所以状态码留在 200（soft 404）。实测在 generateMetadata 里抛也一样是 200。
+  // 状态码改不动，就退而求其次堵住真正的危害：noindex 让爬虫不收录不存在的实体页。
+  // 页面组件里的 notFound() 保留——它负责渲染友好的「页面不存在」。
   if (!data) return { title: "未找到", robots: { index: false, follow: false } };
   const { entity: e } = data;
   const title =

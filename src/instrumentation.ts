@@ -21,8 +21,18 @@ export function register() {
 
   const missing = REQUIRED.filter(([k]) => !process.env[k]);
 
+  // 会话密钥强度自检：`.env` 里那份历史遗留值是一句自然语言（含空格、非 base64），
+  // 熵太低不该签会话；正确来源是 secret store（由 scripts/start-prod.sh 注入）。
+  // 只报形状判定，绝不打印值本身。
+  const authSecret = process.env.AUTH_SECRET ?? "";
+  const weakAuth =
+    authSecret.length > 0 &&
+    (/\s/.test(authSecret) || !/^[A-Za-z0-9+/=_-]+$/.test(authSecret));
+
   if (missing.length === 0) {
-    console.log("[boot] ✓ 密钥齐全：AI + 邮件可用");
+    console.log(
+      `[boot] ✓ 密钥齐全：AI + 邮件可用${weakAuth ? " ｜ ⚠ AUTH_SECRET 是弱值（含空格/非 base64），说明没走 scripts/start-prod.sh" : ""}`,
+    );
     return;
   }
 

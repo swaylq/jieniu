@@ -2,7 +2,7 @@
 #
 # 生产启动的唯一入口。
 #
-# 为什么必须走这个脚本：ALI_KEY / ALI_SECRET / OPENROUTER_API_KEY 不在 `.env` 里，
+# 为什么必须走这个脚本：ALI_KEY / ALI_SECRET / OPENROUTER_API_KEY / AUTH_SECRET 不都在 `.env` 里，
 # 只在 `secret` store 里。直接 `NODE_ENV=production PORT=3838 npm run start` 能起来、
 # 首页也 200，但这三个 key **静默**缺失 —— AI 全线（问解牛 / 解读 / thesis / drift /
 # 画像 / 事件摘要）每次调用秒失败，登录验证码也发不出去。2026-07-25 就是这么坏的。
@@ -32,8 +32,12 @@ echo "→ 停掉 :$PORT 上的旧进程"
 lsof -ti:"$PORT" | xargs kill 2>/dev/null || true
 sleep 1
 
-echo "→ 启动（secret exec 注入 ALI_KEY / ALI_SECRET / OPENROUTER_API_KEY）"
-secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY -- \
+# AUTH_SECRET 也走 secret store：`.env` 里那份是一句自然语言（含空格、非 base64），
+# 熵太低不该拿来签会话；store 里是标准的 `openssl rand -base64 32`。进程 env 优先级高于
+# `.env`，注入即生效。`.env` 的弱值保留只为让 `next build` / 本地 dev 的 env 校验能过——
+# 真要绕过本脚本裸起，下面的 [boot] 自检会把「用的是弱密钥」喊出来。
+echo "→ 启动（secret exec 注入 ALI_KEY / ALI_SECRET / OPENROUTER_API_KEY / AUTH_SECRET）"
+secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY AUTH_SECRET -- \
   env NODE_ENV=production PORT="$PORT" \
   MAIL_FROM="解牛 <noreply@mail.auramate.net>" \
   ALI_REGION=cn-hangzhou \
