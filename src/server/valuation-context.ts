@@ -20,7 +20,7 @@ const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const COLUMNS = "SECURITY_CODE,TRADE_DATE,PE_TTM,PB_MRQ,PS_TTM,BOARD_CODE,BOARD_NAME";
 
-async function get(filter: string, extra: string): Promise<unknown | null> {
+async function get(filter: string, extra: string): Promise<unknown> {
   const url = `${API}?reportName=RPT_VALUEANALYSIS_DET&columns=${COLUMNS}${extra}&filter=${encodeURIComponent(filter)}`;
   const res = await fetch(url, {
     headers: { "User-Agent": UA, Referer: "https://data.eastmoney.com/" },

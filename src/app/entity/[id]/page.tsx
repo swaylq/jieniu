@@ -376,10 +376,11 @@ export default async function EntityPage({
   // 预约披露日（交易所时间表）：有就交给催化日历置顶做精确倒计时，信号条里不重复。
   const disclosureRaw = entitySignals.find((s) => s.kind === "disclosure");
   const appointment = parseAppointmentView(disclosureRaw?.detail);
+  // disclosure 一律不进信号条：那张卡的 KIND_LABEL 里没有它，解析失败时会裸显 "disclosure"。
+  // 披露节点归催化日历管，解析不出来就干脆不显示（而不是显示个英文 kind）。
   const otherSignals = entitySignals.filter(
     (s) =>
-      !(consensusDetail && s.kind === "consensus") &&
-      !(appointment && s.kind === "disclosure"),
+      s.kind !== "disclosure" && !(consensusDetail && s.kind === "consensus"),
   );
   const catalystNodes = quotable ? upcomingDisclosureNodes(new Date(), 2) : [];
   const catalystCatalysts = thesisData?.catalysts ?? [];

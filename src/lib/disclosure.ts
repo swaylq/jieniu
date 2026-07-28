@@ -139,7 +139,7 @@ export function pastDisclosures(
 ): Appointment[] {
   const past = rows
     .map((r) => parseAppointment(r, now))
-    .filter((a): a is Appointment => a !== null && a.actual)
+    .filter((a): a is Appointment => a?.actual === true)
     .sort((a, b) => b.date.getTime() - a.date.getTime());
   return typeof limit === "number" ? past.slice(0, limit) : past;
 }

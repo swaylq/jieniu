@@ -181,13 +181,13 @@ export async function populateDisclosures(
         kind: s.kind,
         label: s.label,
         numValue: s.numValue,
-        detail: s.detail as object,
+        detail: s.detail,
         asOf: s.asOf,
       },
       update: {
         label: s.label,
         numValue: s.numValue,
-        detail: s.detail as object,
+        detail: s.detail,
         asOf: s.asOf,
       },
     });

@@ -73,7 +73,7 @@ export const earningsRouter = createTRPCRouter({
   signals: publicProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
-      const pair = await resolvePair(ctx.db as PrismaClient, input.id);
+      const pair = await resolvePair(ctx.db, input.id);
       if (!pair) return [];
       const rows = await ctx.db.entitySignal.findMany({
         where: { entityId: { in: pair.ids } },
@@ -85,7 +85,7 @@ export const earningsRouter = createTRPCRouter({
   preview: publicProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
-      const pair = await resolvePair(ctx.db as PrismaClient, input.id);
+      const pair = await resolvePair(ctx.db, input.id);
       if (!pair) return null;
 
       const entity = await ctx.db.entity.findUnique({

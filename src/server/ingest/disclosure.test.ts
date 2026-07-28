@@ -27,7 +27,7 @@ describe("disclosureSignal", () => {
 
   it("detail 存绝对日期，供 UI 重新计算倒计时", () => {
     const s = disclosureSignal(parseAppointment(row, now)!, now)!;
-    const d = s.detail as DisclosureDetail;
+    const d: DisclosureDetail = s.detail;
     expect(d.reportKey).toBe("2026H1");
     expect(d.date.slice(0, 10)).toBe("2026-08-15");
     expect(d.rescheduled).toBe(false);
@@ -39,7 +39,7 @@ describe("disclosureSignal", () => {
       now,
     )!;
     expect(s.label).toContain("已改期");
-    expect((s.detail as DisclosureDetail).rescheduled).toBe(true);
+    expect(s.detail.rescheduled).toBe(true);
   });
 
   it("已实际披露的不写成待披露信号——倒计时只给未来", () => {
