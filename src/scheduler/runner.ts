@@ -54,10 +54,19 @@ export async function runStep(step: Step, opts: RunOpts): Promise<StepResult> {
   const timeoutMs = step.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return await new Promise<StepResult>((resolve) => {
+    // stdio 必须显式标类型：数组字面量会被推成 string[]，导致 spawn 的重载全部匹配不上
+    // （报错现场是 child 变成 never，后面每一行都跟着炸）。
+    const stdio: ("ignore" | "pipe")[] = ["ignore", "pipe", "pipe"];
+    // 本项目把 NodeJS.ProcessEnv 的 NODE_ENV 声明成必填（env.js 的类型增强），
+    // 而这里的 env 是一张普通的 key→值表，所以要显式断言回 ProcessEnv。
+    const childEnv = {
+      ...opts.env,
+      ...(step.env ?? {}),
+    } as NodeJS.ProcessEnv;
     const child = spawn(tsx, [step.script, ...step.args], {
       cwd: opts.cwd,
-      env: { ...opts.env, ...(step.env ?? {}) },
-      stdio: ["ignore", "pipe", "pipe"],
+      env: childEnv,
+      stdio,
     });
 
     let buf = "";
@@ -69,8 +78,8 @@ export async function runStep(step: Step, opts: RunOpts): Promise<StepResult> {
       // 只留尾巴，边收边裁，长回填也不会把内存吃满。
       if (buf.length > OUTPUT_TAIL * 2) buf = buf.slice(-OUTPUT_TAIL);
     };
-    child.stdout.on("data", absorb);
-    child.stderr.on("data", absorb);
+    child.stdout?.on("data", absorb);
+    child.stderr?.on("data", absorb);
 
     let killTimer: NodeJS.Timeout | null = null;
     const timer = setTimeout(() => {
