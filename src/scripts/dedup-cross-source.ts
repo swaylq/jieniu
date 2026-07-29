@@ -12,6 +12,14 @@ const DAY = 24 * 60 * 60 * 1000;
 
 async function main() {
   const apply = process.argv.includes("--apply");
+  const wantJson = process.argv.includes("--json");
+  // --max-apply=N：一次扫描内判定「冗余数 ≤N 才删」。原来的 cron 是 dry-run 数一遍、
+  // 再 --apply 重扫一遍删，两次扫描之间集合会变（TOCTOU），且多一次全表扫描。
+  const maxApplyArg = process.argv.find((a) => a.startsWith("--max-apply="));
+  const maxApply = maxApplyArg ? Number(maxApplyArg.split("=")[1]) : null;
+  if (maxApplyArg && (maxApply === null || !Number.isFinite(maxApply) || maxApply < 0)) {
+    throw new Error(`--max-apply 取值非法: ${maxApplyArg}`);
+  }
 
   const items = await db.newsItem.findMany({
     where: { entities: { some: {} } },
@@ -58,21 +66,43 @@ async function main() {
   );
   for (const s of sample) console.log("  ·", s);
 
-  if (toDelete.length === 0) return;
-  if (!apply) {
+  const overLimit = maxApply !== null && toDelete.length > maxApply;
+  const willApply =
+    toDelete.length > 0 && (apply || maxApply !== null) && !overLimit;
+
+  if (overLimit) {
+    console.log(
+      `\n⚠ 冗余 ${toDelete.length} 条 > 上限 ${maxApply}，本轮不删——异常暴增，先让人看。`,
+    );
+  } else if (toDelete.length === 0) {
+    console.log("\n无跨源冗余。");
+  } else if (!willApply) {
     console.log("\n(dry-run — 加 --apply 才删。每组保留最早一条，级联清 NewsEntity/解读/收藏。)");
-    return;
   }
 
-  // 分批删，避免 in 列表过长
   let deleted = 0;
-  for (let i = 0; i < toDelete.length; i += 500) {
-    const r = await db.newsItem.deleteMany({
-      where: { id: { in: toDelete.slice(i, i + 500) } },
-    });
-    deleted += r.count;
+  if (willApply) {
+    // 分批删，避免 in 列表过长
+    for (let i = 0; i < toDelete.length; i += 500) {
+      const r = await db.newsItem.deleteMany({
+        where: { id: { in: toDelete.slice(i, i + 500) } },
+      });
+      deleted += r.count;
+    }
+    console.log(`\n已删 ${deleted} 条跨源冗余（个股公告页/自选早报去重）。`);
   }
-  console.log(`\n已删 ${deleted} 条跨源冗余（个股公告页/自选早报去重）。`);
+
+  if (wantJson) {
+    console.log(
+      "JSON_RESULT " +
+        JSON.stringify({
+          scanned: items.length,
+          redundant: toDelete.length,
+          deleted,
+          overLimit,
+        }),
+    );
+  }
 }
 
 main()

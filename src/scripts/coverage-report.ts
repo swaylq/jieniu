@@ -115,6 +115,29 @@ async function main() {
   console.log("【抓取活跃度】");
   console.log(`  近24小时新入库: ${n24}`);
   console.log(`  近7天新入库:    ${n7d}`);
+
+  // --json：给服务内调度器的判据用。人类可读输出保持不变，只在末尾多打这一行。
+  // 百分比这里算成数值（而不是复用上面的 pct() 字符串），判据要拿它做比较。
+  if (process.argv.includes("--json")) {
+    const ratio = (a: number, b: number) =>
+      b === 0 ? 0 : Number(((a / b) * 100).toFixed(2));
+    console.log(
+      "JSON_RESULT " +
+        JSON.stringify({
+          companies,
+          stocks,
+          news,
+          blankCompanies: companies - withNews,
+          pctNews7d: ratio(w7, companies),
+          pctNews30d: ratio(w30, companies),
+          pctStockBound: ratio(withStock, companies),
+          hotUniverse: hotIds.length,
+          pctHotThesis: ratio(hotWithThesis, hotIds.length),
+          n24,
+          n7d,
+        }),
+    );
+  }
 }
 
 main()

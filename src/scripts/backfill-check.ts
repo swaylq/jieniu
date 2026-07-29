@@ -92,9 +92,12 @@ async function main() {
       entities: { select: { entity: { select: { name: true, type: true } } } },
     },
   });
+  let badCount = 0;
+  let selfBoundCount = 0;
   if (reports.length === 0) console.log("  （暂无研报）");
   else {
     const bad = reports.filter((r) => isRatingHeadline(r.title));
+    badCount = bad.length;
     console.log(
       `  研报 ${reports.length} 篇 → 标题含评级/目标价的 ${bad.length} 篇` +
         (bad.length === 0 ? "  ✓" : "  ⚠"),
@@ -104,6 +107,7 @@ async function main() {
     const selfBound = reports.filter((r) =>
       r.entities.some((e) => isReportPublisherOf(r.title, e.entity)),
     );
+    selfBoundCount = selfBound.length;
     console.log(
       `  绑到发布机构自身的 ${selfBound.length} 篇` +
         (selfBound.length === 0 ? "  ✓" : "  ⚠ 券商 feed 会被污染"),
@@ -122,6 +126,24 @@ async function main() {
     WHERE e.type = 'COMPANY'
     GROUP BY e.name ORDER BY items DESC LIMIT 8`);
   console.table(spread);
+
+  // --json：给服务内调度器的判据用。人类可读输出保持不变。
+  // 注意 dupes 的 SQL 带 LIMIT 15，所以 dupeGroups 最多是 15——判据只关心「是不是 0」。
+  if (process.argv.includes("--json")) {
+    const row = (dist[0] ?? {}) as Record<string, unknown>;
+    console.log(
+      "JSON_RESULT " +
+        JSON.stringify({
+          dupeGroups: dupes.length,
+          // 上面那条 SQL 带 LIMIT 15，命中 15 时真实组数可能远不止 15——
+          // 把「被截断了」明说出来，别让下游把 15 当成真实值。
+          dupeGroupsCapped: dupes.length >= 15,
+          reportRatingHeadlines: badCount,
+          reportSelfBound: selfBoundCount,
+          avgBoundPerStock: Number(row["平均"] ?? 0),
+        }),
+    );
+  }
 }
 
 main()
