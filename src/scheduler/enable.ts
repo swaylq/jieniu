@@ -66,17 +66,17 @@ async function main(): Promise<void> {
     }
     // interval 任务：清空 nextFire = 立即跑一轮，正好当场验证。
     // daily 任务：按锚点算出真正的下次触发，绝不在错误的钟点放行。
-    const nextFire =
-      job.schedule.kind === "interval"
-        ? null
-        : new Date(nextFireAfter(job.schedule, now));
+    const daily = job.schedule.kind === "daily" ? job.schedule : null;
+    const nextFire = daily ? new Date(nextFireAfter(daily, now)) : null;
     await db.jobState.update({
       where: { key },
       data: { enabled: true, nextFire },
     });
     console.log(
       `✓ ${key} 已开启 · ${
-        nextFire ? `下次 ${fmt(nextFire)}（锚点 ${job.schedule.atCST}）` : "立即到期"
+        daily && nextFire
+          ? `下次 ${fmt(nextFire)}（锚点 ${daily.atCST}）`
+          : "立即到期"
       }`,
     );
   }
