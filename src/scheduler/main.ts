@@ -18,10 +18,17 @@ import type { Alert, JobDef, JobStatus, Metrics } from "./types";
 const db = new PrismaClient();
 const TICK_MS = 30_000;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-/** heavy 任务连续被互斥挡下这么多次就记一条 skipped 并告警，防止饿死。 */
-const MAX_BLOCKED = 3;
+/**
+ * heavy 任务被互斥**连续挡住超过这么久**才记一条 skipped，防止饿死。
+ *
+ * 阈值必须远大于一条重活的正常时长：被挡是这个互斥的**正常工作状态**
+ * （`backfill-announcements` 一轮就 100 秒，`backfill-signals` 可以跑 20 分钟），
+ * 早先按「连续挡 3 个 tick = 90 秒」记录，两条重活一撞就留一条假警报。
+ */
+const BLOCK_ALARM_MS = 2 * 60 * 60 * 1000;
 
-const blockedCount = new Map<string, number>();
+/** jobKey → 本轮连续被挡的起始时刻 */
+const blockedSince = new Map<string, number>();
 const running = new Set<string>();
 
 function bootCheck(): void {
@@ -254,17 +261,19 @@ async function tick(): Promise<void> {
     if (st.nextFire && st.nextFire.getTime() > now) continue;
 
     if (job.heavy && heavyBusy()) {
-      const n = (blockedCount.get(job.key) ?? 0) + 1;
-      blockedCount.set(job.key, n);
-      if (n >= MAX_BLOCKED) {
-        blockedCount.set(job.key, 0);
-        console.error(`[scheduler] ${job.key} 连续 ${n} 次被 heavy 互斥挡下`);
+      const since = blockedSince.get(job.key) ?? now;
+      blockedSince.set(job.key, since);
+      const blockedFor = now - since;
+      if (blockedFor >= BLOCK_ALARM_MS) {
+        blockedSince.delete(job.key);
+        const mins = Math.round(blockedFor / 60_000);
+        console.error(`[scheduler] ${job.key} 被 heavy 互斥连续挡了 ${mins} 分钟`);
         await db.jobRun.create({
           data: {
             jobKey: job.key,
             status: "skipped",
             finishedAt: new Date(),
-            output: `连续 ${n} 次被 heavy 互斥挡下——检查是不是某条重活跑太久了`,
+            output: `被 heavy 互斥连续挡了 ${mins} 分钟没能开跑——检查是不是某条重活卡死了`,
             durationMs: 0,
           },
         });
@@ -272,7 +281,7 @@ async function tick(): Promise<void> {
       continue;
     }
 
-    blockedCount.set(job.key, 0);
+    blockedSince.delete(job.key);
     // 不 await：一条任务可以跑很久，tick 不能被它堵住。
     void fire(job).catch((e) => {
       running.delete(job.key);
