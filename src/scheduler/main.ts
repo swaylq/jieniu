@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PrismaClient } from "../../generated/prisma";
 import { JOBS } from "./jobs";
-import { nextFireAfter } from "./schedule";
+import { nextFireAfterRun } from "./schedule";
 import { runStep, DEFAULT_TIMEOUT_MS } from "./runner";
 import { parseJsonResult, evalChecks } from "./checks";
 import { narrate } from "./narrate";
@@ -220,7 +220,9 @@ async function fire(job: JobDef): Promise<void> {
     data: {
       runningAt: null,
       lastStatus: status,
-      nextFire: new Date(nextFireAfter(job.schedule, Date.now())),
+      // 按**开火时刻**排下一次，不是完成时刻：daily 的语义是「一天只跑一次」，
+      // 用完成时刻算会让「锚点前跑完」的任务当天又排一轮（brief-morning 一早跑了三次）。
+      nextFire: new Date(nextFireAfterRun(job.schedule, startedAt, Date.now())),
     },
   });
 

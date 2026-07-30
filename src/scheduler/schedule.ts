@@ -22,16 +22,9 @@ function jitterMs(jitterSec: number, rand: () => number): number {
   return Math.round((rand() * 2 - 1) * jitterSec * 1000);
 }
 
-export function nextFireAfter(
-  s: Schedule,
-  fromMs: number,
-  rand: () => number = Math.random,
-): number {
-  if (s.kind === "interval") {
-    return fromMs + s.everySec * 1000 + jitterMs(s.jitterSec, rand);
-  }
-
-  const [hStr, mStr] = s.atCST.split(":");
+/** 解析 "HH:MM"，返回当天零点起的毫秒偏移。 */
+function anchorOffsetMs(atCST: string): number {
+  const [hStr, mStr] = atCST.split(":");
   const h = Number(hStr);
   const m = Number(mStr);
   if (
@@ -42,14 +35,57 @@ export function nextFireAfter(
     m < 0 ||
     m > 59
   ) {
-    throw new Error(`daily.atCST 格式非法: ${s.atCST}（应为 "HH:MM"）`);
+    throw new Error(`daily.atCST 格式非法: ${atCST}（应为 "HH:MM"）`);
   }
+  return h * 3600_000 + m * 60_000;
+}
 
-  // 换算到「北京时钟」的时间轴上算当天零点，再换回 UTC 毫秒。
-  const cstMs = fromMs + CST_OFFSET_MS;
-  const cstMidnight = Math.floor(cstMs / DAY_MS) * DAY_MS;
-  let target = cstMidnight + h * 3600_000 + m * 60_000 - CST_OFFSET_MS;
+/** 某个时刻所在「北京日历日」的零点（UTC 毫秒）。 */
+function cstDayStart(ms: number): number {
+  return Math.floor((ms + CST_OFFSET_MS) / DAY_MS) * DAY_MS - CST_OFFSET_MS;
+}
+
+/**
+ * `fromMs` **之后**的下一次触发。用于首次排期（enable.ts、从未跑过的任务）。
+ *
+ * 注意 daily 的语义是「from 之后的下一个锚点」——**不要**拿它算「跑完之后的下一次」，
+ * 那是 `nextFireAfterRun` 的活儿（见下面那条注释里的线上事故）。
+ */
+export function nextFireAfter(
+  s: Schedule,
+  fromMs: number,
+  rand: () => number = Math.random,
+): number {
+  if (s.kind === "interval") {
+    return fromMs + s.everySec * 1000 + jitterMs(s.jitterSec, rand);
+  }
+  let target = cstDayStart(fromMs) + anchorOffsetMs(s.atCST);
   if (target <= fromMs) target += DAY_MS;
-
   return Math.max(target + jitterMs(s.jitterSec, rand), fromMs + MIN_LEAD_MS);
+}
+
+/**
+ * 一轮跑完之后的下一次触发。
+ *
+ * interval：从当下起算一个周期，与 `nextFireAfter` 同义。
+ * daily：**开火那个北京日历日的次日**锚点 —— 语义是「一天只跑一次」。
+ *
+ * 为什么不能直接用 `nextFireAfter(s, now)`：线上真撞过。`brief-morning`
+ * （锚点 07:20、jitter ±10min）因负 jitter 在 07:13 开跑、07:14 跑完，
+ * 「07:14 之后的下一个 07:20」还是**今天**，于是又排一轮，一早连跑三次、
+ * 烧了三份 AI 钱。锚点必须挂在开火日上，不能挂在完成时刻上。
+ *
+ * 用 `lastFireMs`（开火时刻）而不是完成时刻，所以一条跑两小时的任务也不会把钟点推后。
+ */
+export function nextFireAfterRun(
+  s: Schedule,
+  lastFireMs: number,
+  nowMs: number,
+  rand: () => number = Math.random,
+): number {
+  if (s.kind === "interval") {
+    return nowMs + s.everySec * 1000 + jitterMs(s.jitterSec, rand);
+  }
+  const target = cstDayStart(lastFireMs) + DAY_MS + anchorOffsetMs(s.atCST);
+  return Math.max(target + jitterMs(s.jitterSec, rand), nowMs + MIN_LEAD_MS);
 }
