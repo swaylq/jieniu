@@ -39,6 +39,21 @@ fi
 echo "→ 移除旧进程（保证密钥重新注入）"
 pm2 delete "$NAME" >/dev/null 2>&1 || true
 
+# pm2 启的是 node_modules/.bin/tsx 这个**启动壳**，真正跑 main.ts 的是它的子进程。
+# `pm2 delete` 只杀壳，孙进程会被 reparent 成孤儿继续跑 —— 于是新旧两个 worker
+# 同时抢任务（实测撞到过，一个跑旧代码一个跑新代码）。这里补一刀，按命令行精确匹配。
+# main.ts 里还有一把 Postgres advisory lock 兜底，两层都要。
+for _ in 1 2 3; do
+  pgrep -f "src/scheduler/main.ts" >/dev/null 2>&1 || break
+  pkill -f "src/scheduler/main.ts" || true
+  sleep 1
+done
+if pgrep -f "src/scheduler/main.ts" >/dev/null 2>&1; then
+  echo "✗ 还有 worker 进程杀不掉，拒绝启动（避免两个 worker 抢任务）："
+  pgrep -fl "src/scheduler/main.ts"
+  exit 1
+fi
+
 # 旧日志留着会让下面的 grep 读到上一轮的自检行，看不出本轮到底起没起来。
 : >"$LOG"
 

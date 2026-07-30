@@ -53,6 +53,34 @@ function bootCheck(): void {
 }
 
 /**
+ * 单实例守卫：整个数据库同时只允许一个 worker 在派发。
+ *
+ * 为什么必须有：pm2 启的是 `node_modules/.bin/tsx` 这个**启动壳**，真正跑 main.ts 的是它的
+ * 子进程。所以 `pm2 pid` 给的是壳的 pid，`pm2 delete` 杀的也是壳——壳一死，真 worker 被
+ * reparent 成孤儿继续跑，pm2 再拉起一套，就成了**两个 worker 抢同一批任务**（实测撞到）。
+ * 脚本层的 pkill 只能堵已知路径；这把锁堵住所有路径（孤儿、手敲 `npx tsx`、另一台机器）。
+ *
+ * 用 Postgres 会话级 advisory lock：进程活着就一直持有，进程一死（哪怕 kill -9）
+ * 连接断开即自动释放，不留需要清理的残留状态。
+ */
+const SINGLETON_LOCK_KEY = 0x6a6e_7363; // "jnsc"
+
+async function acquireSingleton(): Promise<void> {
+  const rows = await db.$queryRaw<
+    { locked: boolean }[]
+  >`SELECT pg_try_advisory_lock(${SINGLETON_LOCK_KEY}) AS locked`;
+  if (!rows[0]?.locked) {
+    console.error(
+      "[scheduler] ✗ 已经有一个 worker 持有调度锁 —— 本进程退出，避免两个 worker 抢同一批任务。" +
+        "（排查：pgrep -fl 'src/scheduler/main.ts'）",
+    );
+    await db.$disconnect();
+    process.exit(1);
+  }
+  console.log("[scheduler] ✓ 已取得单实例调度锁");
+}
+
+/**
  * 把 JOBS 里新增的任务补进 JobState；已存在的不动（保留 enabled / nextFire）。
  *
  * **新建的行一律 enabled=false**：worker 一起来就会把「从未跑过」的任务判为立即到期，
@@ -294,6 +322,7 @@ async function tick(): Promise<void> {
 
 async function loop(): Promise<void> {
   bootCheck();
+  await acquireSingleton();
   await ensureStates();
   console.log(
     `[scheduler] 已加载 ${JOBS.length} 条任务，每 ${TICK_MS / 1000}s 巡检一次`,
