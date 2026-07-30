@@ -13,6 +13,7 @@
 import { PrismaClient } from "../../generated/prisma";
 import { isRoundupNews, isEtfMarketing } from "../lib/relevance";
 import { subjectOnlySourceNames } from "../server/ingest/subject-only";
+import { deadShellStockIds } from "../server/backfill-targets";
 
 const db = new PrismaClient();
 
@@ -46,20 +47,12 @@ async function main() {
     },
   });
 
-  // 退市死壳身上的绑定：它们是误绑磁石（「美的电器」←「南疆中亚家博城奠基」那类）。
-  // 判据与 targetsByNeed 一致：A 股六位代码 + 没有资金流信号 = 不在交易。
-  const flows = await db.entitySignal.findMany({
-    where: { kind: "flow" },
-    select: { entityId: true },
-  });
-  const trading = new Set(flows.map((f) => f.entityId));
-  const stocks = await db.entity.findMany({
-    where: { type: "STOCK", ticker: { not: null } },
-    select: { id: true, ticker: true },
-  });
-  const deadIds = stocks
-    .filter((s) => /^\d{6}$/.test(s.ticker!) && !trading.has(s.id))
-    .map((s) => s.id);
+  // 退市死壳身上的绑定：它们是误绑磁石（「中国北车」←「中国中车签516亿大单」那类）。
+  // **复用** targetsByNeed 的存活判据，不在这里另写一份（run2 就是栽在两处判据漂移上）。
+  // 注意只数 STOCK 自身：配对的 COMPANY 常常同时是**活股**的发行方
+  // （东方明珠 COMPANY 既连着退市的 600832、也连着在交易的 600637），
+  // 把它算进来会把活公司的绑定误计成死壳的——run5 的第一版测量就这么错过一次。
+  const deadIds = await deadShellStockIds(db);
   const deadShellBindings = await db.newsEntity.count({
     where: { entityId: { in: deadIds } },
   });

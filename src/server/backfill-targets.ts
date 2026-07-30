@@ -50,10 +50,19 @@ export type TargetsOpts = {
  * - ✓ **按资金流**：`EntitySignal.kind='flow'` 来自东财 clist（当前挂牌股全集），每天随行情
  *   刷新。退市股不在里面，且这是个**动态**判据而非黑名单——某只壳恢复上市，下一轮自动回队头。
  *
- * 代价说清楚：刚上市、还没进当日资金流快照的 A 股会被跳过一轮（快照一天刷多次，小时级自愈）。
- * 用 `onSkip` 把跳过数打出来，别让它变成看不见的降级。
+ * **2026-07-30 run5 补第三条**：上面那句「小时级自愈」是错的。资金流快照来自东财 clist
+ * （当前**挂牌**股全集），而**待上市/刚过会的新股压根不在里面**——它们要等到上市日才有行情。
+ * 实测被误判成死壳的有 `嘉立创(001232)` `展芯股份(301707)` `超纯应材(301717)`
+ * `聚仁新材(920258)` `森合高科(920038)` `珈凯生物(920165)`，其中有的已经躺了好几天，
+ * 而它们正在发「首次公开发行股票注册的批复」这类一手公告。所以再加一条：
+ * **近 30 天有过一手公告（`Source.name` 含「公告」）也算活**。
+ * 死壳发不出公告，新股发得出；而退市整理期的公司仍在披露、本来也该留着。
+ * 与被否决的「近 90 天有资讯」不同：那条用的是**全部**资讯（含被误绑的媒体稿），
+ * 这条只认**一手公告**——公告标题带公司名、由源权威给出主体，不是误绑磁石的来源。
  */
 const A_SHARE_CODE = /^\d{6}$/;
+/** 「还活着」的兜底证据窗口：一手公告。A 股法定披露频度决定 30 天足够。 */
+const FILING_WINDOW_DAYS = 30;
 export async function targetsByNeed(
   db: PrismaClient,
   { onSkip, market }: TargetsOpts = {},
@@ -82,6 +91,21 @@ export async function targetsByNeed(
   });
   const trading = new Set(flows.map((f) => f.entityId));
 
+  // 待上市新股不在资金流快照里，但在发一手公告——见上面注释里的 run5 那段。
+  const filings = await db.newsEntity.groupBy({
+    by: ["entityId"],
+    where: {
+      news: {
+        publishedAt: {
+          gte: new Date(Date.now() - FILING_WINDOW_DAYS * 24 * 60 * 60 * 1000),
+        },
+        source: { name: { contains: "公告" } },
+      },
+    },
+    _count: { entityId: true },
+  });
+  const filing = new Set(filings.map((f) => f.entityId));
+
   const byCode = new Map<string, BackfillTarget>();
   for (const s of stocks) {
     const code = s.ticker!;
@@ -96,7 +120,8 @@ export async function targetsByNeed(
         entityIds,
         bound,
         alive:
-          !A_SHARE_CODE.test(code) || entityIds.some((id) => trading.has(id)),
+          !A_SHARE_CODE.test(code) ||
+          entityIds.some((id) => trading.has(id) || filing.has(id)),
       });
     }
   }
@@ -158,6 +183,41 @@ export async function hotStockTargets(
     .sort((a, b) => b.heat - a.heat)
     .slice(0, k)
     .map((x) => x.t);
+}
+
+/**
+ * 「退市死壳」的 STOCK id 集合——与 `targetsByNeed` 的存活判据**同一套逻辑**。
+ * 单独导出是为了让 `hygiene-check.ts` 复用：两处各写一份必漂（run2 已经栽过一次，
+ * 清理脚本漂出 runner 的 subjectOnly 豁免，差点删掉 2511 条正确绑定）。
+ */
+export async function deadShellStockIds(db: PrismaClient): Promise<string[]> {
+  const [stocks, flows, filings] = await Promise.all([
+    db.entity.findMany({
+      where: { type: "STOCK", ticker: { not: null } },
+      select: { id: true, ticker: true },
+    }),
+    db.entitySignal.findMany({ where: { kind: "flow" }, select: { entityId: true } }),
+    db.newsEntity.groupBy({
+      by: ["entityId"],
+      where: {
+        news: {
+          publishedAt: {
+            gte: new Date(Date.now() - FILING_WINDOW_DAYS * 24 * 60 * 60 * 1000),
+          },
+          source: { name: { contains: "公告" } },
+        },
+      },
+      _count: { entityId: true },
+    }),
+  ]);
+  const trading = new Set(flows.map((f) => f.entityId));
+  const filing = new Set(filings.map((f) => f.entityId));
+  return stocks
+    .filter(
+      (s) =>
+        A_SHARE_CODE.test(s.ticker!) && !trading.has(s.id) && !filing.has(s.id),
+    )
+    .map((s) => s.id);
 }
 
 /** 命令行数字参数（--flag=N），缺省或非法则取默认值。 */

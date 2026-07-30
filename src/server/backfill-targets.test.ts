@@ -15,7 +15,7 @@ describe("targetsByNeed · 退市死壳不许锁死队头", () => {
    * - sC 无资金流、只有陈年绑定（中国北车那类吸并退市股）→ **死，必须剔除**
    * - sD 非 A 股六位代码（美股 NVDA，压根不在 A 股资金流快照里）→ 活，保留
    */
-  function makeDb(opts: { flowFor: string[] }) {
+  function makeDb(opts: { flowFor: string[]; filingFor?: string[] }) {
     const ALL = [
       { entityId: "sA", _count: { entityId: 7 } },
       { entityId: "cA", _count: { entityId: 3 } },
@@ -34,7 +34,16 @@ describe("targetsByNeed · 退市死壳不许锁死队头", () => {
       entityRelation: {
         findMany: vi.fn().mockResolvedValue([{ fromId: "cA", toId: "sA" }]),
       },
-      newsEntity: { groupBy: vi.fn().mockResolvedValue(ALL) },
+      // groupBy 被调两次：不带 where 的是「全历史绑定数」，带 where 的是「近 30 天一手公告」
+      newsEntity: {
+        groupBy: vi.fn().mockImplementation((args: { where?: unknown }) =>
+          Promise.resolve(
+            args?.where
+              ? (opts.filingFor ?? []).map((entityId) => ({ entityId, _count: { entityId: 1 } }))
+              : ALL,
+          ),
+        ),
+      },
       entitySignal: {
         findMany: vi
           .fn()
@@ -67,6 +76,20 @@ describe("targetsByNeed · 退市死壳不许锁死队头", () => {
   it("死壳一旦重新有资金流（恢复上市）自动回到队头——判据是动态的，不是黑名单", async () => {
     const res = await targetsByNeed(makeDb({ flowFor: ["sA", "sB", "sC"] }));
     expect(res.map((t) => t.code)).toContain("600003");
+  });
+
+  // run5：待上市新股不在资金流快照里（要等上市日才有行情），但在发「首次公开发行股票注册的批复」
+  // 这类一手公告。实测被误判成死壳的有 嘉立创(001232) 展芯股份(301707) 聚仁新材(920258) 等。
+  it("待上市新股靠一手公告算活——它还没交易，但在发 IPO 公告", async () => {
+    const res = await targetsByNeed(makeDb({ flowFor: ["sA"], filingFor: ["sB"] }));
+    expect(res.map((t) => t.code)).toContain("600002"); // sB 无资金流，但近 30 天有公告
+    expect(res.map((t) => t.code)).not.toContain("600003"); // sC 两者皆无 → 仍是死壳
+  });
+
+  it("一手公告只认公告源，不是「近期有任何资讯」——后者被死壳的误绑污染", async () => {
+    // sC 有 4 条陈年媒体绑定但没有公告 → 仍判死；这正是被否决的那条判据与本条的分界
+    const res = await targetsByNeed(makeDb({ flowFor: [], filingFor: [] }));
+    expect(res.map((t) => t.code)).toEqual(["NVDA"]);
   });
 
   it("报告被跳过的数量，别让降级静默发生", async () => {
