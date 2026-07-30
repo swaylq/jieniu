@@ -4,6 +4,8 @@ export type SecretName = "OPENROUTER_API_KEY" | "ALI_KEY" | "ALI_SECRET";
 
 export type Metrics = Record<string, number | boolean | string>;
 
+import type { BaselineCheckDef } from "./baseline";
+
 export type CheckDef = {
   /** 稳定 id，进 JobRun.alerts */
   id: string;
@@ -28,6 +30,11 @@ export type Step = {
   /** 默认 false：前一步失败即中止后续 */
   runEvenIfPrevFailed?: boolean;
   checks?: CheckDef[];
+  /**
+   * 基线式判据：与**上一次成功运行**的同名指标比，只在变坏时命中。
+   * 用于那些「绝对阈值会每天必响」的结构性指标（见 scheduler/baseline.ts 开头）。
+   */
+  baselineChecks?: BaselineCheckDef[];
 };
 
 export type JobDef = {

@@ -134,21 +134,11 @@ export const JOBS: JobDef[] = [
         env: { NODE_ENV: "development" },
         // 前面出错也要巡检——今天 Claude 也是这么做的。
         runEvenIfPrevFailed: true,
+        // 只留「零就是死了」这类真·硬失败当绝对阈值。`blankCompanies` / `pctNews7d`
+        // 移到下面的 baselineChecks：它们是**结构性常数**（81 家退市壳永不归零；
+        // 覆盖率阈值 85% 是 802 家时代定的，扩容到 5500 家后永久不达标），
+        // 用绝对阈值就是每天必响，而每天必响等于没有告警。
         checks: [
-          {
-            id: "blank-companies",
-            metric: "blankCompanies",
-            op: "gt",
-            threshold: 0,
-            message: "存在完全空白的公司——实体维护那一步没修好",
-          },
-          {
-            id: "news-7d",
-            metric: "pctNews7d",
-            op: "lt",
-            threshold: 85,
-            message: "近 7 天有资讯的公司占比跌破 85%——抓取变慢或源被封",
-          },
           {
             id: "ingest-24h",
             metric: "n24",
@@ -169,6 +159,50 @@ export const JOBS: JobDef[] = [
             op: "lt",
             threshold: 99,
             message: "有绑定股票代码的公司不足 99%——又出孤儿公司",
+          },
+        ],
+        // 阈值按「正常波动的 10 倍以上」取：实测日间波动 blankCompanies ±3 家、
+        // pctNews7d ±2 个点（7-30 因剪掉 3401 条榜单误绑掉了 1.7 个点，属最大的一次）。
+        baselineChecks: [
+          {
+            id: "blank-companies",
+            metric: "blankCompanies",
+            op: "riseGt",
+            delta: 20,
+            message: "完全空白的公司一夜暴增——实体维护那一步坏了，或又灌进一批壳",
+          },
+          {
+            id: "news-7d",
+            metric: "pctNews7d",
+            op: "dropGt",
+            delta: 8,
+            message: "近 7 天有资讯的公司占比骤降——抓取变慢或源被封",
+          },
+        ],
+      },
+      {
+        // 数据卫生守望：不做清理，只报「该类错绑现在还剩多少」，由基线判据看它有没有涨。
+        // run2 的结论——可持续形态是「入库端不产生 + 复发告警」，而不是周期跑一次性清理脚本
+        // （那批脚本会漂出配套的入库逻辑，实测两个盲跑会造成损失）。
+        name: "数据卫生守望",
+        script: "src/scripts/hygiene-check.ts",
+        args: ["--json"],
+        env: { NODE_ENV: "development" },
+        runEvenIfPrevFailed: true,
+        baselineChecks: [
+          {
+            id: "roundup-misbound",
+            metric: "roundupMisbound",
+            op: "riseGt",
+            delta: 30,
+            message: "综述/榜单又开始绑到个股了——入库端的综述过滤器漏了新体裁",
+          },
+          {
+            id: "dead-shell-bindings",
+            metric: "deadShellBindings",
+            op: "riseGt",
+            delta: 200,
+            message: "退市死壳身上的绑定在增长——它们又在当误绑磁石",
           },
         ],
       },
@@ -208,13 +242,6 @@ export const JOBS: JobDef[] = [
         runEvenIfPrevFailed: true,
         checks: [
           {
-            id: "dupe-groups",
-            metric: "dupeGroups",
-            op: "ne",
-            threshold: 0,
-            message: "体检查出重复组——去重失效",
-          },
-          {
             id: "report-rating-headline",
             metric: "reportRatingHeadlines",
             op: "ne",
@@ -227,6 +254,17 @@ export const JOBS: JobDef[] = [
             op: "ne",
             threshold: 0,
             message: "研报绑到了发布机构自身——券商 feed 会被污染",
+          },
+        ],
+        // `dupeGroups` 在真实数据里天然非零：5 家公司同日各发一份《投资者关系活动记录表》
+        // 就是 5 条同名标题，不是去重失效。稳定在 15 上下，只在暴增时才说明判重坏了。
+        baselineChecks: [
+          {
+            id: "dupe-groups",
+            metric: "dupeGroups",
+            op: "riseGt",
+            delta: 50,
+            message: "重复组暴增——判重逻辑失效",
           },
         ],
       },

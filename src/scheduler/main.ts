@@ -6,11 +6,12 @@
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { PrismaClient } from "../../generated/prisma";
+import { PrismaClient, Prisma } from "../../generated/prisma";
 import { JOBS } from "./jobs";
 import { nextFireAfterRun } from "./schedule";
 import { runStep, DEFAULT_TIMEOUT_MS } from "./runner";
 import { parseJsonResult, evalChecks } from "./checks";
+import { evalBaselineChecks } from "./baseline";
 import { narrate } from "./narrate";
 import { sendAlertMail, shouldNotify } from "./notify";
 import type { Alert, JobDef, JobStatus, Metrics } from "./types";
@@ -140,6 +141,15 @@ async function fire(job: JobDef): Promise<void> {
   });
   console.log(`[scheduler] fire ${job.key}`);
 
+  // 基线式判据的对照组：**上一次成功运行**的指标（不取失败/超时那次——半截跑出来的
+  // 指标当基线会把「恢复正常」误报成「暴涨」）。取不到就没有基线，那些判据本轮跳过。
+  const prevOk = await db.jobRun.findFirst({
+    where: { jobKey: job.key, status: "ok", metrics: { not: Prisma.DbNull }, id: { not: run.id } },
+    orderBy: { firedAt: "desc" },
+    select: { metrics: true },
+  });
+  const baseline = (prevOk?.metrics as Metrics | null) ?? null;
+
   const chunks: string[] = [];
   const metrics: Metrics = {};
   const alerts: Alert[] = [];
@@ -169,6 +179,9 @@ async function fire(job: JobDef): Promise<void> {
       const m = parseJsonResult(r.output);
       if (m) Object.assign(metrics, m);
       if (step.checks?.length) alerts.push(...evalChecks(step.checks, m ?? {}));
+      if (step.baselineChecks?.length) {
+        alerts.push(...evalBaselineChecks(step.baselineChecks, m ?? {}, baseline));
+      }
 
       if (r.timedOut) {
         status = "timeout";
