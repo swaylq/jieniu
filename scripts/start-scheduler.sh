@@ -12,7 +12,7 @@
 #
 # 用法：
 #   scripts/start-scheduler.sh
-#   OPS_ALERT_EMAIL=you@example.com scripts/start-scheduler.sh
+#   scripts/start-scheduler.sh   # 收件人取自 secret store 的 OPS_ALERT_EMAIL
 
 set -euo pipefail
 
@@ -32,8 +32,11 @@ command -v pm2 >/dev/null 2>&1 || {
   exit 1
 }
 
-if [ -z "${OPS_ALERT_EMAIL:-}" ]; then
-  echo "⚠ 未设 OPS_ALERT_EMAIL —— 告警只落库、不发信（切换上线前务必设上）"
+# 收件人从 secret store 注入（本仓在 GitHub 上是公开的，别把邮箱写进文件）。
+# 换收件人：`printf %s 'a@b.com' | secret set OPS_ALERT_EMAIL` 后重启本脚本。
+if ! secret list 2>/dev/null | grep -qx "OPS_ALERT_EMAIL"; then
+  echo "⚠ secret store 里没有 OPS_ALERT_EMAIL —— 告警只落库、不发信"
+  echo "  设置：printf %s 'you@example.com' | secret set OPS_ALERT_EMAIL"
 fi
 
 echo "→ 移除旧进程（保证密钥重新注入）"
@@ -57,12 +60,14 @@ fi
 # 旧日志留着会让下面的 grep 读到上一轮的自检行，看不出本轮到底起没起来。
 : >"$LOG"
 
-echo "→ 启动（secret exec 注入 OPENROUTER_API_KEY / ALI_KEY / ALI_SECRET）"
-secret exec OPENROUTER_API_KEY ALI_KEY ALI_SECRET -- \
+echo "→ 启动（secret exec 注入 OPENROUTER_API_KEY / ALI_KEY / ALI_SECRET / OPS_ALERT_EMAIL）"
+# OPS_ALERT_EMAIL 由 secret exec 注入，**不要**再在下面的 env 里写一遍：
+# `env` 在 secret exec 之后生效，调用者没设时会用空串把注入的值覆盖掉，
+# 于是告警又变回「只落库不发信」，而日志里一切正常。（2026-07-30 run4）
+secret exec OPENROUTER_API_KEY ALI_KEY ALI_SECRET OPS_ALERT_EMAIL -- \
   env DATABASE_URL="$DB" \
       MAIL_FROM="解牛 <noreply@mail.auramate.net>" \
       ALI_REGION=cn-hangzhou \
-      OPS_ALERT_EMAIL="${OPS_ALERT_EMAIL:-}" \
   pm2 start node_modules/.bin/tsx \
       --name "$NAME" \
       --cwd "$ROOT" \

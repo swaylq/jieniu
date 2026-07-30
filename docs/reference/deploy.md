@@ -70,7 +70,10 @@ secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY -- \
   它先 `pm2 delete` 再 `pm2 start`，因为 **`pm2 restart` 不会重新读环境变量**，
   直接 restart 会静默丢掉 `secret exec` 注入的三个密钥（AI 任务全部 skipped、告警信发不出），
   正是 7-25 事故的形状。
-- 收件人：`OPS_ALERT_EMAIL=you@example.com scripts/start-scheduler.sh`。
+- 收件人：取自 secret store 的 `OPS_ALERT_EMAIL`，由 `start-scheduler.sh` 的 `secret exec` 注入
+  （本仓在 GitHub 公开，别把邮箱写进文件）。换收件人：
+  `printf %s 'you@example.com' | secret set OPS_ALERT_EMAIL` 后重跑 `scripts/start-scheduler.sh`。
+  没设时脚本会打 `⚠ secret store 里没有 OPS_ALERT_EMAIL`，此时告警只落 `JobRun`、不发信。
   不设就只落库不发信，脚本会警告一行。
 - 状态：`pm2 list` / `pm2 logs jieniu-scheduler --lines 50`
 - 日志：`/Users/mac/jieniu-scheduler.log`（每次启动清空）

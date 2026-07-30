@@ -77,7 +77,9 @@ function renderHtml(p: NotifyPayload): string {
     `<p>状态 <b>${p.status}</b>｜耗时 ${Math.round(p.durationMs / 1000)}s｜key <code>${p.jobKey}</code></p>`,
     p.narration ? `<p>${p.narration}</p>` : "",
     alertRows ? `<h3>命中的判据</h3><ul>${alertRows}</ul>` : "",
-    `<h3>输出尾部</h3><pre style="white-space:pre-wrap;font-size:12px">${p.output.slice(-4000)}</pre>`,
+    // `?? ""` 不是防御性冗余：这一句抛异常会让**整封告警发不出去**（sendAlertMail 的 catch
+    // 只打一行日志、返回 false），等于一个缺字段就把报警器静音了。渲染永远不该是告警的失败点。
+    `<h3>输出尾部</h3><pre style="white-space:pre-wrap;font-size:12px">${(p.output ?? "").slice(-4000)}</pre>`,
   ].join("\n");
 }
 
