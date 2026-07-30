@@ -104,11 +104,35 @@ export const notificationsRouter = createTRPCRouter({
     });
     const nameById = new Map(ents.map((e) => [e.id, e.name]));
 
+    // 敏感度要过滤跨越，但 ThesisDimensionState 本身不存材料度——回查产生这次跨越的那条信号。
+    // （不加字段、不做迁移：跨越记录里已有 lastCrossNewsId，够定位。）
+    const crossNewsIds = crossings
+      .map((c) => c.lastCrossNewsId)
+      .filter((x): x is string => !!x);
+    const sigRows =
+      crossNewsIds.length > 0
+        ? await ctx.db.thesisSignal.findMany({
+            where: { entityId: { in: entIds }, newsId: { in: crossNewsIds } },
+            select: { entityId: true, newsId: true, dimensionKey: true, materiality: true },
+          })
+        : [];
+    const materialityByKey = new Map(
+      sigRows.map((r) => [`${r.entityId}::${r.newsId}::${r.dimensionKey}`, r.materiality]),
+    );
+
     const items = [];
     for (const c of crossings) {
       const dims = dimsByEntity.get(c.entityId);
       const st = dims ? userDimensionStatus(dims, c.dimensionKey) : null;
       if (st?.muted) continue; // 用户静音了该维度 → 不提醒
+      // 敏感度闸：低于你为该维度设的材料度下限，就不作为提醒（低 80 / 中 60 / 高 40）。
+      // 查不到材料度时**放行**——宁可多给一条，也不要因为数据缺失把真实变化吞掉。
+      if (st) {
+        const m = materialityByKey.get(
+          `${c.entityId}::${c.lastCrossNewsId ?? ""}::${c.dimensionKey}`,
+        );
+        if (typeof m === "number" && m < st.threshold) continue;
+      }
       const review = reviewByKey.get(`${c.entityId}::${c.dimensionKey}`);
       const crossedAt = c.lastCrossAt!;
       const acknowledged = !!review && review.crossedAt >= crossedAt;

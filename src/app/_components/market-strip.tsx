@@ -4,17 +4,18 @@ import { api } from "~/trpc/react";
 import { type IndexMarket } from "~/lib/quote";
 
 /** 市场分组标签与展示顺序（与服务端 INDEX_SYMBOLS 顺序一致）。 */
-const MARKET_ORDER: IndexMarket[] = ["cn", "hk", "us"];
+const MARKET_ORDER: IndexMarket[] = ["cn", "hk", "us", "cmdty"];
 const MARKET_LABEL: Record<IndexMarket, string> = {
   cn: "沪深",
   hk: "港股",
   us: "美股",
+  cmdty: "商品",
 };
 
 /**
- * 首页顶部市场概览条：沪深 / 港股 / 美股主要指数（红涨绿跌，只展示不预测）。
+ * 首页顶部市场概览条：沪深 / 港股 / 美股主要指数 + 黄金原油（红涨绿跌，只展示不预测）。
  *
- * 布局：**自动换行、不横向滚动**——十个指数横排会溢出，滚动会把港美藏在视野外
+ * 布局：**自动换行、不横向滚动**——十几个品种横排会溢出，滚动会把港美商品藏在视野外
  * （用户不滑就不知道有）。每个市场是一个 flex-wrap 单元：分组标签始终贴着自己的指数，
  * 组内窄屏可再换行，组与组之间自然排布。港美在 A 股时段是上一交易日收盘，靠分组标注区分。
  *

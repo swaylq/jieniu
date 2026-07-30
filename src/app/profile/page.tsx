@@ -1,12 +1,14 @@
 import Link from "next/link";
+import { HoverPrefetchLink } from "../_components/hover-prefetch-link";
 
 import { api } from "~/trpc/server";
 import { auth } from "~/server/auth";
-import { entityTypeLabel } from "~/lib/format";
+import { watchEntityLabel } from "~/lib/watch-label";
 import { partitionPortfolio } from "~/lib/portfolio";
 import { DecisionList } from "../_components/decision-list";
 import { InvestorProfileCard } from "../_components/investor-profile-card";
 import { LogoMark } from "../_components/logo";
+import { UserAvatar } from "../_components/user-avatar";
 import { NewsCard } from "../_components/news-card";
 import { SectionHead, primaryBtn } from "../_components/section-head";
 
@@ -48,7 +50,7 @@ export default async function ProfilePage() {
   return (
     <main className="mx-auto max-w-2xl p-4 lg:max-w-3xl">
       <div className="flex items-center gap-3">
-        <LogoMark className="h-12 w-12" />
+        <UserAvatar seed={session.user.email} className="h-12 w-12 text-lg" />
         <div className="min-w-0">
           <p className="truncate font-semibold text-ink">
             {session.user.email}
@@ -71,7 +73,7 @@ export default async function ProfilePage() {
           <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
             {holdings.map(({ entity: e, costBasis, weight, targetWeight }) => (
               <li key={e.id}>
-                <Link
+                <HoverPrefetchLink
                   href={`/entity/${e.id}`}
                   className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-canvas"
                 >
@@ -85,13 +87,13 @@ export default async function ProfilePage() {
                       .filter(Boolean)
                       .join(" · ") || "未填数值"}
                   </span>
-                </Link>
+                </HoverPrefetchLink>
               </li>
             ))}
           </ul>
         )}
         <p className="mt-2 text-[11px] leading-relaxed text-muted">
-          成本 / 仓位为你手录，仅供观察与个性化提醒，非投资建议、不计算盈亏。
+          成本 / 仓位由你手录，仅供观察与个性化提醒，非投资建议、不计算盈亏。
         </p>
       </section>
 
@@ -114,19 +116,21 @@ export default async function ProfilePage() {
           </div>
         ) : (
           <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
-            {watching.map(({ entity: e }) => (
-              <li key={e.id}>
-                <Link
-                  href={`/entity/${e.id}`}
-                  className="flex items-center justify-between px-4 py-3 transition-colors hover:bg-canvas"
-                >
-                  <span className="text-ink">{e.name}</span>
-                  <span className="text-xs text-muted">
-                    {entityTypeLabel(e.type)} ›
-                  </span>
-                </Link>
-              </li>
-            ))}
+            {watching.map(({ entity: e }) => {
+              // 与侧栏同一套口径：孪生的公司/股票两份显示一致（sway 直报 ⑤）。
+              const label = watchEntityLabel(e);
+              return (
+                <li key={e.id}>
+                  <HoverPrefetchLink
+                    href={`/entity/${e.id}`}
+                    className="flex items-center justify-between px-4 py-3 transition-colors hover:bg-canvas"
+                  >
+                    <span className="text-ink">{label.name}</span>
+                    <span className="text-xs text-muted">{label.sub} ›</span>
+                  </HoverPrefetchLink>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

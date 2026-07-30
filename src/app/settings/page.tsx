@@ -6,7 +6,7 @@ import { LogoutButton } from "../_components/logout-button";
 import { ThemeToggle } from "../_components/theme-toggle";
 import { ColorblindToggle } from "../_components/colorblind-toggle";
 import { SectionHead, displayCls } from "../_components/section-head";
-import { LogoMark } from "../_components/logo";
+import { UserAvatar } from "../_components/user-avatar";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +31,10 @@ export default async function SettingsPage() {
         <SectionHead title="账号" />
         <div className="space-y-3">
           <div className="flex items-center gap-3 rounded-xl border border-line bg-surface p-4">
-            <LogoMark className="h-10 w-10 shrink-0" />
+            <UserAvatar
+              seed={session.user.email}
+              className="h-10 w-10 text-sm"
+            />
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-ink">
                 {session.user.email}

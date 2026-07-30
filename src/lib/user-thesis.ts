@@ -109,14 +109,35 @@ export function activationBackfill<
   };
 }
 
-/** 某维度在用户 thesis 中的状态（S3 提醒个性化）；不在其中→null（表示按 base 处理、不过滤）。 */
+/**
+ * 某维度在用户 thesis 中的状态（S3 提醒个性化）；不在其中→null（表示按 base 处理、不过滤）。
+ * `threshold` = 该维度敏感度对应的材料度下限——低于它的变化不该拿来打扰你。
+ */
 export function userDimensionStatus(
   dims: UserDimension[],
   key: string,
-): { muted: boolean; priority: boolean } | null {
+): {
+  muted: boolean;
+  priority: boolean;
+  sensitivity: Sensitivity;
+  threshold: number;
+} | null {
   const d = dims.find((x) => x.key === key);
-  return d ? { muted: d.muted, priority: d.priority } : null;
+  if (!d) return null;
+  return {
+    muted: d.muted,
+    priority: d.priority,
+    sensitivity: d.sensitivity,
+    threshold: SENSITIVITY_THRESHOLD[d.sensitivity],
+  };
 }
+
+/** 敏感度的人话说明——UI 上要让用户看得见自己在调什么，别让它是个哑旋钮。 */
+export const SENSITIVITY_LABEL: Record<Sensitivity, string> = {
+  low: "只有重大变化才提醒",
+  normal: "较明确的变化就提醒",
+  high: "稍有苗头就提醒",
+};
 
 /** 规整客户端传入的维度：补默认、去空 key、clamp 敏感度；source 缺省为 user。 */
 export function normalizeUserDimensions(input: unknown[]): UserDimension[] {

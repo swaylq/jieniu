@@ -70,9 +70,9 @@ export function InvestorProfileCard({ initial }: { initial: Initial }) {
   return (
     <section className="rounded-xl border border-line bg-surface p-4 shadow-sm">
       <div className="flex items-center gap-2">
-        <span aria-hidden>🧭</span>
+        <span className="h-4 w-1.5 rounded-full bg-brand" aria-hidden />
         <h2 className="text-sm font-bold text-ink">投资画像</h2>
-        <span className="ml-auto text-[11px] text-muted">让提醒更懂你</span>
+        <span className="ml-auto text-[11px] text-muted">个性化提醒依据</span>
       </div>
 
       <div className="mt-3 space-y-3">

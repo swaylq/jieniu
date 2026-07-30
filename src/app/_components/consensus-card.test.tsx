@@ -14,7 +14,9 @@ const detail = parseConsensusDetail({
     { year: "2027", eps: 3.0 },
   ],
 })!;
-const html = renderToStaticMarkup(<ConsensusCard detail={detail} asOf={asOf} />);
+const html = renderToStaticMarkup(
+  <ConsensusCard detail={detail} asOf={asOf} />,
+);
 
 describe("ConsensusCard", () => {
   it("显示覆盖机构数与三档分歧度", () => {
@@ -51,5 +53,55 @@ describe("ConsensusCard", () => {
 
   it("标注数据时间——结论要能看出新旧", () => {
     expect(html).toContain("07/20");
+  });
+
+  it("默认不可点：没给 reportsHref 就不出链接", () => {
+    expect(html).not.toContain("<a");
+    expect(html).not.toContain("机构研报");
+  });
+
+  it("给了研报入口就把比例条整块变成链接（sway「这个点不了」）", () => {
+    const h = renderToStaticMarkup(
+      <ConsensusCard
+        detail={detail}
+        asOf={asOf}
+        reportsHref="/entity/e1?tab=report"
+        reportCount={71}
+      />,
+    );
+    expect(h).toContain('href="/entity/e1?tab=report"');
+    expect(h).toContain("看这家的机构研报");
+    expect(h).toContain("71");
+    // 链接必须包住比例条本身——sway 点的就是那一行图例
+    const a = /<a[^>]*href="\/entity\/e1\?tab=report"[\s\S]*?<\/a>/.exec(
+      h,
+    )?.[0];
+    expect(a).toBeTruthy();
+    expect(a).toContain("买入");
+  });
+
+  it("研报为 0 时不给链接——不做点进空列表的入口", () => {
+    const h = renderToStaticMarkup(
+      <ConsensusCard
+        detail={detail}
+        asOf={asOf}
+        reportsHref="/entity/e1?tab=report"
+        reportCount={0}
+      />,
+    );
+    expect(h).not.toContain("<a");
+    expect(h).not.toContain("机构研报");
+  });
+
+  it("可点时补一句「研报不含评级、与分布非一一对应」——别让人以为点进去是那 11 篇买入", () => {
+    const h = renderToStaticMarkup(
+      <ConsensusCard
+        detail={detail}
+        asOf={asOf}
+        reportsHref="/entity/e1?tab=report"
+        reportCount={71}
+      />,
+    );
+    expect(h).toContain("并非一一对应");
   });
 });

@@ -81,7 +81,7 @@ export function OnboardingFlow() {
           先加一只你真正持有或在盯的股
         </h1>
         <p className="mt-1 text-sm text-muted">
-          解牛不铺全市场——从你在乎的一只开始，帮你盯住它的投资逻辑有没有变。
+          从你在乎的一只开始，盯住它的投资逻辑有没有变。
         </p>
         <input
           autoFocus
@@ -96,7 +96,7 @@ export function OnboardingFlow() {
           ) : null}
           {results.data?.length === 0 && q.trim() ? (
             <p className="text-sm text-muted">
-              没找到「{q}」。解牛目前聚焦最热门板块的核心标的，换个名字或代码试试。
+              没找到「{q}」。换个名字或股票代码试试。
             </p>
           ) : null}
           {results.data?.map((e) => (
@@ -136,11 +136,11 @@ export function OnboardingFlow() {
         {dots}
         <h1 className="text-xl font-bold text-ink">{picked.name}</h1>
         <p className="mt-1 text-sm text-muted">
-          告诉解牛你和它的关系，它会据此帮你盯。
+          告诉解牛你和它的关系，它据此决定盯什么。
         </p>
 
         <div className="mt-4">
-          <p className="text-xs font-semibold text-muted">你是——</p>
+          <p className="text-xs font-semibold text-muted">你是：</p>
           <div className="mt-2 flex gap-2">
             {(
               [
@@ -177,7 +177,7 @@ export function OnboardingFlow() {
             className="mt-1 w-full resize-none rounded-xl border border-line bg-surface px-4 py-2.5 text-sm text-ink placeholder:text-muted/60 focus:border-brand focus:outline-none"
           />
           <p className="mt-1 text-[11px] text-muted">
-            这会成为你自己的投资逻辑锚点——日后逻辑有变，解牛帮你对照当初判断。
+            这会成为你自己的投资逻辑记录，日后逻辑有变时，对照当初的判断。
           </p>
         </div>
 
@@ -215,7 +215,7 @@ export function OnboardingFlow() {
             <strong className="text-brand">{demo.data.touchedCount}</strong>{" "}
             条动态触及你为它选的逻辑维度，其中{" "}
             <strong className="text-brand">{demo.data.wouldAlertCount}</strong>{" "}
-            条达到会提醒你的级别。这就是解牛之后每天替你做的事。
+            条达到会提醒你的级别。这就是解牛之后每天做的事。
           </p>
           {demo.data.samples.length > 0 ? (
             <ul className="mt-3 space-y-2">
@@ -243,7 +243,7 @@ export function OnboardingFlow() {
         </>
       ) : (
         <p className="mt-2 text-sm leading-relaxed text-ink/90">
-          解牛已经开始盯着 {picked?.name} 了。过去 30 天没有触及你逻辑的重大变化——
+          解牛已经开始盯着 {picked?.name} 了。过去 30 天没有触及你逻辑的重大变化。
           <span className="text-muted">
             「没料不打扰」正是它的价值：只在你在乎的逻辑真的变了时才叫你。
           </span>

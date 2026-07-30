@@ -13,6 +13,8 @@ describe("exchangeFromCode", () => {
     expect(exchangeFromCode("300750")).toBe("SZ");
     expect(exchangeFromCode("830799")).toBe("BJ");
     expect(exchangeFromCode("430047")).toBe("BJ");
+    expect(exchangeFromCode("920238")).toBe("BJ"); // 北交所 920xxx 新代码段
+    expect(exchangeFromCode("920045")).toBe("BJ");
   });
 });
 
@@ -32,6 +34,16 @@ describe("isSeedableStock", () => {
     expect(isSeedableStock("*ST花王")).toBe(false);
     expect(isSeedableStock("恒久退")).toBe(false);
     expect(isSeedableStock("国华退")).toBe(false);
+  });
+  it("drops 退市 前缀 股（退市泽达/退市观典——不只尾字退）", () => {
+    expect(isSeedableStock("退市泽达")).toBe(false);
+    expect(isSeedableStock("退市观典")).toBe(false);
+    expect(isSeedableStock("退市紫晶")).toBe(false);
+  });
+  it("drops 可转债/定转（是债券不是股票，810xxx 名字含定转/转债）", () => {
+    expect(isSeedableStock("莱特定转")).toBe(false);
+    expect(isSeedableStock("万通定转")).toBe(false);
+    expect(isSeedableStock("某某转债")).toBe(false);
   });
 });
 

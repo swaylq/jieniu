@@ -9,15 +9,24 @@ const PROCEDURAL_TITLE =
 
 /** 实质事件标题——优先选作代表，让折叠卡的头条能一眼看懂是什么事件（定增预案 / 停牌 / 业绩…）。 */
 // 注意：用「权益分派/利润分配」等实打实的分配事件，不收裸「分红」——「未来三年股东分红回报规划」是定增预告文件、非头条。
+// 定期报告（年报/半年报/季报）也在此列：它是一年里最重磅的一手文件，此前既不算实质也不算程序性，
+// 落在中性档、被同日的回购/重组挤掉代表位——sway 报的「宁德时代半年报没抓到」就是这么来的。
 const HEADLINE_TITLE =
-  /预案|停牌|复牌|重大资产重组|发行股份.{0,6}购买|业绩预告|业绩快报|权益分派|利润分配|回购|要约收购|收购|中标|签[订约]|激励计划|问询函|立案|诉讼|仲裁|获批|减持计划|增持计划/;
+  /预案|停牌|复牌|重大资产重组|发行股份.{0,6}购买|业绩预告|业绩快报|年度报告|季度报告|年报|中报|季报|权益分派|利润分配|回购|要约收购|收购|中标|签[订约]|激励计划|问询函|立案|诉讼|仲裁|获批|减持计划|增持计划/;
+
+/** 摘要是正文的附属件——同日两者都在时不该占掉正文的代表位。 */
+const SUMMARY_MARK = "摘要";
 
 /** 代表优先级：实质事件(0) < 中性(1) < 程序性样板(2)，越小越优先。 */
 function titleRank(title: string): number {
   if (PROCEDURAL_TITLE.test(title)) return 2;
+  if (title.includes(SUMMARY_MARK)) return 1;
   if (HEADLINE_TITLE.test(title)) return 0;
   return 1;
 }
+
+/** 同一天最多留几条代表。2 条是为了「财报 + 回购」这类重磅撞车，再多就又变回刷屏了。 */
+export const MAX_REPRESENTATIVES = 2;
 
 export type BurstItem = {
   id: string;
@@ -32,21 +41,31 @@ function dayKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** 一批同日公告里挑代表：实质事件优先 → 高重要性 → 最新（程序性样板最后）。 */
-function pickRepresentative<T extends BurstItem>(group: T[]): T {
-  return [...group].sort((a, b) => {
+/**
+ * 一批同日公告里挑代表：实质事件优先 → 高重要性 → 最新（程序性样板最后）。
+ * 实质事件有几件就留几条（上限 max）；一件都没有时退回「留最靠前的 1 条」。
+ * 只给实质事件加名额，是为了不让「1 件重磅 + 十几份程序性文档」的常态又变成 2 条。
+ */
+function pickRepresentatives<T extends BurstItem>(
+  group: T[],
+  max = MAX_REPRESENTATIVES,
+): T[] {
+  const sorted = [...group].sort((a, b) => {
     const ra = titleRank(a.title);
     const rb = titleRank(b.title);
     if (ra !== rb) return ra - rb;
     if (b.importance !== a.importance) return b.importance - a.importance;
     return b.publishedAt.getTime() - a.publishedAt.getTime();
-  })[0]!;
+  });
+  const headlines = sorted.filter((x) => titleRank(x.title) === 0);
+  return headlines.length > 0 ? headlines.slice(0, max) : [sorted[0]!];
 }
 
 /**
- * 折叠同日一手公告轰炸：同一天 ≥ threshold 条 PRIMARY 公告折成 1 条代表（见 pickRepresentative）+ `burstCount`＝当日其余份数。
+ * 折叠同日一手公告轰炸：同一天 ≥ threshold 条 PRIMARY 公告折成至多 `MAX_REPRESENTATIVES` 条代表
+ * （见 pickRepresentatives），`burstCount`＝当日剩下没露面的份数、记在**最后一条**代表上。
  * 只折 PRIMARY（一手公告）；媒体资讯（非 PRIMARY）原样穿过、burstCount=0。**输入须按 publishedAt 倒序**，输出保序。
- * 代表落在当日簇的首位（最新那条的位置）。不足 threshold 的小簇全部保留。
+ * 代表落在当日簇的首位（最新那条的位置），彼此按「实质事件优先 → 高重要性」排。不足 threshold 的小簇全部保留。
  */
 export function collapseAnnouncementBursts<T extends BurstItem>(
   items: T[],
@@ -77,7 +96,14 @@ export function collapseAnnouncementBursts<T extends BurstItem>(
     const dayItems = items.filter(
       (x) => x.tier === "PRIMARY" && dayKey(x.publishedAt) === k,
     );
-    out.push({ ...pickRepresentative(dayItems), burstCount: n - 1 });
+    const reps = pickRepresentatives(dayItems);
+    // 「另有 N 份」只写一次，挂在最后一条代表下面，读起来才是一句收尾的注脚。
+    reps.forEach((rep, i) =>
+      out.push({
+        ...rep,
+        burstCount: i === reps.length - 1 ? n - reps.length : 0,
+      }),
+    );
   }
   return out;
 }

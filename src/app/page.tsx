@@ -11,6 +11,8 @@ import {
 } from "~/lib/briefing";
 import type { ThesisDimension } from "~/lib/thesis";
 import { EntitySearch } from "./_components/entity-search";
+import { MarketBrief } from "./_components/market-brief";
+import { UserBrief } from "./_components/user-brief";
 import { MarketStrip } from "./_components/market-strip";
 import { PortfolioChanged } from "./_components/portfolio-changed";
 import { PortfolioImpact } from "./_components/portfolio-impact";
@@ -71,25 +73,36 @@ export default async function Home() {
   const greeting = greetingByHour(now.getHours());
   const upcoming = upcomingDisclosureNodes(now, 2);
 
-  // ---------- 登出态：私人投研工作台「介绍页」——重点覆盖热门板块，不是全市场资讯流 ----------
+  // ---------- 登出态：私人投研工作台「介绍页」——全 A股覆盖，聚焦你在乎的投资逻辑而非全市场资讯流 ----------
   if (!loggedIn) {
-    const [hot, marketDigest] = await Promise.all([
-      api.entity.hotSectors(),
+    const [hot, marketDigest, brief] = await Promise.all([
+      api.entity.allSectors(),
       api.news.digest(),
+      api.brief.today(),
     ]);
     return (
       <main className="mx-auto w-full max-w-6xl p-4 lg:px-8 lg:py-6">
         <MarketStrip />
+        {/* 每日 AI 复盘：登出态给紧凑版（概况 + 判断），别一上来糊满屏 */}
+        {brief ? (
+          <div className="mt-6">
+            <MarketBrief
+              tradeDate={brief.tradeDate}
+              data={brief.data}
+              compact
+            />
+          </div>
+        ) : null}
 
         <section className="mt-6 rounded-2xl border border-line bg-surface p-6 sm:p-8">
           <p className="text-xs font-semibold uppercase tracking-[1.5px] text-brand">
             你的私人投研 Agent
           </p>
           <h1 className={`mt-2 max-w-3xl text-2xl leading-snug sm:text-[32px] ${displayCls}`}>
-            不铺满全市场，只把你在乎的投资逻辑盯牢。
+            覆盖全 A股，只把你在乎的投资逻辑盯牢。
           </h1>
           <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
-            解牛聚焦最热门板块里最火的股票，替你从每天的海量资讯里筛出真正触及投资逻辑的那几条——登录后，这里会变成你的每日投资晨报：今天你的组合逻辑变了什么，需要复核什么。
+            A股每天上万条公告和资讯，真正动摇你持仓逻辑的没几条，解牛只盯这几条。登录后按你的自选股生成晨报：今天哪条改了你的判断、哪些要复核。
           </p>
           <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
             <Link href="/login" className={primaryBtn}>
@@ -102,7 +115,12 @@ export default async function Home() {
         </section>
 
         <div className="mt-8">
-          <HotSectorGrid sectors={hot.sectors} totalStocks={hot.totalStocks} />
+          <HotSectorGrid
+            sectors={hot.sectors}
+            totalStocks={hot.totalStocks}
+            full
+            limit={12}
+          />
         </div>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
@@ -114,7 +132,7 @@ export default async function Home() {
             <section className="rounded-2xl border border-line bg-surface p-4">
               <h2 className="text-base font-bold text-ink">关于解牛</h2>
               <p className="mt-2 text-sm leading-relaxed text-muted">
-                聚焦 A股 一手财经资讯 + 投资大师视角解读。一手来源：交易所公告（东方财富·公告，全市场实时含正文）；媒体来源：华尔街见闻、东方财富·快讯、集微网。
+                A股一手财经资讯 + 大师视角解读。一手来源：交易所公告（东方财富·公告，含正文）；媒体来源：华尔街见闻、东方财富·快讯、集微网。
               </p>
               <p className="mt-3 text-xs leading-relaxed text-muted">
                 AI 解读为思维演示，非投资建议；行情数据仅供参考、不预测。
@@ -127,13 +145,15 @@ export default async function Home() {
   }
 
   // ---------- 登录态：个人投研工作台（投资晨报） ----------
-  const [portfolioList, changed, portfolioImpact, personalDigest, marketDigest] =
+  const [portfolioList, changed, portfolioImpact, personalDigest, marketDigest, brief, mine] =
     await Promise.all([
       api.portfolio.list(),
       api.portfolio.changed(),
       api.portfolio.impact(),
       api.news.personalDigest(),
       api.news.digest(),
+      api.brief.today(),
+      api.brief.mine(),
     ]);
 
   const watched = portfolioList.map((p) => p.entity);
@@ -171,9 +191,28 @@ export default async function Home() {
         />
       </div>
 
+      {/* 个人复盘在前、市场复盘在后：市场是背景，你的组合才是主角 */}
+      {mine ? (
+        <div className="mt-6">
+          <UserBrief tradeDate={mine.tradeDate} data={mine.data} />
+        </div>
+      ) : null}
+
+      {brief ? (
+        <div className="mt-6">
+          <MarketBrief
+            tradeDate={brief.tradeDate}
+            data={brief.data}
+            compact={!!mine}
+          />
+        </div>
+      ) : null}
+
       <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="min-w-0 space-y-6">
-          <PortfolioChanged items={changed} />
+          <div id="portfolio-changed" className="scroll-mt-4">
+            <PortfolioChanged items={changed} />
+          </div>
           <PortfolioImpact items={portfolioImpact} />
           <DailyDigest personal={personalDigest} market={marketDigest} />
           <div className="flex justify-end">
@@ -186,9 +225,12 @@ export default async function Home() {
           </div>
         </div>
 
-        <aside className="space-y-6 lg:sticky lg:top-4 lg:self-start">
+        {/* 右栏自成滚动区，理由同个股页：卡片比一屏高时，只 sticky 会够不着下半截。 */}
+        <aside className="space-y-6 lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:self-start lg:overflow-x-hidden lg:overflow-y-auto lg:pr-1">
           <WorkbenchRail current={current} changes={changed} />
-          <CatalystCalendar nodes={upcoming} />
+          <div id="catalyst-calendar" className="scroll-mt-4">
+            <CatalystCalendar nodes={upcoming} />
+          </div>
         </aside>
       </div>
     </main>

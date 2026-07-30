@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { rankAttentionRadar } from "./opportunity";
+import { nth } from "./test-helpers";
 
 const row = (over: Partial<Parameters<typeof rankAttentionRadar>[0][number]>) => ({
   entityId: "e",
@@ -19,14 +20,14 @@ describe("rankAttentionRadar", () => {
   });
 
   it("一手占比高 → 有原始进展 (amber/up)", () => {
-    const [r] = rankAttentionRadar([row({ total: 10, primary: 7 })], 10);
+    const r = nth(rankAttentionRadar([row({ total: 10, primary: 7 })], 10), 0);
     expect(r.flagLabel).toBe("有原始进展");
     expect(r.flagTone).toBe("up");
     expect(r.lowNovelty).toBe(false);
   });
 
   it("一手占比低 → 多为跟进报道 = 高关注低新信息 (neutral)", () => {
-    const [r] = rankAttentionRadar([row({ total: 20, primary: 2 })], 10);
+    const r = nth(rankAttentionRadar([row({ total: 20, primary: 2 })], 10), 0);
     expect(r.flagLabel).toBe("多为跟进报道");
     expect(r.flagTone).toBe("neutral");
     expect(r.lowNovelty).toBe(true);
@@ -34,7 +35,7 @@ describe("rankAttentionRadar", () => {
   });
 
   it("中间占比 → 关注升温", () => {
-    const [r] = rankAttentionRadar([row({ total: 10, primary: 4 })], 10);
+    const r = nth(rankAttentionRadar([row({ total: 10, primary: 4 })], 10), 0);
     expect(r.flagLabel).toBe("关注升温");
     expect(r.lowNovelty).toBe(false);
   });

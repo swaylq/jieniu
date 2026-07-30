@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HoverPrefetchLink } from "./hover-prefetch-link";
 
 import {
   eventTypeLabel,
@@ -74,12 +75,12 @@ export function NewsTimeline({ items }: { items: StreamItem[] }) {
                 原文 ↗
               </a>
             </div>
-            <Link
+            <HoverPrefetchLink
               href={`/news/${n.id}`}
               className="mt-1 block text-sm font-medium leading-snug text-ink transition-colors hover:text-brand"
             >
               {n.title}
-            </Link>
+            </HoverPrefetchLink>
             {showSummary && (
               <p className="mt-0.5 line-clamp-1 text-xs leading-relaxed text-muted">
                 {n.summary}

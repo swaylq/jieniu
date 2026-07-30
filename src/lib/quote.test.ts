@@ -9,6 +9,7 @@ import {
   parseValuation,
   parseTencentValuation,
   hasValuation,
+  isAShareTicker,
 } from "./quote";
 
 describe("parseTencentValuation (push2 不可达时的估值兜底)", () => {
@@ -33,17 +34,52 @@ describe("parseTencentValuation (push2 不可达时的估值兜底)", () => {
   });
 });
 
+describe("isAShareTicker (A股行情/披露规则适用性——美股/港股不适用)", () => {
+  it("returns true for A-share tickers incl. 北交所 (leading 6/0/3/8/4)", () => {
+    expect(isAShareTicker("600519")).toBe(true);
+    expect(isAShareTicker("000001")).toBe(true);
+    expect(isAShareTicker("300750")).toBe(true);
+    expect(isAShareTicker("688981")).toBe(true);
+    expect(isAShareTicker("833994")).toBe(true); // 北交所 8 开头（旧码）
+    expect(isAShareTicker("920238")).toBe(true); // 北交所 920xxx 新代码段
+    expect(isAShareTicker("920045")).toBe(true);
+  });
+  it("returns false for US tickers, HK codes, invalid, and null/undefined", () => {
+    expect(isAShareTicker("NVDA")).toBe(false);
+    expect(isAShareTicker("AMD")).toBe(false);
+    expect(isAShareTicker("00700")).toBe(false); // 港股 5 位
+    expect(isAShareTicker("")).toBe(false);
+    expect(isAShareTicker(null)).toBe(false);
+    expect(isAShareTicker(undefined)).toBe(false);
+  });
+});
+
 describe("tickerToSymbol", () => {
   it("maps A-share tickers to market symbols by leading digit", () => {
     expect(tickerToSymbol("688981")).toBe("sh688981");
     expect(tickerToSymbol("600000")).toBe("sh600000");
     expect(tickerToSymbol("000001")).toBe("sz000001");
     expect(tickerToSymbol("300750")).toBe("sz300750");
+    expect(tickerToSymbol("830799")).toBe("bj830799"); // 北交所旧码
+    expect(tickerToSymbol("920238")).toBe("bj920238"); // 北交所 920xxx 新码
   });
 
   it("returns null for non-6-digit input", () => {
     expect(tickerToSymbol("abc")).toBeNull();
     expect(tickerToSymbol("12345")).toBeNull();
+  });
+});
+
+describe("tickerToSecid", () => {
+  it("maps A-share tickers to push2 secid (沪=1. 其余=0.)", () => {
+    expect(tickerToSecid("600519")).toBe("1.600519");
+    expect(tickerToSecid("000001")).toBe("0.000001");
+    expect(tickerToSecid("830799")).toBe("0.830799"); // 北交所旧码
+    expect(tickerToSecid("920238")).toBe("0.920238"); // 北交所 920xxx 新码
+  });
+  it("returns null for non-A-share", () => {
+    expect(tickerToSecid("NVDA")).toBeNull();
+    expect(tickerToSecid("00700")).toBeNull();
   });
 });
 
@@ -87,6 +123,24 @@ describe("parseSinaIndex", () => {
     const q = parseSinaIndex(raw, "us");
     expect(q?.price).toBeCloseTo(52218.5781, 4);
     expect(q?.changePct).toBeCloseTo(-0.01, 4);
+  });
+
+  it("cmdty: 用昨结算(第 7 位)自算，不用常为空的昨收(第 1 位)", () => {
+    // 纽约黄金 hf_GC 线上实抓（2026-07-28）：第 1 位昨收是空串，只有昨结算 4136.400 可用。
+    const raw =
+      'var hq_str_hf_GC="4088.573,,4088.500,4089.100,4145.000,4088.300,17:51:06,4136.400,4142.000,0,1,1,2026-07-28,纽约黄金,0";';
+    const q = parseSinaIndex(raw, "cmdty");
+    expect(q?.price).toBeCloseTo(4088.573, 3);
+    expect(q?.changePct).toBeCloseTo(-1.1562, 3);
+  });
+
+  it("cmdty: 昨结算缺失/为 0 返回 null，不吐出 Infinity 涨跌幅", () => {
+    const noSettle =
+      'var hq_str_hf_CL="80.628,,80.710,80.720,82.430,79.800,17:51:06,0,82.000,0,3,7,2026-07-28,纽约原油,0";';
+    expect(parseSinaIndex(noSettle, "cmdty")).toBeNull();
+    expect(
+      parseSinaIndex('var hq_str_hf_CL="80.628,,80.710";', "cmdty"),
+    ).toBeNull();
   });
 
   it("用错市场布局会解析出错值——这正是不能共用 parseSinaQuote 的原因", () => {

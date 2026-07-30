@@ -249,4 +249,39 @@ describe("forecastToRawItem (业绩预告事件)", () => {
       forecastToRawItem({ SECURITY_CODE: "", SECURITY_NAME_ABBR: "x", PREDICT_TYPE: "预增", NOTICE_DATE: "2026-07-24 00:00:00", REPORT_DATE: "2026-06-30 00:00:00" }),
     ).toBeNull();
   });
+
+  it("never stamps publishedAt in the future — clamps today's 08:00 convention to now when viewed before 08:00", () => {
+    // 今天披露的预告，源只给日期；代码按 08:00 CST 约定打时间戳。
+    // 但在 04:00 CST 看，08:00 尚未到来 → publishedAt 落在未来（「N 小时后发布」是非法的）。
+    const now = new Date("2026-07-27T04:00:00+08:00");
+    const item = forecastToRawItem(
+      {
+        SECURITY_CODE: "600519",
+        SECURITY_NAME_ABBR: "贵州茅台",
+        PREDICT_TYPE: "预增",
+        NOTICE_DATE: "2026-07-27 00:00:00",
+        REPORT_DATE: "2026-06-30 00:00:00",
+      },
+      now,
+    );
+    expect(item).not.toBeNull();
+    expect(item!.publishedAt.getTime()).toBeLessThanOrEqual(now.getTime());
+  });
+
+  it("keeps the 08:00 CST convention for past-dated forecasts (no clamping when already in the past)", () => {
+    const now = new Date("2026-07-27T04:00:00+08:00");
+    const item = forecastToRawItem(
+      {
+        SECURITY_CODE: "688981",
+        SECURITY_NAME_ABBR: "中芯国际",
+        PREDICT_TYPE: "略增",
+        NOTICE_DATE: "2026-07-24 00:00:00",
+        REPORT_DATE: "2026-06-30 00:00:00",
+      },
+      now,
+    );
+    expect(item!.publishedAt.toISOString()).toBe(
+      new Date("2026-07-24T08:00:00+08:00").toISOString(),
+    );
+  });
 });

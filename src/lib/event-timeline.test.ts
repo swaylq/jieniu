@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildEventTimeline, FOLLOWUP_LABEL } from "./event-timeline";
+import { nth } from "./test-helpers";
 
 const s = (over: Partial<Parameters<typeof buildEventTimeline>[0][number]>) => ({
   dimensionKey: "订单",
@@ -28,7 +29,7 @@ describe("buildEventTimeline", () => {
       [],
     );
     // 最早那条应被后续印证
-    const earliest = tl[tl.length - 1];
+    const earliest = nth(tl, -1);
     expect(earliest.kind).toBe("signal");
     if (earliest.kind === "signal") expect(earliest.followUp).toBe("confirmed");
   });
@@ -41,13 +42,13 @@ describe("buildEventTimeline", () => {
       ],
       [],
     );
-    const earliest = tl[tl.length - 1];
+    const earliest = nth(tl, -1);
     if (earliest.kind === "signal") expect(earliest.followUp).toBe("reversed");
   });
 
   it("无后续同维度材料信号 → 尚待后续验证", () => {
     const tl = buildEventTimeline([s({ dimensionKey: "毛利率" })], []);
-    const only = tl[0];
+    const only = nth(tl, 0);
     if (only.kind === "signal") expect(only.followUp).toBe("pending");
   });
 
@@ -57,8 +58,8 @@ describe("buildEventTimeline", () => {
       [{ action: "ADD", reason: "回调加仓", createdAt: new Date("2026-06-10") }],
     );
     expect(tl).toHaveLength(2);
-    expect(tl[0].kind).toBe("decision"); // 6-10 更近 → 排前
-    expect(tl[1].kind).toBe("signal");
+    expect(nth(tl, 0).kind).toBe("decision"); // 6-10 更近 → 排前
+    expect(nth(tl, 1).kind).toBe("signal");
   });
 
   it("FOLLOWUP_LABEL 三态齐全", () => {

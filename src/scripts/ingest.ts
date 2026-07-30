@@ -2,7 +2,7 @@ import { PrismaClient } from "../../generated/prisma";
 import { ingestSource } from "../server/ingest/runner";
 import { enrichPdfContent } from "../server/ingest/enrich";
 import { checkPriceAlerts } from "../server/price-alert-check";
-import { targetsByNeed } from "../server/backfill-targets";
+import { targetsByNeed, hotStockTargets } from "../server/backfill-targets";
 import { wallstreetcnAStock } from "../server/ingest/sources/wallstreetcn";
 import { eastmoneyAnnouncements } from "../server/ingest/sources/eastmoney-ann";
 import { eastmoneyFastNews } from "../server/ingest/sources/eastmoney";
@@ -68,15 +68,21 @@ async function main() {
   // 而个股资讯/巨潮各有自己的 backfill cron 在小时级刷新。搭 ingest 每 30 分钟的车，按
   // 「绑定最少优先」(targetsByNeed) 取一小批热门股定向补近 60 天研报，自愈式轮转，界内不拖累主流程。
   try {
-    const REPORT_REFRESH_N = 12;
+    const REPORT_REFRESH_N = 12; // 冷尾自愈（绑定最少优先）
+    const REPORT_HOT_N = 10; // 热门股定向（补 targetsByNeed 永不选中热门股、漏采其新研报，run 44）
     const to = new Date();
     const from = new Date(to.getTime() - 60 * 24 * 60 * 60 * 1000);
-    const targets = (await targetsByNeed(db)).slice(0, REPORT_REFRESH_N);
+    const cold = (await targetsByNeed(db)).slice(0, REPORT_REFRESH_N);
+    const hot = await hotStockTargets(db, REPORT_HOT_N);
+    const seen = new Set<string>();
+    const targets = [...hot, ...cold].filter(
+      (t) => !seen.has(t.code) && seen.add(t.code),
+    );
     if (targets.length > 0) {
       const codes = targets.map((t) => t.code);
       const r = await ingestSource(db, eastmoneyReportsForCodes(codes, from, to));
       console.log(
-        `[report-refresh] stocks=${codes.length} fetched=${r.fetched} inserted=${r.inserted}`,
+        `[report-refresh] stocks=${codes.length}(hot=${hot.length}) fetched=${r.fetched} inserted=${r.inserted}`,
       );
     }
   } catch (e) {
@@ -86,12 +92,20 @@ async function main() {
   // 个股媒体资讯刷新（每股深度，sway：确保每只股都有丰富新闻）：targetsByNeed 取最缺的一批，
   // 搜名字补 20 条媒体资讯，自愈轮转覆盖全部 A股+美股（美股名已是中文，搜索直接命中）。
   try {
-    const MEDIA_REFRESH_N = 20;
-    const targets = (await targetsByNeed(db)).slice(0, MEDIA_REFRESH_N);
+    const MEDIA_REFRESH_N = 20; // 冷尾自愈
+    const MEDIA_HOT_N = 12; // 热门股定向（同 report，补漏采热门股媒体，run 44）
+    const cold = (await targetsByNeed(db)).slice(0, MEDIA_REFRESH_N);
+    const hot = await hotStockTargets(db, MEDIA_HOT_N);
+    const seen = new Set<string>();
+    const targets = [...hot, ...cold].filter(
+      (t) => !seen.has(t.code) && seen.add(t.code),
+    );
     if (targets.length > 0) {
       const pairs = targets.map((t) => ({ name: t.name, code: t.code }));
       const r = await ingestSource(db, eastmoneyStockNewsForCodes(pairs, 20));
-      console.log(`[media-refresh] stocks=${pairs.length} inserted=${r.inserted}`);
+      console.log(
+        `[media-refresh] stocks=${pairs.length}(hot=${hot.length}) inserted=${r.inserted}`,
+      );
     }
   } catch (e) {
     console.error(`[media-refresh] FAILED: ${e instanceof Error ? e.message : String(e)}`);

@@ -17,6 +17,7 @@ import {
   type PriorFiling,
 } from "../../lib/dedupe";
 import { cleanText, cleanInline, screenQuality } from "../../lib/quality";
+import { notFuture } from "../../lib/format";
 import {
   isRoundupNews,
   isEtfMarketing,
@@ -165,7 +166,11 @@ export async function ingestSource(
   let inserted = 0;
   let tagged = 0;
   let screened = 0;
+  const nowRun = new Date();
   for (const r of raws) {
+    // publishedAt 铁律：不得落在未来（股东增减持 CHANGE_DATE 打 18:00、业绩预告 08:00、部分源自带
+    // 未来 pubDate 都会越过 now）。统一钳位，后续判重 key 与入库都用钳过的值。
+    r.publishedAt = notFuture(r.publishedAt, nowRun);
     // 质量筛查：先清洗(去 HTML/实体/多余空白)，再剔除垃圾(空/超短标题、广告引流、乱码)。
     const title = cleanInline(r.title);
     const summary = cleanInline(r.summary);

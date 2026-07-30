@@ -142,7 +142,12 @@ describe("userDimensionStatus", () => {
   ]);
   it("returns muted/priority for a known dimension", () => {
     dims[0]!.priority = true;
-    expect(userDimensionStatus(dims, "订单")).toEqual({ muted: false, priority: true });
+    expect(userDimensionStatus(dims, "订单")).toEqual({
+      muted: false,
+      priority: true,
+      sensitivity: "normal",
+      threshold: 60,
+    });
   });
   it("returns null for a dimension not in the thesis", () => {
     expect(userDimensionStatus(dims, "未知")).toBeNull();

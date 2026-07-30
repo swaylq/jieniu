@@ -19,26 +19,39 @@ export function HotSectorGrid({
   sectors,
   totalStocks,
   compact = false,
+  full = false,
+  limit,
 }: {
   sectors: HotSectorItem[];
   totalStocks: number;
   /** compact=true：首页用，少一句说明。 */
   compact?: boolean;
+  /** full=true：全部覆盖模式（全 A 股 / 全行业），非只热门（sway 2026-07-26）。 */
+  full?: boolean;
+  /** 最多展示几个板块（其余在标题计数里体现）；缺省全展示。 */
+  limit?: number;
 }) {
   if (sectors.length === 0) return null;
+  const shown = typeof limit === "number" ? sectors.slice(0, limit) : sectors;
   return (
     <section>
       <SectionHead
-        title="重点覆盖 · 热门板块"
-        hint={`${totalStocks} 只热门股 · ${sectors.length} 个板块`}
+        title={full ? "全部覆盖 · A股全行业" : "重点覆盖 · 热门板块"}
+        hint={
+          full
+            ? `${totalStocks} 只 A股 · ${sectors.length} 个行业`
+            : `${totalStocks} 只热门股 · ${sectors.length} 个板块`
+        }
       />
       {compact ? null : (
         <p className="-mt-1 mb-3 text-xs text-muted">
-          A股热门板块就那些——解牛先把每个热门板块里最火的龙头盯牢，而不是铺满全市场。板块内按近 7 天资讯热度排序。
+          {full
+            ? `已覆盖全部 ${totalStocks} 只 A股（+美股），按行业归类、板块内按近 7 天资讯热度排序。`
+            : "解牛已覆盖全 A股，按行业归类、板块内按近 7 天资讯热度排序。"}
         </p>
       )}
       <ul className="grid gap-3 sm:grid-cols-2">
-        {sectors.map((s) => (
+        {shown.map((s) => (
           <li
             key={s.sectorId}
             className="rounded-xl border border-line bg-surface p-4 transition-colors hover:border-brand/40"

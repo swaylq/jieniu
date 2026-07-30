@@ -182,7 +182,10 @@ export async function populateSignals(
       const s = id ? marginSignal(r) : null;
       if (id && s) { await upsert(id, s); result.margin++; }
     }
-  } catch { /* 跳过 margin */ }
+  } catch (e) {
+    // 记日志不静默（7-24 教训）：某源端点变了会 100% 失败，裸 catch 会零痕迹永久跳过。
+    console.error("[signals] margin skipped:", e instanceof Error ? e.message : e);
+  }
 
   // consensus：一致预期（每股一行）
   try {
@@ -196,7 +199,9 @@ export async function populateSignals(
       }
       if (rows.length < 500) break;
     }
-  } catch { /* 跳过 consensus */ }
+  } catch (e) {
+    console.error("[signals] consensus skipped:", e instanceof Error ? e.message : e);
+  }
 
   // unlock：未来解禁，每股取最近一次
   try {
@@ -214,7 +219,9 @@ export async function populateSignals(
       const s = id ? unlockSignal(r) : null;
       if (id && s) { seen.add(code); await upsert(id, s); result.unlock++; }
     }
-  } catch { /* 跳过 unlock */ }
+  } catch (e) {
+    console.error("[signals] unlock skipped:", e instanceof Error ? e.message : e);
+  }
 
   return result;
 }
@@ -272,7 +279,9 @@ export async function populateSectorSignals(
         if (s) { await upsert(sid, s); result.commodity++; }
       }
     }
-  } catch { /* 跳过 commodity */ }
+  } catch (e) {
+    console.error("[signals] commodity skipped:", e instanceof Error ? e.message : e);
+  }
 
   // 台股月营收：TWSE OpenAPI（TSMC 2330 → 半导体先行指标）。
   try {
@@ -294,7 +303,9 @@ export async function populateSectorSignals(
         }
       }
     }
-  } catch { /* 跳过 overseas */ }
+  } catch (e) {
+    console.error("[signals] overseas skipped:", e instanceof Error ? e.message : e);
+  }
 
   return result;
 }

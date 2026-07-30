@@ -11,7 +11,12 @@ const NEWS_LIMIT = 5000;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const [entities, news] = await Promise.all([
-    db.entity.findMany({ select: { id: true, createdAt: true } }),
+    // 只收有 ≥1 条资讯的实体：0 资讯的退市壳/历史死码是薄/空页，进 sitemap 只会把爬虫
+    // 指向无内容页（QA loop run 12/13 发现、run 44 修）。新股一旦被 ingest 标上资讯即自动纳入。
+    db.entity.findMany({
+      where: { news: { some: {} } },
+      select: { id: true, createdAt: true },
+    }),
     db.newsItem.findMany({
       select: { id: true, publishedAt: true },
       orderBy: { publishedAt: "desc" },

@@ -128,7 +128,7 @@ export async function fetchKline(ticker: string, days = 30): Promise<number[]> {
   }
 }
 
-/** 概览条覆盖的指数：沪深 → 港股 → 美股，顺序即展示顺序。 */
+/** 概览条覆盖的指数：沪深 → 港股 → 美股 → 商品，顺序即展示顺序。 */
 const INDEX_SYMBOLS: { symbol: string; label: string; market: IndexMarket }[] = [
   { symbol: "sh000001", label: "上证指数", market: "cn" },
   { symbol: "sz399001", label: "深证成指", market: "cn" },
@@ -140,6 +140,11 @@ const INDEX_SYMBOLS: { symbol: string; label: string; market: IndexMarket }[] = 
   { symbol: "gb_dji", label: "道琼斯", market: "us" },
   { symbol: "gb_ixic", label: "纳斯达克", market: "us" },
   { symbol: "gb_inx", label: "标普500", market: "us" },
+  // 外盘商品：黄金/原油是 A 股周期股与通胀交易的先行指标，属宏观底色。
+  // 取纽约期货连续（COMEX 黄金 / NYMEX WTI）——与伦敦金现 hf_XAU、布伦特 hf_OIL
+  // 实测涨跌幅同向且幅度一致，选纽约是因为国内财经端普遍以它为准，标签才对得上读者预期。
+  { symbol: "hf_GC", label: "纽约黄金", market: "cmdty" },
+  { symbol: "hf_CL", label: "纽约原油", market: "cmdty" },
 ];
 
 export type IndexQuote = {

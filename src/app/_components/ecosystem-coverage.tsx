@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HoverPrefetchLink } from "./hover-prefetch-link";
 
 import { streamStamp } from "~/lib/format";
 import { chipClass } from "./section-head";
@@ -29,7 +30,7 @@ export function EcosystemCoverage({
     <section className="rounded-2xl border border-line/70 bg-surface p-5">
       <h2 className="text-base font-bold text-ink">行业与竞品</h2>
       <p className="mt-1 text-xs leading-relaxed text-muted">
-        你在乎的公司所在行业 + 竞品的一举一动，一并纳入监控。
+        把该公司所在行业和竞品的动态一并纳入监控。
       </p>
 
       {sectors.length > 0 ? (
@@ -49,12 +50,12 @@ export function EcosystemCoverage({
                   <span className="tabular shrink-0 text-muted">
                     {streamStamp(n.publishedAt)}
                   </span>
-                  <Link
+                  <HoverPrefetchLink
                     href={`/news/${n.id}`}
                     className="line-clamp-1 text-ink transition-colors hover:text-brand"
                   >
                     {n.title}
-                  </Link>
+                  </HoverPrefetchLink>
                 </li>
               ))}
             </ul>
@@ -82,12 +83,12 @@ export function EcosystemCoverage({
                   >
                     {n.entityName}
                   </Link>
-                  <Link
+                  <HoverPrefetchLink
                     href={`/news/${n.id}`}
                     className="line-clamp-1 text-ink transition-colors hover:text-brand"
                   >
                     {n.title}
-                  </Link>
+                  </HoverPrefetchLink>
                 </li>
               ))}
             </ul>

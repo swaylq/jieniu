@@ -1,0 +1,245 @@
+import { describe, it, expect } from "vitest";
+import {
+  parseDigestResponse,
+  buildDigestPrompt,
+  digestInputHash,
+  tradeDateOf,
+  hasForbiddenAdvice,
+  isTwoSided,
+  cleanEntityName,
+  isDigestWorthyFiling,
+  type DigestInputs,
+} from "./market-digest";
+
+const inputs: DigestInputs = {
+  tradeDate: "2026-07-28",
+  market: "CN",
+  indices: [
+    { label: "上证指数", price: 3421.5, changePct: 0.62 },
+    { label: "创业板指", price: 2210.3, changePct: -1.15 },
+  ],
+  breadth: {
+    counted: 5316, up: 900, down: 4300, flat: 116,
+    limitUp: 12, limitDown: 48, medianChangePct: -1.62,
+  },
+  macro: {
+    overseas: [{ title: "韩国首尔综指大跌8%，接近触发熔断", brief: "", source: "东方财富·快讯", importance: 70 }],
+    domestic: [{ title: "央行今日开展2065亿元7天期逆回购操作", brief: "利率1.40%", source: "华尔街见闻·A股", importance: 55 }],
+    industry: [{ title: "机构：第二季度智能手机内存价格环比增长超80%", brief: "", source: "东方财富·快讯", importance: 55 }],
+  },
+  sectors: {
+    strong: [{ name: "半导体", avgChangePct: 2.4, signal: "共振", leaders: ["兆易创新", "北方华创"], facts: ["兆易创新:半年度业绩预告"] }],
+    weak: [{ name: "白酒", avgChangePct: -1.8, signal: "共跌", leaders: ["贵州茅台"], facts: [] }],
+  },
+  stocks: [
+    { name: "宁德时代", ticker: "300750", price: 268.4, changePct: 3.1, facts: ["宁德时代回应大额回购方案"] },
+  ],
+  news: [
+    { title: "东山精密:关于首次回购公司股份的公告", source: "东方财富·公告", brief: "首次回购1150万元" },
+  ],
+  catalysts: [{ name: "兆易创新", label: "半年报预约披露", date: "2026-07-30" }],
+};
+
+describe("tradeDateOf — 日历日必须走本地时区", () => {
+  it("晚间生成不能滚到前一天（toISOString 的 UTC 陷阱）", () => {
+    // 本地 2026-08-15 00:30 —— UTC 还是 8/14
+    expect(tradeDateOf(new Date(2026, 7, 15, 0, 30))).toBe("2026-08-15");
+    expect(tradeDateOf(new Date(2026, 7, 15, 23, 59))).toBe("2026-08-15");
+  });
+});
+
+describe("digestInputHash — 同输入不重复烧 token", () => {
+  it("同样输入得同样指纹", () => {
+    expect(digestInputHash(inputs)).toBe(digestInputHash({ ...inputs }));
+  });
+  it("任一段数据变了指纹就变", () => {
+    const changed = { ...inputs, indices: [{ label: "上证指数", price: 3400, changePct: -0.2 }] };
+    expect(digestInputHash(changed)).not.toBe(digestInputHash(inputs));
+  });
+});
+
+describe("buildDigestPrompt", () => {
+  const p = buildDigestPrompt(inputs);
+  it("把五段的原始数据都喂进去", () => {
+    expect(p).toContain("上证指数");
+    expect(p).toContain("半导体");
+    expect(p).toContain("白酒");
+    expect(p).toContain("宁德时代");
+    expect(p).toContain("东山精密");
+    expect(p).toContain("半年报预约披露");
+  });
+  it("要求返回 JSON 且列明字段", () => {
+    expect(p).toContain("JSON");
+    expect(p).toContain("judgment");
+    expect(p).toContain("watchpoints");
+  });
+  it("显式禁止把段号 / 字段名前缀写进正文（模型实测会照抄模板里的说明文字）", () => {
+    expect(p).toContain("不要出现「1.」");
+    expect(p).not.toContain('"overview": "1.');
+  });
+  it("空板块/空催化不会渲染成空洞占位", () => {
+    const bare = buildDigestPrompt({ ...inputs, sectors: { strong: [], weak: [] }, catalysts: [] });
+    expect(bare).not.toContain("undefined");
+    expect(bare).toContain("（无）");
+  });
+});
+
+describe("parseDigestResponse", () => {
+  const good = JSON.stringify({
+    overview: "沪指小幅收涨，创业板指走弱，市场情绪分化。",
+    drivers: [
+      { scope: "domestic", text: "半导体设备招标落地，年内第三批集采启动" },
+      { scope: "domestic", text: "北向资金净流入 62 亿元，连续三日加仓" },
+    ],
+    sectors: { strong: [{ name: "半导体", note: "设备招标带动" }], weak: [{ name: "白酒", note: "需求担忧" }] },
+    stocks: [{ name: "宁德时代", changePct: 3.1, note: "回购方案获积极反馈" }],
+    watchpoints: ["兆易创新半年报预约披露", "美联储议息"],
+    judgment: "若半导体招标持续落地，板块或延续修复；反之若需求端数据转弱，当前涨幅可能回吐。",
+  });
+
+  const stockFacts = [{ name: "宁德时代", facts: ["宁德时代回应大额回购方案"] }];
+
+  const sectorFacts = [
+    { name: "半导体", facts: ["兆易创新:半年度业绩预告"] },
+    { name: "白酒", facts: [] },
+  ];
+
+  it("解析标准 JSON", () => {
+    const d = parseDigestResponse(good, null, stockFacts, sectorFacts);
+    expect(d).not.toBeNull();
+    expect(d!.drivers).toHaveLength(2);
+    expect(d!.drivers[0]!.scope).toBe("domestic");
+    expect(d!.sectors.strong[0]!.name).toBe("半导体");
+    // 半导体当天有代表股事实 → note 留得下；白酒没有 → 置空
+    expect(d!.sectors.strong[0]!.note).toBe("设备招标带动");
+    expect(d!.sectors.weak[0]!.note).toBe("");
+    expect(d!.watchpoints).toContain("美联储议息");
+  });
+
+  it("容忍 ```json 围栏（模型常见habit）", () => {
+    expect(parseDigestResponse("```json\n" + good + "\n```")).not.toBeNull();
+    expect(parseDigestResponse("好的，结果如下：\n" + good)).not.toBeNull();
+  });
+
+  it("缺必填段落 → null（宁可不出，也不出半截）", () => {
+    const noJudge = JSON.stringify({ ...JSON.parse(good), judgment: "" });
+    expect(parseDigestResponse(noJudge)).toBeNull();
+    expect(parseDigestResponse("完全不是 JSON")).toBeNull();
+    expect(parseDigestResponse("")).toBeNull();
+  });
+
+  it("字段类型不对时丢掉该条而不是整体崩", () => {
+    const messy = JSON.stringify({
+      ...JSON.parse(good),
+      // 裸字符串是改版前的旧形态，仍要接得住（按「产业与公司」兜底）
+      drivers: ["央行开展 2065 亿元逆回购", 42, null, "SK海力士称 HBM4 下半年扩产"],
+      stocks: [{ name: "宁德时代", changePct: "三点一", note: "回购方案落地" }],
+    });
+    const d = parseDigestResponse(messy);
+    expect(d!.drivers.map((x) => x.text)).toEqual([
+      "央行开展 2065 亿元逆回购",
+      "SK海力士称 HBM4 下半年扩产",
+    ]);
+    expect(d!.drivers[0]!.scope).toBe("industry");
+    expect(d!.stocks[0]!.changePct).toBeNull();
+  });
+
+  it("核心驱动全是循环归因 → 整篇判废（张楚寒：正确的废话比没有更糟）", () => {
+    const waffle = JSON.stringify({
+      ...JSON.parse(good),
+      drivers: [
+        { scope: "industry", text: "半导体板块集体下挫，拖累科技股表现" },
+        { scope: "industry", text: "科技股整体回调，个股普遍承压" },
+        { scope: "industry", text: "市场情绪偏谨慎，资金避险" },
+      ],
+    });
+    expect(parseDigestResponse(waffle)).toBeNull();
+  });
+
+  it("个股 note 是废话就置空，不留占位", () => {
+    const d = parseDigestResponse(
+      JSON.stringify({
+        ...JSON.parse(good),
+        stocks: [{ name: "兆易创新", changePct: -10, note: "受半导体板块影响走跌" }],
+        sectors: { strong: [{ name: "白酒", note: "板块走强" }], weak: [] },
+      }),
+      null,
+      [{ name: "兆易创新", facts: ["兆易创新二连跌停，机构警告存储行情拐点"] }],
+      [{ name: "白酒", facts: ["贵州茅台:关于回购股份的公告"] }],
+    );
+    expect(d!.stocks[0]!.note).toBe("");
+    expect(d!.sectors.strong[0]!.note).toBe("");
+  });
+
+  it("没喂过自有事实的个股，归因一律作废——防「看起来很像真的」的编造", () => {
+    const body = JSON.stringify({
+      ...JSON.parse(good),
+      stocks: [{ name: "东山精密", changePct: -6.67, note: "PCB 订单超预期带动估值修复" }],
+    });
+    expect(parseDigestResponse(body, null, [{ name: "东山精密", facts: [] }])!.stocks[0]!.note).toBe("");
+    expect(
+      parseDigestResponse(body, null, [
+        { name: "东山精密", facts: ["东山精密:上半年PCB订单同比增长"] },
+      ])!.stocks[0]!.note,
+    ).toBe("PCB 订单超预期带动估值修复");
+  });
+
+  it("市场宽度由调用方传入，不经模型（数字由代码算）", () => {
+    const b = { counted: 10, up: 3, down: 7, flat: 0, limitUp: 0, limitDown: 1, medianChangePct: -1.2 };
+    expect(parseDigestResponse(good, b)!.breadth).toEqual(b);
+    expect(parseDigestResponse(good)!.breadth).toBeNull();
+  });
+
+  it("含买卖指令的判断段直接判废（铁律②）", () => {
+    const bad = JSON.stringify({ ...JSON.parse(good), judgment: "建议买入半导体龙头，目标价 80 元。" });
+    expect(parseDigestResponse(bad)).toBeNull();
+  });
+});
+
+describe("cleanEntityName — 资金流数据里的名字自带代码后缀", () => {
+  it("剥掉尾部代码，避免提示词里出现「新易盛(300502)(300502)」", () => {
+    expect(cleanEntityName("新易盛(300502)")).toBe("新易盛");
+    expect(cleanEntityName("贵州茅台(600519)")).toBe("贵州茅台");
+    expect(cleanEntityName("大普微-UW(301666)")).toBe("大普微-UW");
+  });
+  it("不误伤本来就带括号的正常名字", () => {
+    expect(cleanEntityName("中巨芯-U")).toBe("中巨芯-U");
+    expect(cleanEntityName("宁德时代")).toBe("宁德时代");
+  });
+});
+
+describe("isDigestWorthyFiling — 复盘里不要程序性公告", () => {
+  it("剔除募集资金专户 / 开户 / 监管协议这类纯事务性文件", () => {
+    expect(isDigestWorthyFiling("盛龙股份:关于开立募集资金现金管理专用结算账户并签订募集资金监管协议的公告")).toBe(false);
+    expect(isDigestWorthyFiling("微电生理:关于开立募集资金专项账户并签订募集资金专户存储三方监管协议的公告")).toBe(false);
+  });
+  it("剔除中介机构出具的核查意见（主体公告本身已进来了）", () => {
+    expect(isDigestWorthyFiling("东方证券:浙商证券关于东方证券本次交易不构成重组上市的核查意见")).toBe(false);
+  });
+  it("保留真正的市场级事件", () => {
+    expect(isDigestWorthyFiling("国泰海通:关于与关联方共同参与东方证券相关重组交易暨关联交易的公告")).toBe(true);
+    expect(isDigestWorthyFiling("仁度生物:关于控股股东、实际控制人协议转让股份暨控制权拟发生变更的进展公告")).toBe(true);
+    expect(isDigestWorthyFiling("蓝盾光电:关于筹划发行股份及支付现金购买资产并募集配套资金事项的停牌公告")).toBe(true);
+    expect(isDigestWorthyFiling("东山精密:关于首次回购公司股份的公告")).toBe(true);
+  });
+});
+
+describe("合规护栏", () => {
+  it("识别买卖指令 / 目标价 / 收益承诺", () => {
+    expect(hasForbiddenAdvice("建议买入")).toBe(true);
+    expect(hasForbiddenAdvice("目标价 80 元")).toBe(true);
+    expect(hasForbiddenAdvice("可逢低加仓")).toBe(true);
+    expect(hasForbiddenAdvice("必涨")).toBe(true);
+    expect(hasForbiddenAdvice("建议清仓")).toBe(true);
+  });
+  it("不误伤中性陈述", () => {
+    expect(hasForbiddenAdvice("公司披露回购方案，回购价格上限 80 元")).toBe(false);
+    expect(hasForbiddenAdvice("北向资金净买入居前")).toBe(false);
+    expect(hasForbiddenAdvice("若数据转弱，涨幅可能回吐")).toBe(false);
+  });
+  it("判断段必须双向——单边论断不合格", () => {
+    expect(isTwoSided("若 A 成立则修复；反之若 B 则回吐。")).toBe(true);
+    expect(isTwoSided("一旦财报不及预期，波动可能放大。反之，若指引改善则获支撑。")).toBe(true);
+    expect(isTwoSided("市场将继续上涨。")).toBe(false);
+  });
+});

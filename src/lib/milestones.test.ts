@@ -73,4 +73,17 @@ describe("spanSummary", () => {
     ]);
     expect(spanSummary(g)).toBe("共 2 条 · 覆盖 1 个月");
   });
+
+  it("给了真实总数且超过已展示条数 → 用总数并标注「显示前 N」（大事记 take:200 触顶时诚实）", () => {
+    const g = groupByMonth([
+      item("a", "2026-07-20T00:00:00Z"),
+      item("b", "2026-07-02T00:00:00Z"),
+    ]); // 已展示 2 条、1 个月
+    expect(spanSummary(g, 740)).toBe("共 740 条 · 覆盖 1 个月 · 显示前 2");
+  });
+
+  it("真实总数不超过已展示（未触顶）→ 与不传总数时一致，不加「显示前」", () => {
+    const g = groupByMonth([item("a", "2026-07-20T00:00:00Z")]);
+    expect(spanSummary(g, 1)).toBe("共 1 条 · 覆盖 1 个月");
+  });
 });

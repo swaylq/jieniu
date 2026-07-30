@@ -109,7 +109,7 @@ export function DecisionEditor({
         rows={2}
         value={reason}
         onChange={(e) => setReason(e.target.value)}
-        placeholder="为什么做这个决策？（你的理由——会作为日后自查投资逻辑的锚）"
+        placeholder="为什么做这个决策？（记下理由，日后自查投资逻辑时对照）"
       />
       <input
         className={field}

@@ -33,7 +33,7 @@ export function AlertProtocol({ initial }: { initial: AlertPrefs }) {
         aria-expanded={open}
         className="flex w-full items-center gap-2 text-left"
       >
-        <span aria-hidden>🔔</span>
+        <span className="h-5 w-1.5 rounded-full bg-brand" aria-hidden />
         <h2 className="text-sm font-bold text-ink">提醒协议</h2>
         <span className="min-w-0 flex-1 truncate text-xs text-muted">
           {onLabels.length > 0 ? `已开：${onLabels.join("、")}` : "全部已关"}

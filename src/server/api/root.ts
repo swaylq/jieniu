@@ -3,6 +3,7 @@ import { analyticsRouter } from "~/server/api/routers/analytics";
 import { askRouter } from "~/server/api/routers/ask";
 import { authRouter } from "~/server/api/routers/auth";
 import { billingRouter } from "~/server/api/routers/billing";
+import { briefRouter } from "~/server/api/routers/brief";
 import { bookmarksRouter } from "~/server/api/routers/bookmarks";
 import { decisionRouter } from "~/server/api/routers/decision";
 import { earningsRouter } from "~/server/api/routers/earnings";
@@ -33,6 +34,7 @@ export const appRouter = createTRPCRouter({
   ask: askRouter,
   auth: authRouter,
   billing: billingRouter,
+  brief: briefRouter,
   bookmarks: bookmarksRouter,
   decision: decisionRouter,
   earnings: earningsRouter,

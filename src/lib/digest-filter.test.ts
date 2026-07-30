@@ -7,6 +7,7 @@ import {
   collapseDigestItems,
   type DigestCandidate,
 } from "./digest-filter";
+import { nth } from "./test-helpers";
 
 const cand = (o: Partial<DigestCandidate> & { id: string; title: string }): DigestCandidate => ({
   importance: 30,
@@ -63,8 +64,8 @@ describe("rankDigest", () => {
       ],
       6,
     );
-    expect(out[0].id).toBe("macro");
-    expect(out[0].macro).toBe(true);
+    expect(nth(out, 0).id).toBe("macro");
+    expect(nth(out, 0).macro).toBe(true);
   });
   it("dedupes by id and respects take", () => {
     const out = rankDigest(
@@ -76,7 +77,7 @@ describe("rankDigest", () => {
       1,
     );
     expect(out).toHaveLength(1);
-    expect(out[0].id).toBe("x");
+    expect(nth(out, 0).id).toBe("x");
   });
 
   it("同一公司的公告轰炸每家只留 1 条（精测电子重组几十份文档不霸屏）", () => {

@@ -20,8 +20,11 @@ export type ForecastRow = {
   REPORT_DATE?: string;
 };
 
-/** 一条业绩预告 → RawNewsItem。无代码/名字/类型返回 null。纯函数，便于单测。 */
-export function forecastToRawItem(row: ForecastRow): RawNewsItem | null {
+/** 一条业绩预告 → RawNewsItem。无代码/名字/类型返回 null。纯函数，便于单测（now 可注入）。 */
+export function forecastToRawItem(
+  row: ForecastRow,
+  now: Date = new Date(),
+): RawNewsItem | null {
   const code = (row.SECURITY_CODE ?? "").trim();
   const name = (row.SECURITY_NAME_ABBR ?? "").trim();
   const type = (row.PREDICT_TYPE ?? "").trim();
@@ -39,9 +42,14 @@ export function forecastToRawItem(row: ForecastRow): RawNewsItem | null {
   const rptQ = (row.REPORT_DATE ?? "").slice(0, 10);
   const title = `${name}业绩预告：${type}${amp}${reasonStr}`;
   const date = (row.NOTICE_DATE ?? "").slice(0, 10);
-  const publishedAt = /^\d{4}-\d{2}-\d{2}$/.test(date)
+  const stamped = /^\d{4}-\d{2}-\d{2}$/.test(date)
     ? new Date(`${date}T08:00:00+08:00`)
-    : new Date();
+    : now;
+  // 铁律：publishedAt 不得落在未来。源只给日期，代码按 08:00 CST 约定打戳；今天披露的预告
+  // 在 08:00 前被抓到时，08:00 戳会落在未来（「N 小时后发布」非法、会乱序 + 显示未来相对时间）。
+  // 过去日期的预告仍保留 08:00 约定，只有越过 now 才钳到 now。
+  const publishedAt =
+    stamped.getTime() > now.getTime() ? now : stamped;
   return {
     // 同股同报告期多条修正稿 → externalId 只带 (code, 报告期)，后到的同 key 命中 hash 去重。
     externalId: `forecast-${code}-${rptQ}`,

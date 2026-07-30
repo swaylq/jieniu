@@ -24,6 +24,7 @@ export function exchangeFromCode(code: string): "SH" | "SZ" | "BJ" {
   const h = code[0];
   if (h === "6") return "SH";
   if (h === "8" || h === "4") return "BJ";
+  if (code.startsWith("92")) return "BJ"; // 北交所 2025 起新代码段 920xxx
   return "SZ";
 }
 
@@ -32,9 +33,13 @@ export function exchangeFromCode(code: string): "SH" | "SZ" | "BJ" {
  * （ST/*ST 前缀、名称以"退"结尾）——张楚寒:"退市的没几个人关注还不吉利"。
  */
 export function isSeedableStock(name: string): boolean {
-  if (/ETF|指数|基金|REIT|LOF/i.test(name)) return false;
-  if (/^\*?ST/.test(name.trim())) return false;
-  if (name.trim().endsWith("退")) return false;
+  const n = name.trim();
+  if (/ETF|指数|基金|REIT|LOF/i.test(n)) return false;
+  if (/^\*?ST/.test(n)) return false;
+  // 退市：尾字「退」(泽达退) 与前缀「退市」(退市泽达) 都算——原来只判尾字，漏掉 61 只退市前缀股。
+  if (n.endsWith("退") || n.includes("退市")) return false;
+  // 可转债/定转（810xxx 等）是债券不是股票，混进来污染股票池——名字含 定转/转债 一律拒。
+  if (/定转|转债/.test(n)) return false;
   return true;
 }
 

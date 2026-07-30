@@ -36,7 +36,7 @@ export function SignalStrip({ signals }: { signals: SignalItem[] }) {
         ))}
       </ul>
       <p className="mt-2 text-[11px] leading-relaxed text-muted">
-        数据来自东方财富 · 客观数据，非评级、非投资建议
+        数据来自东方财富，非评级、非投资建议
       </p>
     </div>
   );

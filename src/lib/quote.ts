@@ -16,6 +16,8 @@ export function tickerToSymbol(ticker: string): string | null {
   if (head === "6") return `sh${t}`;
   if (head === "0" || head === "3") return `sz${t}`;
   if (head === "8" || head === "4") return `bj${t}`;
+  // 北交所 2025 起启用 920xxx 新代码段（旧码 8/4 仍在），行情走 bj 前缀（sina 实测 bj920238 有数据）。
+  if (t.startsWith("92")) return `bj${t}`;
   return null;
 }
 
@@ -26,7 +28,17 @@ export function tickerToSecid(ticker: string): string | null {
   const head = t[0];
   if (head === "6") return `1.${t}`;
   if (head === "0" || head === "3" || head === "8" || head === "4") return `0.${t}`;
+  if (t.startsWith("92")) return `0.${t}`; // 北交所 920xxx 新代码段（push2 市场前缀 0.）
   return null;
+}
+
+/**
+ * 该 ticker 是否为 A股——即是否适用「A股行情/估值/K线 + 到价提醒 + A股法定披露日历」。
+ * 美股（字母代码 NVDA）、港股（5 位）等一律 false：这些 A股专属 UI 不该出现在它们的实体页
+ * （否则会显示永不填充的行情骨架、无法触发的到价提醒、与它们无关的 A股财报披露截止日）。
+ */
+export function isAShareTicker(ticker: string | null | undefined): boolean {
+  return ticker != null && tickerToSecid(ticker) !== null;
 }
 
 /** 客观估值指标（非评级、不代表高估/低估判断）。任一取不到即为 null。 */
@@ -159,14 +171,16 @@ export function parseSinaQuote(raw: string): Quote | null {
   );
 }
 
-/** 指数所属市场。决定新浪返回的字段布局，同时供 UI 分组展示。 */
-export type IndexMarket = "cn" | "hk" | "us";
+/** 指数所属市场。决定新浪返回的字段布局，同时供 UI 分组展示。`cmdty` 是外盘商品期货。 */
+export type IndexMarket = "cn" | "hk" | "us" | "cmdty";
 
 /**
- * 解析新浪指数行情。**三个市场的字段布局完全不同**，不能共用 parseSinaQuote：
+ * 解析新浪指数行情。**每个市场的字段布局完全不同**，不能共用 parseSinaQuote：
  * - `cn` `sh000001`：名称,今开,昨收,**最新**,最高,最低…      → 昨收自算涨跌幅
  * - `hk` `rt_hkHSI`：代码,名称,今开,昨收,最高,最低,**最新**,涨跌额,**涨跌幅**…
  * - `us` `gb_dji`  ：名称,**最新**,**涨跌幅**,时间,涨跌额…   → 涨跌幅接口直接给
+ * - `cmdty` `hf_GC`：**最新**,昨收,买价,卖价,最高,最低,时间,**昨结算**,今开…
+ *   → 期货基准是**结算价**不是收盘价，故用第 7 位昨结算自算涨跌幅（第 1 位昨收常为空）
  * 任一字段不可用返回 null（不抛），调用方跳过该条。
  */
 export function parseSinaIndex(
@@ -184,6 +198,12 @@ export function parseSinaIndex(
     if (f.length < 3) return null;
     price = num(1);
     changePct = num(2);
+  } else if (market === "cmdty") {
+    if (f.length < 8) return null;
+    price = num(0);
+    const prevSettle = num(7);
+    if (!Number.isFinite(prevSettle) || prevSettle <= 0) return null;
+    changePct = ((price - prevSettle) / prevSettle) * 100;
   } else if (market === "hk") {
     if (f.length < 9) return null;
     price = num(6);

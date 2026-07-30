@@ -109,6 +109,15 @@ export function toValidDate(
   return Number.isNaN(d.getTime()) ? fallback : d;
 }
 
+/**
+ * publishedAt 不得落在未来——任何资讯都不可能「N 小时后发布」。ingest runner 统一钳位，
+ * 防止把日期字段按固定时钟（如股东增减持 CHANGE_DATE 打 18:00、业绩预告 08:00）或源自带的
+ * 未来 pubDate 当成发布时间入库（会乱序 + 显示「N 小时后」）。晚于 now 一律钳到 now。
+ */
+export function notFuture(d: Date, now: Date = new Date()): Date {
+  return d.getTime() > now.getTime() ? now : d;
+}
+
 /** 登录 returnTo 安全校验：仅允许站内绝对路径，拒绝开放重定向（//、/\、含协议）。非法回退到 /。 */
 export function safeReturnTo(path: string | null | undefined): string {
   if (typeof path !== "string") return "/";

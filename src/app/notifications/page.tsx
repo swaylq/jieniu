@@ -7,6 +7,7 @@ import { triggeredMessage, type AlertDirection } from "~/lib/price-alert";
 import { NewsCard } from "../_components/news-card";
 import { ThesisAlerts } from "../_components/thesis-alerts";
 import { AlertProtocol } from "../_components/alert-protocol";
+import { PushInbox } from "../_components/push-inbox";
 import { displayCls, primaryBtn } from "../_components/section-head";
 
 export const dynamic = "force-dynamic";
@@ -41,13 +42,17 @@ export default async function NotificationsPage() {
   }
 
   // seenBoundary 必须在 markSeen 之前读取，才能算出「本次访问的新动态」。
-  const [items, alerts, priceAlerts, seenAt, prefs] = await Promise.all([
-    api.notifications.list(),
-    api.notifications.thesisAlerts(),
-    api.notifications.triggeredPriceAlerts(),
-    api.notifications.seenBoundary(),
-    api.notifications.alertPrefs(),
-  ]);
+  const [items, alerts, priceAlerts, seenAt, prefs, inbox, inboxUnread, emailPref] =
+    await Promise.all([
+      api.notifications.list(),
+      api.notifications.thesisAlerts(),
+      api.notifications.triggeredPriceAlerts(),
+      api.notifications.seenBoundary(),
+      api.notifications.alertPrefs(),
+      api.inbox.list(),
+      api.inbox.unreadCount(),
+      api.inbox.emailPref(),
+    ]);
   await Promise.all([
     api.notifications.markSeen(),
     api.analytics.track({ type: "view_notifications" }),
@@ -73,15 +78,24 @@ export default async function NotificationsPage() {
       : "你自选股的逻辑异动、重磅资讯与到价提醒";
 
   const allOff = !showLogic && !showFund && !prefs.price;
+  // inbox 有内容时不再显示派生三区的「暂无提醒」大卡——否则「最新推送」下面跟一句「暂无提醒」自相矛盾。
   const empty =
     shownItems.length === 0 &&
     shownAlerts.length === 0 &&
-    shownPriceAlerts.length === 0;
+    shownPriceAlerts.length === 0 &&
+    inbox.length === 0;
 
   return (
     <main className="mx-auto max-w-2xl p-4 lg:max-w-4xl">
       <Masthead subtitle={subtitle} />
       <AlertProtocol initial={prefs} />
+      {/* 最新推送（Outbox）：真正投递过的事实。放在派生三区之上——它才是「主动找过你」的记录。 */}
+      <PushInbox
+        items={inbox}
+        unread={inboxUnread}
+        emailEnabled={emailPref.enabled}
+        email={emailPref.email}
+      />
       {allOff ? (
         <div className="rounded-xl border border-line bg-surface p-8 text-center shadow-sm">
           <p className="text-sm text-muted">
@@ -91,7 +105,7 @@ export default async function NotificationsPage() {
       ) : empty ? (
         <div className="rounded-xl border border-line bg-surface p-8 text-center shadow-sm">
           <p className="text-sm text-muted">
-            暂无提醒。关注股票并生成投资逻辑后，触及逻辑的材料变化会第一时间出现在这里。
+            暂无提醒。关注股票、生成投资逻辑后，触及它的材料变化会出现在这里。
           </p>
           <Link href="/onboarding" className={`mt-3 ${primaryBtn}`}>
             一键关注感兴趣的板块 →

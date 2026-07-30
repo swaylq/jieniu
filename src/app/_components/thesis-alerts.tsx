@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HoverPrefetchLink } from "./hover-prefetch-link";
 
 import { DIM_STATE_LABEL, type DimState } from "~/lib/dimension-state";
 import { alertReason } from "~/lib/alert-protocol";
@@ -38,7 +39,7 @@ export function ThesisAlerts({
   return (
     <section className="mb-6">
       <div className="mb-2 flex items-center gap-2">
-        <span aria-hidden>🎯</span>
+        <span className="h-5 w-1.5 rounded-full bg-brand" aria-hidden />
         <h2 className="text-base font-bold text-ink">投资逻辑异动</h2>
         <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand">
           {alerts.length}
@@ -102,13 +103,13 @@ export function ThesisAlerts({
               </div>
               {a.newsTitle ? (
                 a.newsId ? (
-                  <Link
+                  <HoverPrefetchLink
                     href={`/news/${a.newsId}`}
                     className="mt-1.5 flex items-baseline gap-2 text-xs text-muted transition-colors hover:text-brand"
                   >
                     <span className="tabular shrink-0">{streamStamp(a.crossedAt)}</span>
                     <span className="line-clamp-1">{a.newsTitle}</span>
-                  </Link>
+                  </HoverPrefetchLink>
                 ) : (
                   <p className="mt-1.5 flex items-baseline gap-2 text-xs text-muted">
                     <span className="tabular shrink-0">{streamStamp(a.crossedAt)}</span>

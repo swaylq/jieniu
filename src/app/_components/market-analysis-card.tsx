@@ -3,7 +3,7 @@ export function MarketAnalysisCard() {
   return (
     <section className="rounded-xl border border-brand/30 bg-brand/[0.04] p-4">
       <div className="flex items-center gap-2">
-        <span aria-hidden>📈</span>
+        <span className="h-5 w-1.5 rounded-full bg-brand" aria-hidden />
         <h3 className="text-sm font-bold text-ink">AI 行情分析</h3>
       </div>
       <p className="mt-2 text-xs leading-relaxed text-muted">

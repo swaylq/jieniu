@@ -61,6 +61,37 @@ describe("市场公告事件识别（一手全市场化后）", () => {
   });
 });
 
+// sway 直报 ④：《2026年半年度报告》原本 importance=45，跟《总经理工作细则》同分，
+// 一年最重磅的一手文件被当程序性文档，进不了大事记/重大动态。
+describe("定期报告（年报/半年报/季报）", () => {
+  it("识别为定期报告事件，标签取最具体的那个", () => {
+    expect(detectEventType("宁德时代:2026年半年度报告")).toBe("半年度报告");
+    expect(detectEventType("宁德时代:2026年半年度报告摘要")).toBe("半年度报告");
+    expect(detectEventType("贵州茅台:2025年年度报告")).toBe("年度报告");
+    expect(detectEventType("比亚迪:2026年第三季度报告")).toBe("季度报告");
+  });
+
+  it("一手定期报告过重磅线，但排在业绩快报/财报之下（快报是增量信息）", () => {
+    const report = scoreImportance({
+      tier: "PRIMARY",
+      eventType: detectEventType("宁德时代:2026年半年度报告"),
+    });
+    expect(report).toBe(75);
+    expect(report).toBeGreaterThanOrEqual(55);
+    expect(report).toBeLessThan(scoreImportance({ tier: "PRIMARY", eventType: "业绩快报" }));
+  });
+
+  it("同日那批里的程序性文件不被误当定期报告", () => {
+    for (const t of [
+      "宁德时代:2026年半年度非经营性资金占用及其他关联资金往来情况汇总表",
+      "宁德时代:《总经理工作细则》(2026年7月修订)",
+      "宁德时代:关于召开2026年第一次临时股东会通知",
+    ]) {
+      expect(detectEventType(t)).toBeNull();
+    }
+  });
+});
+
 describe("surfacingSince（重要性优先流的时间窗）", () => {
   it("起点是 now - SURFACING_WINDOW_DAYS 天", () => {
     const now = new Date("2026-07-23T12:00:00.000Z");

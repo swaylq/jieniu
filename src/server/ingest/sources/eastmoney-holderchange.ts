@@ -49,7 +49,7 @@ export function holderChangeToRawItem(row: ExecHoldRow): RawNewsItem | null {
   return {
     externalId: `exhold-${code}-${date}-${person}-${shares}`.slice(0, 120),
     title,
-    url: `https://data.eastmoney.com/executive/gaoguan/${code}.html`,
+    url: `https://data.eastmoney.com/executive/${code}.html`,
     summary: title,
     publishedAt,
     eventType: dir,
@@ -110,7 +110,7 @@ export function shareholderChangeToRawItem(
   return {
     externalId: `shhold-${code}-${date}-${holder}-${dir}`.slice(0, 120),
     title,
-    url: `https://data.eastmoney.com/executive/gudong/${code}.html`,
+    url: `https://data.eastmoney.com/executive/${code}.html`,
     summary: title,
     publishedAt,
     eventType: dir,

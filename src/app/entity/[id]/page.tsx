@@ -9,7 +9,9 @@ import { auth } from "~/server/auth";
 import { entityTypeLabel } from "~/lib/format";
 import { collapseAnnouncementBursts } from "~/lib/announcements";
 import { groupByMonth, isExpanded, spanSummary } from "~/lib/milestones";
-import { BUCKET_LABEL, type RelationBucket } from "~/lib/entity-graph";
+import { resolveQuoteTicker, type RelationBucket } from "~/lib/entity-graph";
+import { ecosystemPeers } from "~/lib/relation-view";
+import { EntityTabs } from "../../_components/entity-tabs";
 import { asStringArray, type ThesisDimension } from "~/lib/thesis";
 import { normalizeUserDimensions } from "~/lib/user-thesis";
 import { FollowButton } from "./_follow-button";
@@ -18,21 +20,33 @@ import {
   ValuationContextSection,
   ValuationContextSkeleton,
 } from "./valuation-context";
-import { HoldingEditor, type HoldingInitial } from "../../_components/holding-editor";
+import {
+  HoldingEditor,
+  type HoldingInitial,
+} from "../../_components/holding-editor";
 import { PriceAlertCard } from "../../_components/price-alert-card";
 import { DecisionEditor } from "../../_components/decision-editor";
-import { DecisionList, type DecisionItem } from "../../_components/decision-list";
+import {
+  DecisionList,
+  type DecisionItem,
+} from "../../_components/decision-list";
 import { NewsCard } from "../../_components/news-card";
 import { Pager } from "../../_components/pager";
 import { NewsScorecard } from "../../_components/news-scorecard";
 import { SignalStrip } from "../../_components/signal-strip";
 import { ConsensusCard } from "../../_components/consensus-card";
 import { parseConsensusDetail } from "~/lib/consensus";
+import { reportsTabHref } from "~/lib/research-reports";
 import { parseAppointmentView } from "~/lib/disclosure";
-import { SectionHead, chipClass, displayCls } from "../../_components/section-head";
+import {
+  SectionHead,
+  chipClass,
+  displayCls,
+} from "../../_components/section-head";
 import { ThesisCard } from "../../_components/thesis-card";
 import { MyThesisCard } from "../../_components/my-thesis-card";
 import { AdoptThesisButton } from "../../_components/adopt-thesis-button";
+import { ThesisPending } from "../../_components/thesis-pending";
 import { EcosystemCoverage } from "../../_components/ecosystem-coverage";
 import { CatalystCalendar } from "../../_components/catalyst-calendar";
 import { upcomingDisclosureNodes } from "~/lib/earnings-calendar";
@@ -78,7 +92,8 @@ export async function generateMetadata({
   // 所以状态码留在 200（soft 404）。实测在 generateMetadata 里抛也一样是 200。
   // 状态码改不动，就退而求其次堵住真正的危害：noindex 让爬虫不收录不存在的实体页。
   // 页面组件里的 notFound() 保留——它负责渲染友好的「页面不存在」。
-  if (!data) return { title: "未找到", robots: { index: false, follow: false } };
+  if (!data)
+    return { title: "未找到", robots: { index: false, follow: false } };
   const { entity: e } = data;
   const title =
     e.type === "SECTOR"
@@ -97,7 +112,7 @@ export async function generateMetadata({
   };
 }
 
-type Tab = "news" | "announce" | "milestone" | "relation";
+type Tab = "news" | "announce" | "report" | "milestone" | "relation";
 
 /* QuoteStat / ValuationStat 已随行情卡搬到 ./quote-card.tsx（只有那张卡在用）。 */
 
@@ -111,11 +126,15 @@ export default async function EntityPage({
   const { id } = await params;
   const sp = await searchParams;
   const tab: Tab =
-    sp.tab === "announce" || sp.tab === "relation" || sp.tab === "milestone"
+    sp.tab === "announce" ||
+    sp.tab === "report" ||
+    sp.tab === "relation" ||
+    sp.tab === "milestone"
       ? sp.tab
       : "news";
   const pageNum = Math.max(1, Number(sp.page) || 1);
-  const listTab = tab === "announce" ? "announce" : "news";
+  const listTab =
+    tab === "announce" ? "announce" : tab === "report" ? "report" : "news";
 
   /**
    * 取数刻意压成「一次 `auth()` + 一个 `Promise.all`」。
@@ -168,13 +187,16 @@ export default async function EntityPage({
   if (!data) notFound();
   // 折叠同日一手公告轰炸（定增/重组当天甩十几份程序性文档）——两个 tab 都受益，避免单事件刷屏。
   // 折叠只作用于**当前这一页**：全量条数以库里的 total 为准，见下方分页条。
-  const news = collapseAnnouncementBursts(newsPage.items);
+  // 「研报」tab 例外：同日多家券商发同一主题正是要看的东西（财报后一天十几篇点评），
+  // 折叠会把它当轰炸只留一条，反而把清单打残。
+  const news =
+    tab === "report"
+      ? newsPage.items.map((n) => ({ ...n, burstCount: 0 }))
+      : collapseAnnouncementBursts(newsPage.items);
   const { entity, groups } = data;
-  // 公司页本身没有 ticker，取其发行股票(关系里的 STOCK)的代码，让行情/走势也出现在公司页。
-  const relatedTicker = Object.values(groups)
-    .flat()
-    .find((e) => e.type === "STOCK" && e.ticker)?.ticker;
-  const quoteTicker = entity.ticker ?? relatedTicker ?? null;
+  // 行情 ticker：STOCK 用自己的、COMPANY 用其发行股票(stocks 桶)；SECTOR/PERSON 无行情
+  // （见 resolveQuoteTicker——不再从全部关系桶抓，否则 SECTOR 会把成分股行情当板块行情，run 61 修）。
+  const quoteTicker = resolveQuoteTicker(entity, groups);
   // A股专属 UI（实时行情/估值/K线卡、到价提醒、A股法定披露日历）只对 A股 ticker 显示。
   // 美股（NVDA 等，行情/披露规则完全不同）若照挂：行情卡永远返回 null 只剩骨架、到价提醒永不触发、
   // 催化日历显示与其无关的 A股财报截止日——都是不体面的边缘态（QA loop run 8 维度 h）。
@@ -190,16 +212,32 @@ export default async function EntityPage({
   const milestoneItems = milestoneData.items;
   const milestoneTotal = milestoneData.total;
   const milestoneMonths = groupByMonth(milestoneItems);
+  // 「关系」tab 原来只铺 `getById` 的原始边——公司那份往往只有一条「发行了某某股票」，
+  // 点进去几乎是空的（sway：关系里没有数字也什么内容都没有）。真正有用的「所属行业 + 同行竞品」
+  // 一直只画在右栏，tab 里看不到。这里把 ecosystem 并进来，并按去重后的关联对象数给 tab 计数。
+  const relationPeers = ecosystemPeers(groups, ecosystem);
   const tabs: { key: Tab; label: string }[] = [
     { key: "news", label: `资讯 ${newsPage.newsTotal}` },
     { key: "announce", label: `公告 ${newsPage.announceTotal}` },
+    // 研报 tab 只在有料时出现——库里 6.9k 篇集中在覆盖过的热门股，冷门股给个空 tab 是噪音。
+    ...(newsPage.reportTotal > 0
+      ? [{ key: "report" as Tab, label: `研报 ${newsPage.reportTotal}` }]
+      : []),
     ...(milestoneItems.length > 0
       ? [{ key: "milestone" as Tab, label: `大事记 ${milestoneTotal}` }]
       : []),
-    { key: "relation", label: "关系" },
+    {
+      key: "relation",
+      label: `关系 ${relationPeers.total}`,
+    },
   ];
   const listItems = tab === "announce" ? announcements : news;
-  const emptyMsg = tab === "announce" ? "暂无公告" : "暂无相关资讯";
+  const emptyMsg =
+    tab === "announce"
+      ? "暂无公告"
+      : tab === "report"
+        ? "暂无收录的机构研报"
+        : "暂无相关资讯";
 
   // 关系去重扁平化，供右栏「相关」卡片使用
   const relatedFlat = Array.from(
@@ -209,43 +247,30 @@ export default async function EntityPage({
   );
   // 行情卡改成流式后，外壳渲染时还不知道 quote 拿不拿得到——所以右栏是否存在改判「有没有
   // ticker」（有 ticker 就一定会渲染这张卡，最坏情况是卡内返回 null）。
-  const hasRail =
-    quotable || relatedFlat.length > 0 || news.length > 0;
+  const hasRail = quotable || relatedFlat.length > 0 || news.length > 0;
 
   const feed = (
     <>
-      <div className="flex gap-1 border-b border-line">
-        {tabs.map((t) => (
-          <Link
-            key={t.key}
-            href={`/entity/${id}?tab=${t.key}`}  /* 切 tab 回到第 1 页 */
-            className={`-mb-px border-b-2 px-3 py-2 text-sm transition-colors ${
-              tab === t.key
-                ? "border-brand font-semibold text-brand"
-                : "border-transparent text-muted hover:text-ink"
-            }`}
-          >
-            {t.label}
-          </Link>
-        ))}
-      </div>
+      {/* tab 条抽成客户端组件：悬停预取（切 tab 慢在网络往返）+ 加载中就地转圈（点击立刻有回应）+
+          `scroll={false}`（不把人弹回页首）。三件事都在 `entity-tabs.tsx` 里，见那里的注释。 */}
+      <EntityTabs basePath={`/entity/${id}`} tabs={tabs} active={tab} />
 
       <div className="mt-4">
         {tab === "relation" ? (
-          buckets.length === 0 ? (
-            <p className="text-sm text-muted">暂无关系数据</p>
+          relationPeers.total === 0 ? (
+            <p className="text-muted text-sm">暂无关系数据</p>
           ) : (
-            buckets.map((b) => (
-              <section key={b} className="mb-5">
-                <h2 className="mb-2 text-sm font-semibold text-ink">
-                  {BUCKET_LABEL[b]}
+            relationPeers.sections.map((s) => (
+              <section key={s.key} className="mb-5">
+                <h2 className="text-ink mb-2 text-sm font-semibold">
+                  {s.label}
                 </h2>
                 <ul className="flex flex-wrap gap-2">
-                  {groups[b].map((e) => (
+                  {s.items.map((e) => (
                     <li key={e.id}>
                       <Link
                         href={`/entity/${e.id}`}
-                        className="inline-flex rounded-full border border-line bg-surface px-3 py-1.5 text-sm text-muted transition-colors hover:border-brand hover:text-brand"
+                        className="border-line bg-surface text-muted hover:border-brand hover:text-brand inline-flex rounded-full border px-3 py-1.5 text-sm transition-colors"
                       >
                         {e.name}
                       </Link>
@@ -257,23 +282,24 @@ export default async function EntityPage({
           )
         ) : tab === "milestone" ? (
           <div>
-            <p className="mb-3 text-xs text-muted">
-              过去一年的重磅事件，按月折叠 · {spanSummary(milestoneMonths, milestoneTotal)}
+            <p className="text-muted mb-3 text-xs">
+              过去一年的重磅事件，按月折叠 ·{" "}
+              {spanSummary(milestoneMonths, milestoneTotal)}
               　例行治理类公告不计入，完整清单见「公告」
             </p>
             {milestoneMonths.map((m, i) => (
               <details
                 key={m.key}
                 open={isExpanded(i)}
-                className="mb-2 rounded-xl border border-line bg-surface"
+                className="border-line bg-surface mb-2 rounded-xl border"
               >
-                <summary className="flex cursor-pointer list-none items-baseline justify-between px-4 py-2.5 text-sm font-semibold text-ink">
+                <summary className="text-ink flex cursor-pointer list-none items-baseline justify-between px-4 py-2.5 text-sm font-semibold">
                   <span>{m.label}</span>
-                  <span className="tabular text-xs font-normal text-muted">
+                  <span className="tabular text-muted text-xs font-normal">
                     {m.items.length} 条
                   </span>
                 </summary>
-                <ul className="space-y-3 border-t border-line p-3">
+                <ul className="border-line space-y-3 border-t p-3">
                   {m.items.map((n) => (
                     <NewsCard key={n.id} n={n} />
                   ))}
@@ -282,9 +308,17 @@ export default async function EntityPage({
             ))}
           </div>
         ) : listItems.length === 0 ? (
-          <p className="text-sm text-muted">{emptyMsg}</p>
+          <p className="text-muted text-sm">{emptyMsg}</p>
         ) : (
           <>
+            {tab === "report" ? (
+              <p className="text-muted mb-3 text-xs leading-relaxed">
+                券商研报在这里是
+                <span className="text-ink font-medium">事件</span>
+                ：只记录「哪家机构在哪天发了一篇什么主题的研报」，不含它的评级与目标价，
+                也不代表解牛观点。
+              </p>
+            ) : null}
             <ul className="space-y-3">
               {listItems.map((n) => (
                 <NewsCard key={n.id} n={n} />
@@ -298,7 +332,9 @@ export default async function EntityPage({
               total={
                 tab === "announce"
                   ? newsPage.announceTotal
-                  : newsPage.newsTotal
+                  : tab === "report"
+                    ? newsPage.reportTotal
+                    : newsPage.newsTotal
               }
             />
           </>
@@ -360,6 +396,10 @@ export default async function EntityPage({
         />
         {session?.user ? <AdoptThesisButton entityId={id} /> : null}
       </div>
+    ) : entity.type === "COMPANY" || entity.type === "STOCK" ? (
+      // 没有 thesis 时**不能不渲染**——那样「有的页有、有的页没有」，用户会以为这只股不支持。
+      // 改成占位卡 + 客户端触发按需生成（服务端直接生成会把 SSR 拖 ~16s）。
+      <ThesisPending entityId={id} name={entity.name} />
     ) : null;
   const ecosystemBlock =
     ecosystem.sectors.length > 0 || ecosystem.peers.length > 0 ? (
@@ -392,7 +432,9 @@ export default async function EntityPage({
   const catalystCatalysts = thesisData?.catalysts ?? [];
   const catalystBlock =
     (entity.type === "COMPANY" || entity.type === "STOCK") &&
-    (catalystNodes.length > 0 || catalystCatalysts.length > 0 || appointment) ? (
+    (catalystNodes.length > 0 ||
+      catalystCatalysts.length > 0 ||
+      appointment) ? (
       <div className="mb-6">
         <CatalystCalendar
           nodes={catalystNodes}
@@ -415,7 +457,7 @@ export default async function EntityPage({
     <main className="mx-auto max-w-2xl p-4 lg:max-w-7xl lg:px-8">
       <Link
         href="/"
-        className="text-sm text-muted transition-colors hover:text-brand"
+        className="text-muted hover:text-brand text-sm transition-colors"
       >
         ← 首页
       </Link>
@@ -428,7 +470,7 @@ export default async function EntityPage({
           <h1 className={`mt-2 text-2xl lg:text-3xl ${displayCls}`}>
             {entity.name}
           </h1>
-          <p className="mt-1 text-sm text-muted">
+          <p className="text-muted mt-1 text-sm">
             {entity.ticker ? (
               <span className="tabular">
                 {entity.exchange ?? ""} {entity.ticker} ·{" "}
@@ -451,7 +493,11 @@ export default async function EntityPage({
               这里用 display:contents 让 aside 的子卡在移动端直接成为网格项、可各自 order：
               行情(1) → 我的(2) → **主内容(3)** → 记分卡(4) → 相关(5)。
               lg 起 aside 恢复块级（连续 + sticky 右栏），桌面布局完全不变。 */}
-          <aside className="contents lg:block lg:space-y-4 lg:sticky lg:top-4 lg:col-start-2 lg:row-start-1 lg:self-start">
+          {/* 桌面右栏自己是一个滚动区：卡片叠起来比一屏高（行情+估值+一致预期+记分卡+相关），
+              只 sticky 的话下半截够不着——必须连正文一起滚，正文就被带走了。
+              `#main-content` 在 lg 起占满 100dvh（顶部 header 是 md:hidden），所以高度预算就是
+              100dvh 减掉 top-4 的 1rem 和底部留白 1rem。 */}
+          <aside className="contents lg:sticky lg:top-4 lg:col-start-2 lg:row-start-1 lg:block lg:max-h-[calc(100dvh-2rem)] lg:space-y-4 lg:self-start lg:overflow-x-hidden lg:overflow-y-auto lg:pr-1">
             {quoteCard ? (
               <div className="order-1 lg:order-none">{quoteCard}</div>
             ) : null}
@@ -463,6 +509,8 @@ export default async function EntityPage({
                 <ConsensusCard
                   detail={consensusDetail.detail}
                   asOf={consensusDetail.asOf}
+                  reportsHref={reportsTabHref(id)}
+                  reportCount={newsPage.reportTotal}
                 />
               </div>
             ) : null}
@@ -477,11 +525,14 @@ export default async function EntityPage({
             {session?.user ? (
               <section
                 id="decision"
-                className="order-2 scroll-mt-20 divide-y divide-line rounded-xl border border-brand/25 bg-brand/[0.03] shadow-sm lg:order-none"
+                className="divide-line border-brand/25 bg-brand/[0.03] order-2 scroll-mt-20 divide-y rounded-xl border shadow-sm lg:order-none"
               >
                 <div className="flex items-center gap-2 px-4 pt-3 pb-2">
-                  <span className="h-4 w-1.5 rounded-full bg-brand" aria-hidden />
-                  <h3 className="text-sm font-bold text-ink">我的</h3>
+                  <span
+                    className="bg-brand h-4 w-1.5 rounded-full"
+                    aria-hidden
+                  />
+                  <h3 className="text-ink text-sm font-bold">我的</h3>
                 </div>
 
                 <div className="px-4 py-3">
@@ -496,9 +547,11 @@ export default async function EntityPage({
 
                 <div className="px-4 py-3">
                   <div className="flex items-center gap-2">
-                    <h4 className="text-xs font-semibold text-muted">决策记录</h4>
+                    <h4 className="text-muted text-xs font-semibold">
+                      决策记录
+                    </h4>
                     {decisions.length > 0 ? (
-                      <span className="ml-auto text-[11px] text-muted">
+                      <span className="text-muted ml-auto text-[11px]">
                         {decisions.length}
                       </span>
                     ) : null}
@@ -513,7 +566,7 @@ export default async function EntityPage({
                   ) : null}
                 </div>
 
-                <p className="px-4 py-2.5 text-[11px] leading-relaxed text-muted">
+                <p className="text-muted px-4 py-2.5 text-[11px] leading-relaxed">
                   持仓与价位是你自己记的观察位，用来判断今天的消息有没有动你的逻辑。非投资建议、不计盈亏。
                 </p>
               </section>
@@ -524,7 +577,7 @@ export default async function EntityPage({
               </div>
             ) : null}
             {relatedFlat.length > 0 && (
-              <section className="order-5 rounded-xl border border-line bg-surface p-4 lg:order-none">
+              <section className="border-line bg-surface order-5 rounded-xl border p-4 lg:order-none">
                 <SectionHead title="相关" hint={`${relatedFlat.length}`} />
                 <ul className="flex flex-wrap gap-2">
                   {relatedFlat.slice(0, 12).map((e) => (

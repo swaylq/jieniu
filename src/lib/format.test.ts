@@ -7,7 +7,20 @@ import {
   isNotifiable,
   notifyWindowStart,
   NOTIFY_WINDOW_DAYS,
+  notFuture,
 } from "./format";
+
+describe("notFuture（publishedAt 不得落在未来——ingest 统一钳位）", () => {
+  const now = new Date("2026-07-27T12:00:00Z");
+  it("未来时间 → 钳到 now", () => {
+    expect(notFuture(new Date("2026-07-28T06:00:00Z"), now).getTime()).toBe(now.getTime());
+  });
+  it("过去/当前时间 → 原样不动", () => {
+    const past = new Date("2026-07-20T00:00:00Z");
+    expect(notFuture(past, now)).toBe(past);
+    expect(notFuture(now, now)).toBe(now);
+  });
+});
 
 describe("formatMarketCap", () => {
   it("formats yuan into 万亿/亿/万 buckets", () => {

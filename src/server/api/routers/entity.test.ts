@@ -40,17 +40,27 @@ describe("entityRouter.getById", () => {
           ticker: null,
           exchange: null,
           relFrom: [
-            { type: "BELONGS_TO", to: { id: "s1", name: "半导体", type: "SECTOR" } },
+            {
+              type: "BELONGS_TO",
+              to: { id: "s1", name: "半导体", type: "SECTOR" },
+            },
           ],
           relTo: [
-            { type: "WORKS_AT", from: { id: "p1", name: "赵海军", type: "PERSON" } },
+            {
+              type: "WORKS_AT",
+              from: { id: "p1", name: "赵海军", type: "PERSON" },
+            },
           ],
         }),
       },
     };
     const res = await makeCaller(db).getById({ id: "c1" });
-    expect(res?.groups.sector).toEqual([{ id: "s1", name: "半导体", type: "SECTOR" }]);
-    expect(res?.groups.people).toEqual([{ id: "p1", name: "赵海军", type: "PERSON" }]);
+    expect(res?.groups.sector).toEqual([
+      { id: "s1", name: "半导体", type: "SECTOR" },
+    ]);
+    expect(res?.groups.people).toEqual([
+      { id: "p1", name: "赵海军", type: "PERSON" },
+    ]);
   });
 });
 
@@ -66,7 +76,9 @@ describe("entityRouter.search", () => {
     const findMany = vi
       .fn()
       .mockResolvedValue([{ id: "s1", name: "半导体", type: "SECTOR" }]);
-    const res = await makeCaller({ entity: { findMany } }).search({ q: "半导" });
+    const res = await makeCaller({ entity: { findMany } }).search({
+      q: "半导",
+    });
     expect(res).toEqual([{ id: "s1", name: "半导体", type: "SECTOR" }]);
     // 原始 take 提到 40（COMPANY+STOCK 去重后再 slice 到 20），SECTOR 无需查 ISSUES
     const arg = findMany.mock.calls[0]?.[0] as { take: number };
@@ -144,7 +156,11 @@ describe("entityRouter.addStock", () => {
     const res = await makeCaller({ watchlist: { upsert } }, SESSION).addStock({
       query: "贵州茅台",
     });
-    expect(res).toEqual({ companyId: "c1", name: "贵州茅台", ticker: "600519" });
+    expect(res).toEqual({
+      companyId: "c1",
+      name: "贵州茅台",
+      ticker: "600519",
+    });
     // 幂等加自选到规范 COMPANY
     expect(upsert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -175,9 +191,13 @@ describe("entityRouter.followerCount", () => {
 
 describe("entityRouter.newsById", () => {
   it("queries news linked to the entity, newest first", async () => {
-    const rows = [{ id: "n1", title: "某公司停牌", tier: "PRIMARY", importance: 90 }];
+    const rows = [
+      { id: "n1", title: "某公司停牌", tier: "PRIMARY", importance: 90 },
+    ];
     const findMany = vi.fn().mockResolvedValue(rows);
-    const res = await makeCaller({ newsItem: { findMany } }).newsById({ id: "c1" });
+    const res = await makeCaller({ newsItem: { findMany } }).newsById({
+      id: "c1",
+    });
     expect(res).toEqual(rows);
     const arg = findMany.mock.calls[0]?.[0] as { where: unknown; take: number };
     expect(arg.where).toEqual({ entities: { some: { entityId: "c1" } } });
@@ -188,14 +208,16 @@ describe("entityRouter.newsById", () => {
 });
 
 describe("entityRouter.milestones", () => {
-  it("只取重磅事件、限定近 N 个月、按发布时间倒序", async () => {
+  it("只取重磅事件、限定近 N 个月、按 importance desc 取全年最重磅 200", async () => {
     const rows = [{ id: "n1", title: "签订重大合同", importance: 65 }];
     const findMany = vi.fn().mockResolvedValue(rows);
-    const res = await makeCaller({ newsItem: { findMany } }).milestones({
+    // total 走独立 count()：热门板块一年可达数百条，take:200 截断，total 给真实总数（QA loop run 10 维度 b）。
+    const count = vi.fn().mockResolvedValue(740);
+    const res = await makeCaller({ newsItem: { findMany, count } }).milestones({
       id: "c1",
       months: 12,
     });
-    expect(res).toEqual(rows);
+    expect(res).toEqual({ items: rows, total: 740 });
     const arg = findMany.mock.calls[0]?.[0] as {
       where: {
         entities: unknown;
@@ -208,8 +230,17 @@ describe("entityRouter.milestones", () => {
     expect(arg.where.entities).toEqual({ some: { entityId: "c1" } });
     // 重磅线：例行治理公告进不来，回填一年也不会糊墙
     expect(arg.where.importance.gte).toBe(IMPORTANT_THRESHOLD);
-    expect(arg.orderBy).toEqual([{ publishedAt: "desc" }]);
+    // 取「全年最重磅 200」跨月呈现，而非「最近 200」（否则热门板块坍缩到本月，run 44 修）。
+    expect(arg.orderBy).toEqual([
+      { importance: "desc" },
+      { publishedAt: "desc" },
+    ]);
     expect(arg.take).toBe(200);
+    // count 用同一 where（真实总数，不受 take 限制）
+    const countArg = count.mock.calls[0]?.[0] as {
+      where: { importance: { gte: number } };
+    };
+    expect(countArg.where.importance.gte).toBe(IMPORTANT_THRESHOLD);
 
     // 起点应落在约 12 个月前（允许月份长度差异，用天数区间断言）
     const days =
@@ -220,7 +251,10 @@ describe("entityRouter.milestones", () => {
 
   it("months 默认 12", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
-    await makeCaller({ newsItem: { findMany } }).milestones({ id: "c1" });
+    const count = vi.fn().mockResolvedValue(0);
+    await makeCaller({ newsItem: { findMany, count } }).milestones({
+      id: "c1",
+    });
     const arg = findMany.mock.calls[0]?.[0] as {
       where: { publishedAt: { gte: Date } };
     };
@@ -237,7 +271,8 @@ describe("entityRouter.newsPage", () => {
     const count = vi
       .fn()
       .mockResolvedValueOnce(352) // 资讯总数
-      .mockResolvedValueOnce(240); // 公告总数
+      .mockResolvedValueOnce(240) // 公告总数
+      .mockResolvedValueOnce(18); // 研报总数
     const res = await makeCaller({
       newsItem: { findMany, count },
     }).newsPage({ id: "c1", tab: "announce", page: 3, perPage: 40 });
@@ -262,7 +297,11 @@ describe("entityRouter.newsPage", () => {
 
   it("资讯 tab 不加 tier 过滤，页数按资讯总数算", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
-    const count = vi.fn().mockResolvedValueOnce(90).mockResolvedValueOnce(30);
+    const count = vi
+      .fn()
+      .mockResolvedValueOnce(90)
+      .mockResolvedValueOnce(30)
+      .mockResolvedValueOnce(12);
     const res = await makeCaller({ newsItem: { findMany, count } }).newsPage({
       id: "c1",
       perPage: 40,
@@ -270,6 +309,29 @@ describe("entityRouter.newsPage", () => {
     const arg = findMany.mock.calls[0]?.[0] as { where: { tier?: string } };
     expect(arg.where.tier).toBeUndefined();
     expect(res.pages).toBe(3); // ceil(90/40)
+    // 研报数随每次取页返回——一致预期卡靠它决定给不给「看研报」入口
+    expect(res.reportTotal).toBe(12);
+  });
+
+  it("研报 tab 按 eventType 取（不按源），页数按研报总数算", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const count = vi
+      .fn()
+      .mockResolvedValueOnce(90) // 资讯
+      .mockResolvedValueOnce(30) // 公告
+      .mockResolvedValueOnce(71); // 研报
+    const res = await makeCaller({ newsItem: { findMany, count } }).newsPage({
+      id: "c1",
+      tab: "report",
+      perPage: 40,
+    });
+    const arg = findMany.mock.calls[0]?.[0] as {
+      where: { tier?: string; eventType?: string };
+    };
+    expect(arg.where.eventType).toBe("研报");
+    expect(arg.where.tier).toBeUndefined(); // 研报多是 MEDIA 源，按 tier 筛会全丢
+    expect(res.reportTotal).toBe(71);
+    expect(res.pages).toBe(2); // ceil(71/40)
   });
 
   it("没有任何资讯时页数仍为 1（不出现 0 页）", async () => {
@@ -287,13 +349,55 @@ describe("entityRouter.listByTypePage", () => {
     const items = [{ id: "e1", name: "宁德时代", ticker: null }];
     const findMany = vi.fn().mockResolvedValue(items);
     const count = vi.fn().mockResolvedValue(802);
-    const res = await makeCaller({ entity: { findMany, count } }).listByTypePage(
-      { type: "COMPANY", page: 2, perPage: 120 },
-    );
+    const res = await makeCaller({
+      entity: { findMany, count },
+    }).listByTypePage({ type: "COMPANY", page: 2, perPage: 120 });
     expect(res.total).toBe(802);
     expect(res.pages).toBe(7); // ceil(802/120)
     const arg = findMany.mock.calls[0]?.[0] as { skip: number; take: number };
     expect(arg.skip).toBe(120);
     expect(arg.take).toBe(120);
+  });
+});
+
+// 大事记「一年脉络」修（QA loop run 44，sway 授权执行 run 37 backlog）：
+// 原按 publishedAt desc 取最近 200 → 热门板块（医药 740 条/年）最近 200 全落在本月，"一年脉络"坍缩。
+// 改按 importance desc 取「全年最重磅 200」跨月呈现；取到后再按时间倒序喂 groupByMonth（保月内时序）。
+describe("entityRouter.milestones 一年脉络", () => {
+  it("按 importance desc 取全年最重磅（非最近），返回项再按 publishedAt 倒序", async () => {
+    const rows = [
+      {
+        id: "a",
+        publishedAt: new Date("2026-01-15T00:00:00Z"),
+        importance: 90,
+      },
+      {
+        id: "b",
+        publishedAt: new Date("2026-07-10T00:00:00Z"),
+        importance: 80,
+      },
+      {
+        id: "c",
+        publishedAt: new Date("2026-03-20T00:00:00Z"),
+        importance: 70,
+      },
+    ];
+    const findMany = vi.fn().mockResolvedValue(rows);
+    const count = vi.fn().mockResolvedValue(740);
+    const res = await makeCaller({ newsItem: { findMany, count } }).milestones({
+      id: "e1",
+    });
+    const arg = findMany.mock.calls[0]?.[0] as {
+      orderBy: unknown;
+      take: number;
+    };
+    expect(arg.orderBy).toEqual([
+      { importance: "desc" },
+      { publishedAt: "desc" },
+    ]);
+    expect(arg.take).toBe(200);
+    // 展示顺序按时间倒序：2026-07(b) > 2026-03(c) > 2026-01(a)
+    expect(res.items.map((i: { id: string }) => i.id)).toEqual(["b", "c", "a"]);
+    expect(res.total).toBe(740);
   });
 });

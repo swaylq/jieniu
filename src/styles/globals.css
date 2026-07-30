@@ -100,6 +100,40 @@ body {
   }
 }
 
+/* 手型光标：Tailwind v4 的 preflight 把 button 的 cursor 重置成 `default`（v3 默认是 pointer），
+   于是**全站按钮**点上去都没有手型——sway 是在侧栏账号面板上先发现的，但这是全局问题，
+   逐个组件加 `cursor-pointer` 会漏。放 @layer base：显式写了 `cursor-*` 工具类的控件
+   （如命令面板 / 弹层的透明关闭遮罩，故意保持默认箭头）仍然覆盖得掉。 */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+}
+
+/* 换页过渡：`app/template.tsx` 每次导航都重新挂载，于是这段动画每换一页跑一次。
+   刻意做得很短（150ms）且位移只有 6px —— 过渡是为了「盖住内容跳变」，不是为了表演；
+   动画一结束 transform 归零，不会给 position:fixed 的子元素留下多余包含块。
+   `prefers-reduced-motion` 已在文件末尾全局关掉动效，这里不必单独处理。 */
+@keyframes jn-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.jn-page-in {
+  animation: jn-page-in 0.15s ease-out both;
+}
+
 /* 尊重减弱动效偏好：关掉过渡 / 动画，避免眩晕（a11y） */
 @media (prefers-reduced-motion: reduce) {
   *,

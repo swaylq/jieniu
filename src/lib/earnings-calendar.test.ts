@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { upcomingDisclosureNodes, NEAR_DAYS } from "./earnings-calendar";
+import { nth } from "./test-helpers";
 
 describe("upcomingDisclosureNodes", () => {
   it("7 月中 → 下一个节点是半年报(8/31)", () => {
-    const [first] = upcomingDisclosureNodes(new Date("2026-07-12T10:00:00"), 2);
+    const first = nth(upcomingDisclosureNodes(new Date("2026-07-12T10:00:00"), 2), 0);
     expect(first.label).toBe("半年报");
     expect(first.deadline.getMonth()).toBe(7); // 8 月 (0-indexed)
     expect(first.daysUntil).toBeGreaterThan(40);
@@ -12,12 +13,12 @@ describe("upcomingDisclosureNodes", () => {
   });
 
   it("9 月中 → 下一个节点是三季报(10/31)", () => {
-    const [first] = upcomingDisclosureNodes(new Date("2026-09-15T10:00:00"), 1);
+    const first = nth(upcomingDisclosureNodes(new Date("2026-09-15T10:00:00"), 1), 0);
     expect(first.label).toBe("三季报");
   });
 
   it("11 月中 → 下一个是次年年报·一季报(4/30)", () => {
-    const [first] = upcomingDisclosureNodes(new Date("2026-11-15T10:00:00"), 1);
+    const first = nth(upcomingDisclosureNodes(new Date("2026-11-15T10:00:00"), 1), 0);
     expect(first.label).toBe("年报 · 一季报");
     expect(first.deadline.getFullYear()).toBe(2027);
   });
@@ -26,8 +27,8 @@ describe("upcomingDisclosureNodes", () => {
     const nodes = upcomingDisclosureNodes(new Date("2026-07-12T10:00:00"), 3);
     expect(nodes).toHaveLength(3);
     for (let i = 1; i < nodes.length; i++) {
-      expect(nodes[i].deadline.getTime()).toBeGreaterThan(
-        nodes[i - 1].deadline.getTime(),
+      expect(nth(nodes, i).deadline.getTime()).toBeGreaterThan(
+        nth(nodes, i - 1).deadline.getTime(),
       );
     }
     // 全部为未来

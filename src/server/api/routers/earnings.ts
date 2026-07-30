@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
 import { mergePairedSignals } from "~/lib/entity-pair";
+import { REPORT_EVENT_TYPE } from "~/lib/research-reports";
 import type { PrismaClient } from "../../../../generated/prisma";
 
 /**
@@ -25,7 +26,10 @@ type Paired = {
  * 解析 COMPANY ↔ STOCK 配对（`ISSUES` 关系）。
  * `Thesis` 挂 COMPANY、`EntitySignal`/行情挂 STOCK——只查单边会各丢一半。
  */
-async function resolvePair(db: PrismaClient, id: string): Promise<Paired | null> {
+async function resolvePair(
+  db: PrismaClient,
+  id: string,
+): Promise<Paired | null> {
   const e = await db.entity.findUnique({
     where: { id },
     select: {
@@ -56,7 +60,9 @@ async function resolvePair(db: PrismaClient, id: string): Promise<Paired | null>
       ? { id: e.id }
       : (issuer.find((x) => x.type === "COMPANY") ?? null);
 
-  const ids = [...new Set([e.id, stock?.id, company?.id].filter(Boolean))] as string[];
+  const ids = [
+    ...new Set([e.id, stock?.id, company?.id].filter(Boolean)),
+  ] as string[];
   return {
     ids,
     companyId: company?.id ?? null,
@@ -77,7 +83,13 @@ export const earningsRouter = createTRPCRouter({
       if (!pair) return [];
       const rows = await ctx.db.entitySignal.findMany({
         where: { entityId: { in: pair.ids } },
-        select: { kind: true, label: true, numValue: true, detail: true, asOf: true },
+        select: {
+          kind: true,
+          label: true,
+          numValue: true,
+          detail: true,
+          asOf: true,
+        },
       });
       return mergePairedSignals(rows);
     }),
@@ -90,43 +102,70 @@ export const earningsRouter = createTRPCRouter({
 
       const entity = await ctx.db.entity.findUnique({
         where: { id: input.id },
-        select: { id: true, name: true, ticker: true, exchange: true, type: true },
+        select: {
+          id: true,
+          name: true,
+          ticker: true,
+          exchange: true,
+          type: true,
+        },
       });
       if (!entity) return null;
 
       const userId = ctx.session?.user?.id;
 
-      const [signals, forecast, thesis, userThesis] = await Promise.all([
-        ctx.db.entitySignal.findMany({
-          where: {
-            entityId: { in: pair.ids },
-            kind: { in: ["disclosure", "consensus"] },
-          },
-          select: { kind: true, label: true, numValue: true, detail: true, asOf: true },
-        }),
-        // 最近一条业绩预告——A 股独有的强前瞻信号（富途的美股页没有对应物）。
-        ctx.db.newsItem.findFirst({
-          where: {
-            eventType: "业绩预告",
-            entities: { some: { entityId: { in: pair.ids } } },
-          },
-          orderBy: { publishedAt: "desc" },
-          select: { id: true, title: true, summary: true, publishedAt: true },
-        }),
-        // Thesis 挂 COMPANY 侧
-        pair.companyId
-          ? ctx.db.thesis.findUnique({
-              where: { entityId: pair.companyId },
-              select: { dimensions: true, summary: true, updatedAt: true, model: true },
-            })
-          : null,
-        userId && pair.companyId
-          ? ctx.db.userThesis.findFirst({
-              where: { userId, entityId: { in: pair.ids } },
-              select: { dimensions: true, reason: true, updatedAt: true },
-            })
-          : null,
-      ]);
+      const [signals, forecast, thesis, userThesis, reportCount] =
+        await Promise.all([
+          ctx.db.entitySignal.findMany({
+            where: {
+              entityId: { in: pair.ids },
+              kind: { in: ["disclosure", "consensus"] },
+            },
+            select: {
+              kind: true,
+              label: true,
+              numValue: true,
+              detail: true,
+              asOf: true,
+            },
+          }),
+          // 最近一条业绩预告——A 股独有的强前瞻信号（富途的美股页没有对应物）。
+          ctx.db.newsItem.findFirst({
+            where: {
+              eventType: "业绩预告",
+              entities: { some: { entityId: { in: pair.ids } } },
+            },
+            orderBy: { publishedAt: "desc" },
+            select: { id: true, title: true, summary: true, publishedAt: true },
+          }),
+          // Thesis 挂 COMPANY 侧
+          pair.companyId
+            ? ctx.db.thesis.findUnique({
+                where: { entityId: pair.companyId },
+                select: {
+                  dimensions: true,
+                  summary: true,
+                  updatedAt: true,
+                  model: true,
+                },
+              })
+            : null,
+          userId && pair.companyId
+            ? ctx.db.userThesis.findFirst({
+                where: { userId, entityId: { in: pair.ids } },
+                select: { dimensions: true, reason: true, updatedAt: true },
+              })
+            : null,
+          // 一致预期卡「看这家的机构研报」的入口条件。**只数 input.id 这一侧**，不数 pair.ids：
+          // 链接落到 /entity/{input.id}?tab=report，而那个 tab 也只查这一个实体——
+          // 用配对口径会数出比目的地更多的篇数，甚至给零研报的一侧开出空链接。
+          ctx.db.newsItem.count({
+            where: {
+              eventType: REPORT_EVENT_TYPE,
+              entities: { some: { entityId: input.id } },
+            },
+          }),
+        ]);
 
       const merged = mergePairedSignals(signals);
       return {
@@ -137,6 +176,7 @@ export const earningsRouter = createTRPCRouter({
         forecast,
         thesis,
         userThesis,
+        reportCount,
       };
     }),
 });

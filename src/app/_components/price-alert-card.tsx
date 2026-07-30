@@ -6,6 +6,20 @@ import { api } from "~/trpc/react";
 import { describeAlert, type AlertDirection } from "~/lib/price-alert";
 import { brandBtn, fieldClsSm } from "./section-head";
 
+// bare：并入「我的」合并卡时用——不渲染自带卡壳/大标题/说明段。
+//
+// ⚠️ 必须留在模块作用域：写在组件体内的话每次渲染都是一个新函数身份，React 按
+// 引用比对元素类型，会把整棵子树卸载重建 —— 受控 input 每敲一个字就失焦一次。
+function Shell({ bare, children }: { bare: boolean; children: React.ReactNode }) {
+  return bare ? (
+    <div>{children}</div>
+  ) : (
+    <section className="rounded-xl border border-line bg-surface p-4 shadow-sm">
+      {children}
+    </section>
+  );
+}
+
 /**
  * 到价提醒控件（#3b）。合规：用户自设阈值、只是「到价通知我」——非荐买/荐卖（铁律②）。
  * 触发由 cron 比价，提醒中心露出；这里管设置 / 查看 / 删除。
@@ -37,23 +51,14 @@ export function PriceAlertCard({
   const priceNum = Number(price);
   const canSubmit = Number.isFinite(priceNum) && priceNum > 0 && !create.isPending;
 
-  const Shell = ({ children }: { children: React.ReactNode }) =>
-    bare ? (
-      <div>{children}</div>
-    ) : (
-      <section className="rounded-xl border border-line bg-surface p-4 shadow-sm">
-        {children}
-      </section>
-    );
-
   return (
-    <Shell>
+    <Shell bare={bare}>
       <div className="flex items-center gap-2">
         {bare ? (
           <h4 className="text-xs font-semibold text-muted">到价提醒</h4>
         ) : (
           <>
-            <span aria-hidden>🔔</span>
+            <span className="h-4 w-1.5 rounded-full bg-brand" aria-hidden />
             <h3 className="text-sm font-bold text-ink">到价提醒</h3>
           </>
         )}

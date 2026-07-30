@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HoverPrefetchLink } from "./hover-prefetch-link";
 
 import { classifyLogicImpact, impactBadgeClass } from "~/lib/logic-impact";
 
@@ -16,7 +17,7 @@ export function ThesisLensCard({ groups }: { groups: LensGroup[] }) {
   return (
     <section className="rounded-xl border border-brand/30 bg-brand/[0.05] p-4 lg:p-5">
       <div className="mb-1 flex items-center gap-2">
-        <span aria-hidden>🎯</span>
+        <span className="h-5 w-1.5 rounded-full bg-brand" aria-hidden />
         <h2 className="text-base font-bold text-ink">动没动你的逻辑</h2>
       </div>
       <p className="mb-3 text-xs leading-relaxed text-muted">
@@ -31,12 +32,12 @@ export function ThesisLensCard({ groups }: { groups: LensGroup[] }) {
           return (
             <div key={g.entityId}>
               <div className="flex flex-wrap items-center gap-2">
-                <Link
+                <HoverPrefetchLink
                   href={`/entity/${g.entityId}`}
                   className="text-sm font-semibold text-ink transition-colors hover:text-brand"
                 >
                   {g.entityName}
-                </Link>
+                </HoverPrefetchLink>
                 {topImp ? (
                   <span className={impactBadgeClass(topImp.tone)}>
                     对你的逻辑：{topImp.label}

@@ -1,25 +1,28 @@
 import type { BriefingStats } from "~/lib/briefing";
 
-/** 单张状态卡。铁律：强调色一律 amber，静态一律灰——方向靠 label/图标区分，不用红绿。 */
+/** 单张状态卡。铁律：强调色一律 amber，静态一律灰——方向靠 label/图标区分，不用红绿。
+ * 有 href 且 value>0 时可点（锚链到页面对应区块——张楚寒 2026-07-26：卡显示 2 但点不了）。 */
 function StatCard({
   label,
   mark,
   value,
   caption,
   accent,
+  href,
 }: {
   label: string;
   mark: string;
   value: number;
   caption: string;
   accent: boolean;
+  href?: string;
 }) {
-  return (
-    <div
-      className={`rounded-2xl border bg-surface p-4 ${
-        accent && value > 0 ? "border-brand/40" : "border-line"
-      }`}
-    >
+  const clickable = !!href && value > 0;
+  const cls = `block rounded-2xl border bg-surface p-4 ${
+    accent && value > 0 ? "border-brand/40" : "border-line"
+  } ${clickable ? "cursor-pointer transition-colors hover:border-brand/60 hover:bg-brand/[0.03]" : ""}`;
+  const inner = (
+    <>
       <div className="flex items-center gap-1.5 text-xs font-semibold text-muted">
         <span
           aria-hidden
@@ -28,6 +31,11 @@ function StatCard({
           {mark}
         </span>
         {label}
+        {clickable ? (
+          <span aria-hidden className="ml-auto text-faint">
+            ›
+          </span>
+        ) : null}
       </div>
       <div
         className={`tabular mt-1.5 text-3xl font-extrabold ${
@@ -37,7 +45,14 @@ function StatCard({
         {value}
       </div>
       <p className="mt-1 text-[11px] leading-snug text-muted">{caption}</p>
-    </div>
+    </>
+  );
+  return clickable ? (
+    <a href={href} className={cls}>
+      {inner}
+    </a>
+  ) : (
+    <div className={cls}>{inner}</div>
   );
 }
 
@@ -85,6 +100,7 @@ export function MorningBriefing({
           value={stats.review}
           caption="偏风险方向的逻辑变化，建议回看证伪条件"
           accent
+          href="#portfolio-changed"
         />
         <StatCard
           label="逻辑增强"
@@ -92,20 +108,22 @@ export function MorningBriefing({
           value={stats.strengthened}
           caption="偏兑现方向的动态在增多，对照持仓复核"
           accent
+          href="#portfolio-changed"
         />
         <StatCard
           label="今日静音"
           mark="✓"
           value={stats.muted}
-          caption="无实质动态，已替你静音——宁静也是信号"
+          caption="今日无实质动态，已自动静音"
           accent={false}
         />
         <StatCard
           label="催化临近"
           mark="◎"
           value={upcomingCount}
-          caption="近两周内的披露 / 财报节点，值得提前留意"
+          caption="下两个财报披露截止节点，点开看还有几天"
           accent={false}
+          href="#catalyst-calendar"
         />
       </div>
     </section>

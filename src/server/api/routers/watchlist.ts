@@ -44,15 +44,37 @@ export const watchlistRouter = createTRPCRouter({
       return row !== null;
     }),
 
-  list: protectedProcedure.query(({ ctx }) =>
-    ctx.db.watchlist.findMany({
+  list: protectedProcedure.query(async ({ ctx }) => {
+    const rows = await ctx.db.watchlist.findMany({
       where: { userId: ctx.session.user.id },
       orderBy: { createdAt: "desc" },
       select: {
-        entity: { select: { id: true, name: true, type: true } },
+        entity: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            ticker: true,
+            // 公司那份自己没有代码，借它发行的股票的（见 lib/watch-label）。
+            relFrom: {
+              where: { type: "ISSUES" as const },
+              select: { to: { select: { ticker: true } } },
+              take: 1,
+            },
+          },
+        },
       },
-    }),
-  ),
+    });
+    return rows.map(({ entity }) => ({
+      entity: {
+        id: entity.id,
+        name: entity.name,
+        type: entity.type,
+        ticker: entity.ticker,
+        issuedTicker: entity.relFrom[0]?.to.ticker ?? null,
+      },
+    }));
+  }),
 
   followMany: protectedProcedure
     .input(z.object({ entityIds: z.array(z.string()).min(1).max(100) }))

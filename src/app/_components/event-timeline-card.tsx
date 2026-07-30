@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HoverPrefetchLink } from "./hover-prefetch-link";
 
 import {
   FOLLOWUP_LABEL,
@@ -35,7 +36,7 @@ export function EventTimeline({ items }: { items: TimelineItem[] }) {
   return (
     <section className="rounded-2xl border border-line bg-surface p-4 lg:p-5">
       <div className="flex items-center gap-2">
-        <span aria-hidden>🕰️</span>
+        <span className="h-5 w-1.5 rounded-full bg-brand" aria-hidden />
         <h2 className="text-base font-bold text-ink">事件时间线复盘</h2>
       </div>
       <p className="mt-1 text-[11px] leading-relaxed text-muted">
@@ -70,12 +71,12 @@ export function EventTimeline({ items }: { items: TimelineItem[] }) {
                 </p>
                 {it.newsTitle ? (
                   it.newsId ? (
-                    <Link
+                    <HoverPrefetchLink
                       href={`/news/${it.newsId}`}
                       className="mt-0.5 line-clamp-1 text-[11px] text-muted transition-colors hover:text-brand"
                     >
                       {it.newsTitle}
-                    </Link>
+                    </HoverPrefetchLink>
                   ) : (
                     <p className="mt-0.5 line-clamp-1 text-[11px] text-muted">
                       {it.newsTitle}

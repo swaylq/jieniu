@@ -6,7 +6,11 @@ import {
   protectedProcedure,
 } from "~/server/api/trpc";
 import { IMPORTANT_THRESHOLD, surfacingSince } from "~/lib/importance";
-import { digestSince, DIGEST_TAKE_DEEP } from "~/lib/digest";
+import {
+  digestSince,
+  DIGEST_TAKE_DEEP,
+  PERSONAL_DIGEST_WINDOW_HOURS,
+} from "~/lib/digest";
 import {
   rankDigest,
   collapseDigestItems,
@@ -116,8 +120,10 @@ export const newsRouter = createTRPCRouter({
     });
     const ids = watched.map((w) => w.entityId);
     if (ids.length === 0) return [];
-    // 单只股票 24h 未必有料，窗口放宽到 48h。
-    const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    // 单只股票 24h 未必有料，窗口放宽到 PERSONAL_DIGEST_WINDOW_HOURS（48h）。早报卡副标据同一常量显示，避免漂移。
+    const since = new Date(
+      Date.now() - PERSONAL_DIGEST_WINDOW_HOURS * 60 * 60 * 1000,
+    );
     const rows = await ctx.db.newsItem.findMany({
       where: {
         entities: { some: { entityId: { in: ids } } },

@@ -19,6 +19,21 @@ const numOrNull = (s: string) => {
   return Number.isFinite(n) ? n : null;
 };
 
+// bare：并入个股页「我的」合并卡时用——去掉自带卡壳与标题（由外层统一提供），
+// 空态也不再写整段说明文案（三张卡各写一段是信息过载的主因）。
+//
+// ⚠️ 必须留在模块作用域：写在组件体内的话每次渲染都是一个新函数身份，React 按
+// 引用比对元素类型，会把整棵子树卸载重建 —— 受控 input 每敲一个字就失焦一次。
+function Shell({ bare, children }: { bare: boolean; children: React.ReactNode }) {
+  return bare ? (
+    <div>{children}</div>
+  ) : (
+    <section className="rounded-xl border border-brand/30 bg-brand/[0.04] p-4">
+      {children}
+    </section>
+  );
+}
+
 /** 我的持仓编辑器（P4-1）：手录成本/仓位/目标，仅观察用。颜色 amber/灰，不涉红绿、不给盈亏/买卖。 */
 export function HoldingEditor({
   entityId,
@@ -68,25 +83,14 @@ export function HoldingEditor({
       </div>
     );
 
-  // bare：并入个股页「我的」合并卡时用——去掉自带卡壳与标题（由外层统一提供），
-  // 空态也不再写整段说明文案（三张卡各写一段是信息过载的主因）。
-  const Shell = ({ children }: { children: React.ReactNode }) =>
-    bare ? (
-      <div>{children}</div>
-    ) : (
-      <section className="rounded-xl border border-brand/30 bg-brand/[0.04] p-4">
-        {children}
-      </section>
-    );
-
   return (
-    <Shell>
+    <Shell bare={bare}>
       <div className="flex items-center gap-2">
         {bare ? (
           <h4 className="text-xs font-semibold text-muted">持仓</h4>
         ) : (
           <>
-            <span aria-hidden>📌</span>
+            <span className="h-4 w-1.5 rounded-full bg-brand" aria-hidden />
             <h3 className="text-sm font-bold text-ink">我的持仓</h3>
           </>
         )}

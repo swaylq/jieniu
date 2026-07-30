@@ -9,8 +9,8 @@ const num = z.number().finite().nullable().optional();
 
 /** Portfolio Memory（P4-1）：持仓/观察两态 + 成本/仓位/目标（手录，仅观察）。建立在 Watchlist 之上。 */
 export const portfolioRouter = createTRPCRouter({
-  list: protectedProcedure.query(({ ctx }) =>
-    ctx.db.watchlist.findMany({
+  list: protectedProcedure.query(async ({ ctx }) => {
+    const rows = await ctx.db.watchlist.findMany({
       where: { userId: ctx.session.user.id },
       orderBy: [{ weight: "desc" }, { createdAt: "desc" }],
       select: {
@@ -21,10 +21,33 @@ export const portfolioRouter = createTRPCRouter({
         targetWeight: true,
         note: true,
         createdAt: true,
-        entity: { select: { id: true, name: true, type: true, ticker: true } },
+        entity: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            ticker: true,
+            // 公司那份自己没有代码，借它发行的股票的（见 lib/watch-label）。
+            relFrom: {
+              where: { type: "ISSUES" as const },
+              select: { to: { select: { ticker: true } } },
+              take: 1,
+            },
+          },
+        },
       },
-    }),
-  ),
+    });
+    return rows.map(({ entity, ...rest }) => ({
+      ...rest,
+      entity: {
+        id: entity.id,
+        name: entity.name,
+        type: entity.type,
+        ticker: entity.ticker,
+        issuedTicker: entity.relFrom[0]?.to.ticker ?? null,
+      },
+    }));
+  }),
 
   /** 「今天你的组合变了什么」（P4-4）：仅持仓，按近期 thesisSignals 汇总每票逻辑增强/削弱/未变。纯 DB+rule，无 AI。 */
   changed: protectedProcedure

@@ -44,7 +44,7 @@ export function EntitySearch() {
               ) : (
                 <div className="space-y-2.5">
                   <p className="text-sm text-muted">
-                    没找到「{trimmed}」。解牛聚焦最热门板块的核心标的，可能暂未覆盖。
+                    没找到「{trimmed}」。换个名字或股票代码试试，或一键加入盯盘。
                   </p>
                   <button
                     type="button"

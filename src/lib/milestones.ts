@@ -64,9 +64,15 @@ export function isExpanded(index: number): boolean {
   return index < EXPANDED_MONTHS;
 }
 
-/** 覆盖跨度描述：「共 N 条 · 覆盖 M 个月」。数字全部来自实际分组，不估算。 */
-export function spanSummary<T>(months: MilestoneMonth<T>[]): string {
-  const total = months.reduce((n, m) => n + m.items.length, 0);
+/**
+ * 覆盖跨度描述：「共 N 条 · 覆盖 M 个月」。数字全部来自实际分组，不估算。
+ * 传入 `total`（库里真实总数）且它超过当前已展示条数时（大事记 take:200 触顶），
+ * 用真实总数并标注「· 显示前 N」——避免把截断值当作全量（QA loop run 10 维度 b）。
+ */
+export function spanSummary<T>(months: MilestoneMonth<T>[], total?: number): string {
+  const shown = months.reduce((n, m) => n + m.items.length, 0);
   const dated = months.filter((m) => m.key !== "unknown").length;
-  return `共 ${total} 条 · 覆盖 ${dated} 个月`;
+  const grand = total ?? shown;
+  const base = `共 ${grand} 条 · 覆盖 ${dated} 个月`;
+  return grand > shown ? `${base} · 显示前 ${shown}` : base;
 }

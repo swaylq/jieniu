@@ -16,11 +16,11 @@ export function PortfolioImpact({ items }: { items: PortfolioImpactItem[] }) {
   return (
     <section className="rounded-2xl border border-line bg-surface p-5">
       <div className="flex items-center gap-2">
-        <span aria-hidden>🕸️</span>
-        <h2 className="text-base font-bold text-ink">这些异动可能波及你的其它持仓</h2>
+        <span className="h-5 w-1.5 rounded-full bg-brand" aria-hidden />
+        <h2 className="text-base font-bold text-ink">可能波及的其它持仓</h2>
       </div>
       <p className="mt-1.5 text-xs leading-relaxed text-muted">
-        同板块 / 竞品关联的持仓，往往被同一条逻辑牵动——顺带提醒你别漏看，非因果断言、非买卖建议。
+        同板块、竞品常被同一条逻辑牵动。这里列出可能被带动的其它持仓，供你留意。
       </p>
       <ul className="mt-3 space-y-3">
         {items.map((it) => {

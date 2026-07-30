@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { dedupeSearchResults, type SearchHit, type IssueLink } from "./search";
+import { nth } from "./test-helpers";
 
 const co: SearchHit = { id: "co1", name: "贵州茅台", type: "COMPANY", ticker: null };
 const st: SearchHit = { id: "st1", name: "贵州茅台(600519)", type: "STOCK", ticker: "600519" };
@@ -28,7 +29,7 @@ describe("dedupeSearchResults", () => {
     const orphan: SearchHit = { id: "st9", name: "某退市股(000000)", type: "STOCK", ticker: "000000" };
     const out = dedupeSearchResults([orphan], []);
     expect(out).toHaveLength(1);
-    expect(out[0].id).toBe("st9");
+    expect(nth(out, 0).id).toBe("st9");
   });
 
   it("passes SECTOR / PERSON through unchanged and preserves order", () => {

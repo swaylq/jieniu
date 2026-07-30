@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { HoverPrefetchLink } from "./hover-prefetch-link";
 
 import { eventTypeLabel, relativeTime } from "~/lib/format";
+import { digestWindowHours } from "~/lib/digest";
 
 export type DigestItem = {
   id: string;
@@ -40,12 +42,12 @@ function DigestRow({
         {index}
       </span>
       <div className="min-w-0 flex-1">
-        <Link
+        <HoverPrefetchLink
           href={`/news/${n.id}`}
           className="line-clamp-2 text-sm font-medium leading-snug text-ink transition-colors hover:text-brand"
         >
           {n.title}
-        </Link>
+        </HoverPrefetchLink>
         {minimal ? null : (
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
             {n.macro ? (
@@ -77,7 +79,7 @@ function SubLabel({ children }: { children: string }) {
 }
 
 /**
- * 解牛早报卡：近 24 小时「头条速览」，可切 30 秒 / 3 分钟 / 深度（P5-3）。登录且有自选股时顶部先放
+ * 解牛早报卡：市场段近 24h「头条速览」，可切 30 秒 / 3 分钟 / 深度（P5-3）。登录且有自选股时顶部先放
  * 「你的自选股」段，其下「市场」段（ZF-2）。市场段已剔除退市/风险警示等晦气项并抬升宏观（ZF-1）。没料时不渲染。
  */
 export function DailyDigest({
@@ -112,9 +114,7 @@ export function DailyDigest({
     <section className="overflow-hidden rounded-2xl border border-brand/30 bg-brand/[0.06] p-5">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <div className="flex items-center gap-2">
-          <span className="text-lg" aria-hidden>
-            📰
-          </span>
+          <span className="h-5 w-1.5 rounded-full bg-brand" aria-hidden />
           <h2 className="text-base font-bold text-ink">解牛早报</h2>
         </div>
         <div
@@ -141,7 +141,7 @@ export function DailyDigest({
         </div>
       </div>
       <p className="mt-1.5 text-xs text-brand">
-        近 24 小时 · 重磅 {p.length + m.length} 条
+        近 {digestWindowHours(p.length > 0)} 小时 · 重磅 {p.length + m.length} 条
         {depth === "deep" ? "（全部）" : ""}
       </p>
 

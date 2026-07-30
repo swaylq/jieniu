@@ -1,10 +1,10 @@
 import type { ThesisDimension } from "~/lib/thesis";
 import {
-  dirLabel,
   thesisActivityStatus,
   sortDimensionsByActivity,
 } from "~/lib/thesis-status";
 import { LogicTracker } from "./logic-tracker-card";
+import { SignalLogItem } from "./signal-log";
 
 export type ThesisCardData = {
   summary: string;
@@ -22,6 +22,7 @@ export type ThesisSignalItem = {
   materiality: number;
   note: string;
   newsTitle: string;
+  newsId?: string | null;
   publishedAt?: Date | string | null;
 };
 
@@ -47,8 +48,8 @@ export function ThesisCard({
 
   return (
     <section className="overflow-hidden rounded-2xl border border-brand/30 bg-brand/[0.05] p-5">
-      <div className="flex items-center gap-2">
-        <span aria-hidden>🎯</span>
+      <div className="flex items-center gap-2.5">
+        <span className="h-5 w-1.5 rounded-full bg-brand" aria-hidden />
         <h2 className="text-base font-bold text-ink">投资逻辑 · {name}</h2>
         <span className="ml-auto shrink-0 text-[11px] text-muted">AI 生成 · 监控用</span>
       </div>
@@ -80,18 +81,7 @@ export function ThesisCard({
           </h3>
           <ul className="space-y-2.5">
             {signals.slice(0, 8).map((s, i) => (
-              <li key={`${s.dimensionKey}-${i}`} className="border-l-2 border-line pl-3">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
-                  <span className="rounded bg-line/60 px-1.5 py-0.5 font-medium text-muted">
-                    {s.dimensionKey}
-                  </span>
-                  <span className="text-muted">
-                    {dirLabel(s.direction)} · 材料度 {s.materiality}
-                  </span>
-                </div>
-                <p className="mt-1 text-xs leading-relaxed text-ink/85">{s.note}</p>
-                <p className="text-[11px] leading-relaxed text-muted">{s.newsTitle}</p>
-              </li>
+              <SignalLogItem key={`${s.dimensionKey}-${i}`} s={s} />
             ))}
           </ul>
         </div>
@@ -188,7 +178,7 @@ export function ThesisCard({
       <p
         className={`${updatedAt ? "mt-1" : "mt-4"} text-[11px] leading-relaxed text-muted`}
       >
-        投资逻辑框架由 AI 生成，仅用于帮你监控自己关心的维度；非投资建议、不构成买卖依据、不预测涨跌。
+        框架由 AI 生成，仅供监控你关注的维度；非投资建议、不预测涨跌。
       </p>
     </section>
   );

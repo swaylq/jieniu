@@ -25,7 +25,7 @@ function Masthead() {
         </h1>
       </div>
       <p className="mt-2 text-sm text-muted">
-        你的持仓这一个月，投资逻辑发生了什么变化——纯依据触及逻辑的资讯，非涨跌复盘。
+        你的持仓这一个月，投资逻辑发生了什么变化。纯依据触及逻辑的资讯，非涨跌复盘。
       </p>
     </header>
   );

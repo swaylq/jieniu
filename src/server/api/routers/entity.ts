@@ -6,15 +6,22 @@ import {
   publicProcedure,
   protectedProcedure,
 } from "~/server/api/trpc";
+import { ensureThesis } from "~/server/thesis-ensure";
 import { groupRelations, type GraphRelation } from "~/lib/entity-graph";
 import { IMPORTANT_THRESHOLD, surfacingSince } from "~/lib/importance";
-import { selectPeers } from "~/lib/ecosystem";
+import {
+  identityIds,
+  dedupeSectors,
+  selectPeersFrom,
+} from "~/lib/ecosystem-scope";
 import { strongMasters } from "~/lib/master-compass";
 import { buildScorecard } from "~/lib/scorecard";
 import { rankAttentionRadar, type AttentionRow } from "~/lib/opportunity";
 import { HOT_SECTOR_NAMES, hotSectorOrder } from "~/lib/hot-universe";
+import { dedupeSectorMembers, type SectorMember } from "~/lib/sector-members";
 import { dedupeSearchResults } from "~/lib/search";
 import { classifyStockQuery, normalizeStockName } from "~/lib/add-stock";
+import { REPORT_EVENT_TYPE } from "~/lib/research-reports";
 import { isSeedableStock } from "~/lib/universe";
 import { fetchQuote } from "~/server/quote";
 import { resolveCodeByName, ensureStockEntities } from "~/server/stocks";
@@ -82,6 +89,18 @@ export const entityRouter = createTRPCRouter({
       ctx.db.thesis.findUnique({ where: { entityId: input.id } }),
     ),
 
+  /**
+   * 按需补齐投资逻辑：个股页发现没有 thesis 时由客户端触发一次，生成完页面 refresh 即出现。
+   * **不放在 SSR 链路里**——一次生成实测 ~16s，挂在首屏渲染上会把整页拖死。
+   * 幂等 + 单飞（见 server/thesis-ensure），同一实体的并发请求只烧一次 token。
+   */
+  ensureThesis: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const result = await ensureThesis(input.id, ctx.db);
+      return { result };
+    }),
+
   /** 触及该实体投资逻辑维度的信号（Phase 3 P3-3），按材料度×时间。供 thesis 卡显示"近期命中"。 */
   thesisSignals: publicProcedure
     .input(z.object({ id: z.string() }))
@@ -106,11 +125,29 @@ export const entityRouter = createTRPCRouter({
   ecosystem: publicProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
+      // 行业归属几乎只挂在 STOCK 那一份孪生实体上，所以取板块前先把「我的全部身份」拼出来
+      // （公司 ↔ 它发行的股票）。见 lib/ecosystem-scope 的注释与实测比例。
+      const twinRels = await ctx.db.entityRelation.findMany({
+        where: {
+          type: "ISSUES",
+          OR: [{ fromId: input.id }, { toId: input.id }],
+        },
+        select: { fromId: true, toId: true },
+      });
+      const identity = identityIds(
+        input.id,
+        twinRels.flatMap((r) => [r.fromId, r.toId]),
+      );
+
       const secRels = await ctx.db.entityRelation.findMany({
-        where: { fromId: input.id, type: "BELONGS_TO", to: { type: "SECTOR" } },
+        where: {
+          fromId: { in: identity },
+          type: "BELONGS_TO",
+          to: { type: "SECTOR" },
+        },
         select: { to: { select: { id: true, name: true } } },
       });
-      const sectors = secRels.map((r) => r.to);
+      const sectors = dedupeSectors(secRels.map((r) => r.to));
       const sectorIds = sectors.map((s) => s.id);
       if (sectorIds.length === 0) {
         return { sectors, peers: [], sectorNews: [], peerNews: [] };
@@ -120,14 +157,38 @@ export const entityRouter = createTRPCRouter({
         where: {
           toId: { in: sectorIds },
           type: "BELONGS_TO",
-          from: { type: "COMPANY" },
+          from: { type: { in: ["COMPANY", "STOCK"] } },
         },
-        select: { from: { select: { id: true, name: true, ticker: true } } },
+        select: {
+          from: {
+            select: {
+              id: true,
+              name: true,
+              type: true,
+              ticker: true,
+              // 股票成分的发行公司——用来把孪生两份归并成一家。
+              relTo: {
+                where: { type: "ISSUES" as const },
+                select: { fromId: true },
+                take: 1,
+              },
+            },
+          },
+        },
         take: 60,
       });
-      const peers = selectPeers(
-        input.id,
-        memberRels.map((r) => r.from),
+      const peers = selectPeersFrom(
+        identity,
+        memberRels.map((r) => ({
+          id: r.from.id,
+          name: r.from.name,
+          type: r.from.type as "COMPANY" | "STOCK",
+          ticker: r.from.ticker,
+          companyId:
+            r.from.type === "COMPANY"
+              ? r.from.id
+              : (r.from.relTo[0]?.fromId ?? null),
+        })),
         8,
       );
       const peerIds = peers.map((p) => p.id);
@@ -342,6 +403,75 @@ export const entityRouter = createTRPCRouter({
     return { sectors, totalStocks: memberIds.length };
   }),
 
+  /**
+   * 全部覆盖（sway 2026-07-26：别再只重点覆盖，全部覆盖）——所有行业板块 + 全 A 股成员，
+   * 按近 7 天资讯热度排序。成员含 STOCK(行业分类) 与 COMPANY(主题分类)。totalStocks=全部覆盖股数。
+   */
+  allSectors: publicProcedure.query(async ({ ctx }) => {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const secs = await ctx.db.entity.findMany({
+      where: { type: "SECTOR" },
+      select: { id: true, name: true },
+    });
+    if (secs.length === 0) return { sectors: [], totalStocks: 0 };
+
+    const rels = await ctx.db.entityRelation.findMany({
+      where: {
+        toId: { in: secs.map((s) => s.id) },
+        type: "BELONGS_TO",
+        from: { type: { in: ["STOCK", "COMPANY"] } },
+      },
+      select: {
+        toId: true,
+        from: { select: { id: true, name: true, type: true } },
+      },
+    });
+    const memberIds = [...new Set(rels.map((r) => r.from.id))];
+    const heat = memberIds.length
+      ? await ctx.db.newsEntity.groupBy({
+          by: ["entityId"],
+          where: {
+            entityId: { in: memberIds },
+            news: { publishedAt: { gte: since } },
+          },
+          _count: { entityId: true },
+        })
+      : [];
+    const heatMap = new Map(heat.map((h) => [h.entityId, h._count.entityId]));
+
+    const bySector = new Map<string, SectorMember[]>();
+    for (const r of rels) {
+      const arr = bySector.get(r.toId) ?? [];
+      arr.push({
+        id: r.from.id,
+        name: r.from.name,
+        type: r.from.type,
+        heat: heatMap.get(r.from.id) ?? 0,
+      });
+      bySector.set(r.toId, arr);
+    }
+
+    const sectors = secs
+      .map((s) => {
+        // 按公司去重：同一家的 STOCK(行业分类) 与 COMPANY(主题分类) 只算一只，热度相加。
+        const members = dedupeSectorMembers(bySector.get(s.id) ?? []);
+        return {
+          sectorId: s.id,
+          name: s.name,
+          memberCount: members.length,
+          heat7d: members.reduce((n, m) => n + m.heat, 0),
+          top: members.slice(0, 5),
+        };
+      })
+      .filter((s) => s.memberCount > 0)
+      .sort((a, b) => b.heat7d - a.heat7d || b.memberCount - a.memberCount);
+
+    const totalStocks = await ctx.db.entity.count({
+      where: { type: "STOCK", ticker: { not: null } },
+    });
+    return { sectors, totalStocks };
+  }),
+
   newsById: publicProcedure
     .input(z.object({ id: z.string() }))
     .query(({ ctx, input }) =>
@@ -368,18 +498,22 @@ export const entityRouter = createTRPCRouter({
     ),
 
   /**
-   * 个股页「资讯 / 公告」分页（2026-07-23）。
+   * 个股页「资讯 / 公告 / 研报」分页（2026-07-23，2026-07-29 加研报）。
    *
    * 回填一年后单只股可有上百条（广发证券 352 条），原来 newsById 一次取 120 条封顶，
    * 后面的**根本没有入口能看到**。这里改成服务端分页，并顺带修掉一个老毛病：
    * 「公告」tab 原本是在那 120 条里筛 PRIMARY，媒体多的公司会显得没几条公告——
    * 现在按 tier 直接查库，公告页看到的就是这家公司真正的全部公告。
+   *
+   * 「研报」tab 按 `eventType` 取（不按源）：主力是 `eastmoney-report`，但快讯/资讯/公告
+   * 源里也有被判成研报体裁的条目，按源过滤会漏掉。研报是 sway 从「机构一致预期」卡点进来的
+   * 落地页——库里 6.9k 篇一直没有任何入口能翻。
    */
   newsPage: publicProcedure
     .input(
       z.object({
         id: z.string(),
-        tab: z.enum(["news", "announce"]).default("news"),
+        tab: z.enum(["news", "announce", "report"]).default("news"),
         page: z.number().min(1).max(500).default(1),
         perPage: z.number().min(10).max(100).default(40),
       }),
@@ -387,10 +521,17 @@ export const entityRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const base = { entities: { some: { entityId: input.id } } };
       const where =
-        input.tab === "announce" ? { ...base, tier: "PRIMARY" as const } : base;
-      const [total, announceTotal, items] = await Promise.all([
+        input.tab === "announce"
+          ? { ...base, tier: "PRIMARY" as const }
+          : input.tab === "report"
+            ? { ...base, eventType: REPORT_EVENT_TYPE }
+            : base;
+      const [total, announceTotal, reportTotal, items] = await Promise.all([
         ctx.db.newsItem.count({ where: base }),
         ctx.db.newsItem.count({ where: { ...base, tier: "PRIMARY" } }),
+        ctx.db.newsItem.count({
+          where: { ...base, eventType: REPORT_EVENT_TYPE },
+        }),
         ctx.db.newsItem.findMany({
           where,
           orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
@@ -410,11 +551,17 @@ export const entityRouter = createTRPCRouter({
           },
         }),
       ]);
-      const shown = input.tab === "announce" ? announceTotal : total;
+      const shown =
+        input.tab === "announce"
+          ? announceTotal
+          : input.tab === "report"
+            ? reportTotal
+            : total;
       return {
         items,
         newsTotal: total,
         announceTotal,
+        reportTotal,
         page: input.page,
         pages: Math.max(1, Math.ceil(shown / input.perPage)),
       };
@@ -427,32 +574,49 @@ export const entityRouter = createTRPCRouter({
    */
   milestones: publicProcedure
     .input(
-      z.object({ id: z.string(), months: z.number().min(1).max(24).default(12) }),
+      z.object({
+        id: z.string(),
+        months: z.number().min(1).max(24).default(12),
+      }),
     )
-    .query(({ ctx, input }) => {
+    .query(async ({ ctx, input }) => {
       const since = new Date();
       since.setMonth(since.getMonth() - input.months);
-      return ctx.db.newsItem.findMany({
-        where: {
-          entities: { some: { entityId: input.id } },
-          importance: { gte: IMPORTANT_THRESHOLD },
-          publishedAt: { gte: since },
-        },
-        orderBy: [{ publishedAt: "desc" }],
-        take: 200,
-        select: {
-          id: true,
-          title: true,
-          url: true,
-          summary: true,
-          brief: true,
-          tier: true,
-          importance: true,
-          publishedAt: true,
-          source: { select: { name: true } },
-          event: { select: { count: true } },
-        },
-      });
+      const where = {
+        entities: { some: { entityId: input.id } },
+        importance: { gte: IMPORTANT_THRESHOLD },
+        publishedAt: { gte: since },
+      };
+      // 按月折叠展示、最多渲染 200 条；total 是库里真实总数（医药/半导体等热门板块一年可达 400-740 条），
+      // 让 tab 计数与「显示前 N」诚实，不把 take:200 截断值当全量（QA loop run 10 维度 b）。
+      // 取数按 importance desc 拿「全年最重磅 200」而非「最近 200」——否则热门板块最近 200 条全挤在本月、
+      // 「一年脉络」坍缩成「本月」（QA loop run 37 发现 / run 44 sway 授权修）。取到后再按时间倒序，
+      // 喂 groupByMonth（它保月内传入顺序、要求调用方按时间倒序）。
+      const [rawItems, total] = await Promise.all([
+        ctx.db.newsItem.findMany({
+          where,
+          orderBy: [{ importance: "desc" }, { publishedAt: "desc" }],
+          take: 200,
+          select: {
+            id: true,
+            title: true,
+            url: true,
+            summary: true,
+            brief: true,
+            tier: true,
+            importance: true,
+            publishedAt: true,
+            source: { select: { name: true } },
+            event: { select: { count: true } },
+          },
+        }),
+        ctx.db.newsItem.count({ where }),
+      ]);
+      const items = [...rawItems].sort(
+        (a, b) =>
+          new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime(),
+      );
+      return { items, total };
     }),
 
   search: publicProcedure

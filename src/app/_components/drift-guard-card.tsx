@@ -17,7 +17,7 @@ export function DriftGuardCard({
   return (
     <div className="rounded-xl border border-brand/40 bg-brand/[0.06] p-3.5">
       <div className="flex items-center gap-2">
-        <span aria-hidden>🛡️</span>
+        <span className="h-4 w-1.5 rounded-full bg-brand" aria-hidden />
         <h4 className="text-sm font-bold text-ink">{driftHeadline(level)}</h4>
       </div>
       <p className="mt-2 text-xs leading-relaxed text-ink/85">{message}</p>

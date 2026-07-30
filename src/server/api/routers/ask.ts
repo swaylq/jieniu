@@ -2,10 +2,10 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
-import { buildAskContext, type AskMemory } from "~/lib/ask-context";
+import { buildAskContext } from "~/lib/ask-context";
+import { loadAskMemory } from "~/server/ask-memory";
 import { answerUserQuestion } from "~/server/ai";
 import { isCompliant, withDisclaimer } from "~/lib/compliance";
-import { MATERIAL_ALERT_THRESHOLD } from "~/lib/thesis-status";
 
 /**
  * 「问解牛」（P5-5）——全局、结合用户四层 Memory 的私人投研问答。
@@ -13,6 +13,32 @@ import { MATERIAL_ALERT_THRESHOLD } from "~/lib/thesis-status";
  * 回答下方的「记为投资笔记」写回 Decision（action=NOTE），让问答能沉淀进系统记忆。
  */
 export const askRouter = createTRPCRouter({
+  /**
+   * 持续对话的历史（2026-07-29）。一位用户一条连续线，按时间正序全量返回——
+   * 面板打开时拉一次；**进提示词的只有最近几条**（见 lib/ask-history），两者不是一回事。
+   */
+  history: protectedProcedure.query(async ({ ctx }) => {
+    const rows = await ctx.db.askMessage.findMany({
+      where: { userId: ctx.session.user.id },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, role: true, content: true, createdAt: true },
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      role: r.role === "user" ? ("user" as const) : ("assistant" as const),
+      content: r.content,
+      createdAt: r.createdAt,
+    }));
+  }),
+
+  /** 清空对话（用户自己的数据，自己说了算）。 */
+  clearHistory: protectedProcedure.mutation(async ({ ctx }) => {
+    const { count } = await ctx.db.askMessage.deleteMany({
+      where: { userId: ctx.session.user.id },
+    });
+    return { cleared: count };
+  }),
+
   answer: protectedProcedure
     .input(z.object({ question: z.string().min(1).max(500) }))
     .mutation(async ({ ctx, input }) => {
@@ -21,92 +47,9 @@ export const askRouter = createTRPCRouter({
         throw new TRPCError({ code: "BAD_REQUEST", message: "问题不能为空" });
 
       const uid = ctx.session.user.id;
-      const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
 
-      const [profile, watchRows] = await Promise.all([
-        ctx.db.investorProfile.findUnique({
-          where: { userId: uid },
-          select: { style: true, riskLevel: true, summary: true },
-        }),
-        ctx.db.watchlist.findMany({
-          where: { userId: uid },
-          orderBy: [{ weight: "desc" }, { createdAt: "desc" }],
-          select: {
-            entityId: true,
-            status: true,
-            costBasis: true,
-            weight: true,
-            note: true,
-            entity: { select: { name: true, ticker: true } },
-          },
-        }),
-      ]);
-
-      const entityIds = watchRows.map((w) => w.entityId);
-      const nameById = new Map(
-        watchRows.map((w) => [w.entityId, w.entity.name]),
-      );
-
-      const [theses, signals, decisions] =
-        entityIds.length > 0
-          ? await Promise.all([
-              ctx.db.thesis.findMany({
-                where: { entityId: { in: entityIds } },
-                select: { entityId: true, summary: true },
-              }),
-              ctx.db.thesisSignal.findMany({
-                where: {
-                  entityId: { in: entityIds },
-                  publishedAt: { gte: since },
-                  materiality: { gte: MATERIAL_ALERT_THRESHOLD },
-                },
-                orderBy: { materiality: "desc" },
-                take: 12,
-                select: {
-                  entityId: true,
-                  dimensionKey: true,
-                  direction: true,
-                  materiality: true,
-                  note: true,
-                },
-              }),
-              ctx.db.decision.findMany({
-                where: { userId: uid },
-                orderBy: { createdAt: "desc" },
-                take: 5,
-                select: { action: true, reason: true, entityId: true },
-              }),
-            ])
-          : [[], [], []];
-
-      const mem: AskMemory = {
-        profile: profile ?? null,
-        holdings: watchRows.map((w) => ({
-          entityId: w.entityId,
-          name: w.entity.name,
-          ticker: w.entity.ticker,
-          status: w.status,
-          costBasis: w.costBasis,
-          weight: w.weight,
-          note: w.note,
-        })),
-        theses: theses.map((t) => ({
-          name: nameById.get(t.entityId) ?? "",
-          summary: t.summary,
-        })),
-        signals: signals.map((s) => ({
-          name: nameById.get(s.entityId) ?? "",
-          dimensionKey: s.dimensionKey,
-          direction: s.direction,
-          materiality: s.materiality,
-          note: s.note,
-        })),
-        decisions: decisions.map((d) => ({
-          name: nameById.get(d.entityId) ?? "",
-          action: d.action,
-          reason: d.reason,
-        })),
-      };
+      // 记忆取数抽到 `server/ask-memory`（流式那条路也用同一份，别写两遍）。
+      const mem = await loadAskMemory(ctx.db, uid);
 
       const built = buildAskContext(mem);
 

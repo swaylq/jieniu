@@ -7,6 +7,7 @@ import { api } from "~/trpc/server";
 import { abs, openGraph, twitter } from "~/lib/seo";
 import { parseAppointmentView, parseLocalDay } from "~/lib/disclosure";
 import { parseConsensusDetail } from "~/lib/consensus";
+import { reportsTabHref } from "~/lib/research-reports";
 import { earningsCheckable } from "~/lib/earnings-check";
 import { isAShareTicker } from "~/lib/quote";
 import { ConsensusCard } from "../../../_components/consensus-card";
@@ -42,7 +43,8 @@ export async function generateMetadata({
   // 所以状态码留在 200（soft 404）。实测在 generateMetadata 里抛也一样是 200。
   // 状态码改不动，就退而求其次堵住真正的危害：noindex 让爬虫不收录不存在的实体页。
   // 页面组件里的 notFound() 保留——它负责渲染友好的「页面不存在」。
-  if (!data) return { title: "未找到", robots: { index: false, follow: false } };
+  if (!data)
+    return { title: "未找到", robots: { index: false, follow: false } };
   const title = `${data.entity.name} 财报前瞻 · 解牛`;
   const description = `${data.entity.name}下次定期报告的预约披露日、机构一致预期、业绩预告与历史财报日反应，以及这次财报能验证投资逻辑的哪几条。`;
   const url = abs(`/entity/${id}/earnings`);
@@ -78,8 +80,16 @@ export default async function EarningsPreviewPage({
   const data = await getPreview(id);
   if (!data) notFound();
 
-  const { entity, ticker, disclosure, consensus, forecast, thesis, userThesis } =
-    data;
+  const {
+    entity,
+    ticker,
+    disclosure,
+    consensus,
+    forecast,
+    thesis,
+    userThesis,
+    reportCount,
+  } = data;
   const now = new Date();
 
   const appointment = parseAppointmentView(disclosure?.detail);
@@ -106,15 +116,13 @@ export default async function EarningsPreviewPage({
     <main className="mx-auto max-w-2xl p-4 lg:max-w-3xl lg:px-8">
       <Link
         href={`/entity/${id}`}
-        className="text-sm text-muted transition-colors hover:text-brand"
+        className="text-muted hover:text-brand text-sm transition-colors"
       >
         ← {entity.name}
       </Link>
 
-      <h1 className="mt-3 text-2xl font-bold text-ink lg:text-3xl">
-        财报前瞻
-      </h1>
-      <p className="mt-1 text-sm text-muted">
+      <h1 className="text-ink mt-3 text-2xl font-bold lg:text-3xl">财报前瞻</h1>
+      <p className="text-muted mt-1 text-sm">
         {entity.ticker ? (
           <span className="tabular">
             {entity.exchange ?? ""} {entity.ticker} ·{" "}
@@ -124,32 +132,32 @@ export default async function EarningsPreviewPage({
       </p>
 
       {/* 倒计时头：整页的锚。没有预约日就诚实说没有，不用法定截止日冒充精确日期。 */}
-      <section className="mt-5 rounded-2xl border border-brand/25 bg-brand/[0.04] p-4 lg:p-5">
+      <section className="border-brand/25 bg-brand/[0.04] mt-5 rounded-2xl border p-4 lg:p-5">
         {upcoming ? (
           <div className="flex flex-wrap items-baseline justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-xs text-muted">下次定期报告</p>
-              <p className="mt-0.5 text-lg font-bold text-ink">
+              <p className="text-muted text-xs">下次定期报告</p>
+              <p className="text-ink mt-0.5 text-lg font-bold">
                 {upcoming.periodLabel}
                 {upcoming.rescheduled ? (
-                  <span className="ml-2 rounded bg-line/70 px-1.5 py-0.5 align-middle text-[10px] font-semibold text-muted">
+                  <span className="bg-line/70 text-muted ml-2 rounded px-1.5 py-0.5 align-middle text-[10px] font-semibold">
                     已改期
                   </span>
                 ) : null}
               </p>
-              <p className="mt-0.5 text-xs text-muted">
+              <p className="text-muted mt-0.5 text-xs">
                 预约 {fmtMd(upcoming.at)} 披露 · 交易所预约披露时间表
               </p>
             </div>
             <div className="text-right">
-              <p className="tabular text-3xl font-bold text-brand">
+              <p className="tabular text-brand text-3xl font-bold">
                 {upcoming.daysUntil}
               </p>
-              <p className="text-xs text-muted">天后</p>
+              <p className="text-muted text-xs">天后</p>
             </div>
           </div>
         ) : (
-          <p className="text-sm text-muted">
+          <p className="text-muted text-sm">
             暂无该股下一期的预约披露日（可能已披露完本期，或交易所时间表尚未更新）。不臆测披露时点。
           </p>
         )}
@@ -157,18 +165,18 @@ export default async function EarningsPreviewPage({
 
       {/* 业绩预告：A 股独有的强前瞻信号——公司自己给出的净利区间，富途美股页没有对应物 */}
       {forecast ? (
-        <section className="mt-6 rounded-2xl border border-line bg-surface p-4 lg:p-5">
+        <section className="border-line bg-surface mt-6 rounded-2xl border p-4 lg:p-5">
           <div className="flex items-center gap-2">
-            <span className="h-5 w-1.5 rounded-full bg-brand" aria-hidden />
-            <h2 className="text-base font-bold text-ink">业绩预告</h2>
+            <span className="bg-brand h-5 w-1.5 rounded-full" aria-hidden />
+            <h2 className="text-ink text-base font-bold">业绩预告</h2>
           </div>
           <Link
             href={`/news/${forecast.id}`}
-            className="mt-2 block text-sm leading-relaxed font-semibold text-ink transition-colors hover:text-brand"
+            className="text-ink hover:text-brand mt-2 block text-sm leading-relaxed font-semibold transition-colors"
           >
             {forecast.title}
           </Link>
-          <p className="mt-1 text-xs text-muted">
+          <p className="text-muted mt-1 text-xs">
             {forecast.publishedAt.toLocaleDateString("zh-CN")} 披露 ·
             公司法定预告，非预测
           </p>
@@ -181,6 +189,8 @@ export default async function EarningsPreviewPage({
             detail={consensusDetail}
             asOf={consensus!.asOf}
             title="机构对这期的预期"
+            reportsHref={reportsTabHref(id)}
+            reportCount={reportCount}
           />
         </div>
       ) : null}
@@ -204,7 +214,7 @@ export default async function EarningsPreviewPage({
         </div>
       ) : null}
 
-      <p className="mt-8 text-[11px] leading-relaxed text-muted">
+      <p className="text-muted mt-8 text-[11px] leading-relaxed">
         本页汇总的是已披露的确定性日程与第三方机构口径，以及已发生的历史统计。
         解牛不预测财报结果、不预测涨跌、不提供买卖建议或收益承诺。
       </p>

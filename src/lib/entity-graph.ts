@@ -45,6 +45,23 @@ export function bucketOf(type: RelationType, dir: Direction): RelationBucket {
   }
 }
 
+/**
+ * 个股页/公司页要展示的行情 ticker：
+ *  - STOCK 实体用自己的 ticker；
+ *  - COMPANY 实体本身无 ticker，用它**发行**的股票（ISSUES-out，即 `stocks` 桶）的代码；
+ *  - SECTOR / PERSON 无行情——尤其 SECTOR 的 `members` 桶里是成分股，绝不能拿某成员的行情
+ *    当成板块行情（QA loop run 61 维度 h：旅游零售把成员 中国中免 的 P/E/市值 显示成板块估值）。
+ */
+export function resolveQuoteTicker(
+  entity: { ticker: string | null },
+  groups: Record<RelationBucket, RelatedEntity[]>,
+): string | null {
+  if (entity.ticker) return entity.ticker;
+  // 只从「发行股票」桶(ISSUES-out，仅 COMPANY 有)取——不搜全部桶，否则 SECTOR 的 members 成分股
+  // 会被当成板块行情。SECTOR/PERSON 的 stocks 桶为空 → 返 null（不显行情）。
+  return groups.stocks.find((e) => e.ticker)?.ticker ?? null;
+}
+
 export function groupRelations(
   rels: GraphRelation[],
 ): Record<RelationBucket, RelatedEntity[]> {

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HoverPrefetchLink } from "./hover-prefetch-link";
 
 import {
   CHANGE_LABEL,
@@ -42,21 +43,26 @@ export function WorkbenchRail({
         <section className="rounded-2xl border border-line bg-surface p-4">
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-sm font-bold text-ink">当前投资卡</h3>
-            <Link
+            <HoverPrefetchLink
               href={`/entity/${current.entityId}`}
               className="shrink-0 text-xs font-medium text-brand hover:underline"
             >
               打开工作台 →
-            </Link>
+            </HoverPrefetchLink>
           </div>
-          <p className="mt-2 text-sm font-semibold text-ink">{current.name}</p>
+          <HoverPrefetchLink
+            href={`/entity/${current.entityId}`}
+            className="mt-2 block text-sm font-semibold text-ink transition-colors hover:text-brand"
+          >
+            {current.name}
+          </HoverPrefetchLink>
           {current.summary ? (
             <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-muted">
               {current.summary}
             </p>
           ) : (
             <p className="mt-1 text-xs leading-relaxed text-muted">
-              还没有投资逻辑框架——生成后即可开始逐条监控它是否被材料触及。
+              还没有投资逻辑框架。生成后可逐条监控它有没有被材料触及。
             </p>
           )}
 
@@ -106,7 +112,7 @@ export function WorkbenchRail({
               return (
                 <li key={c.entityId} className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <Link
+                    <HoverPrefetchLink
                       href={`/entity/${c.entityId}`}
                       className="block truncate text-[13px] font-semibold text-ink hover:text-brand"
                     >
@@ -114,7 +120,7 @@ export function WorkbenchRail({
                       {c.topDimension ? (
                         <span className="font-normal text-muted"> · {c.topDimension}</span>
                       ) : null}
-                    </Link>
+                    </HoverPrefetchLink>
                     <span className="line-clamp-1 text-[11px] text-muted">
                       {c.topNote || CHANGE_LABEL[c.direction]}
                     </span>

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HoverPrefetchLink } from "./hover-prefetch-link";
 
 import {
   CHANGE_LABEL,
@@ -15,11 +16,11 @@ export function PortfolioChanged({ items }: { items: PortfolioChangeItem[] }) {
     return (
       <section className="rounded-2xl border border-brand/30 bg-brand/[0.05] p-5">
         <div className="flex items-center gap-2">
-          <span aria-hidden>🐂</span>
+          <span className="h-5 w-1.5 rounded-full bg-brand" aria-hidden />
           <h2 className="text-base font-bold text-ink">今天你的组合变了什么</h2>
         </div>
         <p className="mt-2 text-sm leading-relaxed text-muted">
-          记录你的持仓，解牛每天只回答一件事：今天的消息，有没有改变你当初买入的逻辑。
+          记下你的持仓，解牛每天只回答一件事：今天的消息有没有改变你当初买入的逻辑。
         </p>
         <Link
           href="/discover"
@@ -46,7 +47,7 @@ export function PortfolioChanged({ items }: { items: PortfolioChangeItem[] }) {
       }
     >
       <div className="flex items-center gap-2">
-        {!quiet ? <span aria-hidden>🐂</span> : null}
+        {!quiet ? <span className="h-5 w-1.5 rounded-full bg-brand" aria-hidden /> : null}
         <h2
           className={
             quiet
@@ -71,12 +72,12 @@ export function PortfolioChanged({ items }: { items: PortfolioChangeItem[] }) {
                 className="rounded-xl border border-line/70 bg-surface p-3"
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <Link
+                  <HoverPrefetchLink
                     href={`/entity/${c.entityId}`}
                     className="text-sm font-semibold text-ink hover:text-brand"
                   >
                     {c.name}
-                  </Link>
+                  </HoverPrefetchLink>
                   <span
                     className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
                       accent ? "bg-brand/15 text-brand" : "bg-line/60 text-muted"
@@ -111,14 +112,25 @@ export function PortfolioChanged({ items }: { items: PortfolioChangeItem[] }) {
             quiet ? "mt-2" : "mt-3 border-t border-line/60 pt-3"
           }`}
         >
-          今日无异动 · {muted.length} 支已静音：{muted.map((m) => m.name).join("、")}
+          今日无异动 · {muted.length} 支已静音：
+          {muted.map((m, i) => (
+            <span key={m.entityId}>
+              {i > 0 ? "、" : ""}
+              <HoverPrefetchLink
+                href={`/entity/${m.entityId}`}
+                className="underline-offset-2 hover:text-brand hover:underline"
+              >
+                {m.name}
+              </HoverPrefetchLink>
+            </span>
+          ))}
         </p>
       ) : null}
 
       <p className="mt-2 text-[11px] leading-relaxed text-muted">
         {quiet
           ? "非投资建议、不预测涨跌。"
-          : "仅汇总触及你持仓监控维度的动态，帮你判断「今天要不要重看逻辑」；非投资建议、不构成买卖依据、不预测涨跌。"}
+          : "仅汇总触及你持仓监控维度的动态，供你判断今天要不要重看逻辑；非投资建议、不预测涨跌。"}
       </p>
     </section>
   );

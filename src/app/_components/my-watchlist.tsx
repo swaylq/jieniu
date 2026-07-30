@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HoverPrefetchLink } from "./hover-prefetch-link";
 
 import { NewsTimeline, type StreamItem } from "./news-timeline";
 import { chipClass, displayCls, primaryBtn } from "./section-head";
@@ -84,9 +85,9 @@ export function MyWatchlist({
       <ul className="mt-3 flex flex-wrap gap-2">
         {watched.map((e) => (
           <li key={e.id}>
-            <Link href={`/entity/${e.id}`} className={chipClass}>
+            <HoverPrefetchLink href={`/entity/${e.id}`} className={chipClass}>
               {e.name}
-            </Link>
+            </HoverPrefetchLink>
           </li>
         ))}
       </ul>

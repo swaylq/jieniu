@@ -9,6 +9,7 @@ import {
 import { classifyNovelty } from "~/lib/novelty";
 import { filingExcerpt, excerptIsEmpty } from "~/lib/filing-excerpt";
 import type { SourceTier } from "../../../generated/prisma";
+import { HoverPrefetchLink } from "./hover-prefetch-link";
 import { InterpretationPanel } from "./interpretation-panel";
 import { NewsActions } from "./news-actions";
 
@@ -102,12 +103,14 @@ export function NewsCard({
           </a>
         </span>
       </div>
-      <Link
+      {/* 悬停才预取详情页：一屏可能挂二十来张卡，进页面就全量预取不划算；但不预取的话点下去要
+          现付一次隧道往返（实测公网 344–677ms）。见 `hover-prefetch-link.tsx`。 */}
+      <HoverPrefetchLink
         href={`/news/${n.id}`}
         className="text-ink hover:text-brand block text-[15px] leading-snug font-semibold text-balance transition-colors"
       >
         {n.title}
-      </Link>
+      </HoverPrefetchLink>
       {/* 有事件摘要就优先显示它（一句话说清「发生了什么+为什么值得看」），
           原文摘录降为次级；没有摘要时摘录仍是主角。 */}
       {n.brief ? (
@@ -124,7 +127,7 @@ export function NewsCard({
       )}
       {n.burstCount && n.burstCount > 0 ? (
         <p className="text-muted mt-2 text-xs">
-          同日另有 {n.burstCount} 份公告（同一事件的程序性文件，已折叠）
+          同日另有 {n.burstCount} 份公告，多为同一事件的程序性文件，已折叠
         </p>
       ) : null}
       <InterpretationPanel newsId={n.id} title={n.title} summary={n.summary} />

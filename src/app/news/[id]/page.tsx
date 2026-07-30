@@ -188,7 +188,8 @@ export default async function NewsPage({
           </div>
         </div>
 
-        <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+        {/* 右栏自成滚动区，理由同个股页：卡片比一屏高时，只 sticky 会够不着下半截。 */}
+        <aside className="space-y-4 lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:self-start lg:overflow-x-hidden lg:overflow-y-auto lg:pr-1">
           <ThesisLensCard groups={thesisLens} />
           <section className="rounded-xl border border-line bg-surface p-4 lg:p-5">
             <div className="mb-3 flex items-center gap-2.5">

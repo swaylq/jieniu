@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 
 import {
   marginSignal,
@@ -6,6 +6,8 @@ import {
   unlockSignal,
   commodityToSignal,
   taiwanRevenueToSignal,
+  populateSignals,
+  populateSectorSignals,
 } from "./signals";
 
 describe("marginSignal (融资余额)", () => {
@@ -104,5 +106,54 @@ describe("taiwanRevenueToSignal (台股月营收→半导体先行指标)", () =
   });
   it("returns null without revenue", () => {
     expect(taiwanRevenueToSignal("台积电", 0, 10)).toBeNull();
+  });
+});
+
+// 静默故障硬化（7-24 教训「永不裸 catch{}，至少 console.error」）：
+// populateSignals/populateSectorSignals 的逐类 try/catch 原为裸 `catch {}`，某源端点变了会 100% 失败却零日志痕迹。
+// 要求：任一类抓取失败时，跳过该类并**记录一条含 kind 名的 console.error**（不中断其它类）。
+function mockDb(entities: unknown[]) {
+  return {
+    entity: { findMany: vi.fn().mockResolvedValue(entities) },
+    entitySignal: { upsert: vi.fn() },
+  } as never;
+}
+
+describe("populateSignals — 源失败记日志不静默", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("logs each kind's skip when upstream fetch throws, and still returns zeros (不抛)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const res = await populateSignals(mockDb([{ id: "e1", ticker: "600519" }]));
+
+    expect(res).toEqual({ margin: 0, consensus: 0, unlock: 0 });
+    const logged = err.mock.calls.map((c) => c.map(String).join(" ")).join(" | ");
+    expect(logged).toContain("margin");
+    expect(logged).toContain("consensus");
+    expect(logged).toContain("unlock");
+  });
+});
+
+describe("populateSectorSignals — 源失败记日志不静默", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("logs commodity/overseas skips when upstream fetch throws", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const res = await populateSectorSignals(
+      mockDb([
+        { id: "s1", name: "半导体" },
+        { id: "s2", name: "新能源" },
+        { id: "s3", name: "光伏" },
+      ]),
+    );
+
+    expect(res).toEqual({ commodity: 0, overseas: 0 });
+    const logged = err.mock.calls.map((c) => c.map(String).join(" ")).join(" | ");
+    expect(logged).toContain("commodity");
+    expect(logged).toContain("overseas");
   });
 });
