@@ -8,7 +8,14 @@
 // 清理规则刻意保守：
 //  · **只并跨源的**（巨潮 × 东财）。同一个源里出现两条同名公告更可能是两件真事，一律不动。
 //  · 日期须相差 ≤2 天。相隔很远的同名公告是周期性公告，保留。
-//  · 保留优先级：有正文的 > 无正文的；同等则保留东财（有 art_code，可继续补正文）；再同等留最早的。
+//  · 保留优先级：有正文的 > 无正文的；同等则保留**巨潮**；再同等留最早的。
+//
+// 2026-07-30 run6 把 tie-break 从「留东财」改成「留巨潮」。原来的理由是「东财有 art_code、
+// 可继续补正文」——这个前提**早就不成立且方向相反**：`enrich.ts` 现在两边都能补
+// （巨潮 PDF 走 pdftotext、东财详情页走 art_code），而实测正文覆盖率是
+// **巨潮 2171/5864 = 37.0%，东财 5444/558139 = 1.0%**（差 37 倍）。
+// 加上巨潮是法定披露站、URL 就是公告 PDF 本身，保留它在权威性与正文完整度上都更优。
+// 原规则等于系统性丢掉更全的那一份。
 //
 // 用法：... npx tsx src/scripts/prune-cross-source-filings.ts [--apply]
 
@@ -21,7 +28,7 @@ const db = new PrismaClient();
 const dayGap = (a: Date, b: Date) =>
   Math.abs(a.getTime() - b.getTime()) / 86_400_000;
 
-type Item = {
+export type Item = {
   id: string;
   title: string;
   publishedAt: Date;
@@ -29,15 +36,15 @@ type Item = {
   sourceKey: string;
 };
 
-/** 组内保留哪一条：有正文 > 东财 > 最早。 */
-function pickKeeper(group: Item[]): Item {
+/** 组内保留哪一条：有正文 > 巨潮（一手 + 正文覆盖率高 37 倍）> 最早。 */
+export function pickKeeper(group: Item[]): Item {
   return [...group].sort((a, b) => {
     const ca = a.content ? 1 : 0;
     const cb = b.content ? 1 : 0;
     if (ca !== cb) return cb - ca;
-    const ea = a.sourceKey === "eastmoney-announcement" ? 1 : 0;
-    const eb = b.sourceKey === "eastmoney-announcement" ? 1 : 0;
-    if (ea !== eb) return eb - ea;
+    const pa = a.sourceKey === "cninfo-announcement" ? 1 : 0;
+    const pb = b.sourceKey === "cninfo-announcement" ? 1 : 0;
+    if (pa !== pb) return pb - pa;
     return a.publishedAt.getTime() - b.publishedAt.getTime();
   })[0]!;
 }
