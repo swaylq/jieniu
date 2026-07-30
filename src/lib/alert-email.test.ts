@@ -109,8 +109,8 @@ describe("renderAlertEmailHtml", () => {
         data: {
           overview: "指数普跌，防御板块逆势上涨。",
           drivers: [
-            { scope: "overseas" as const, text: "韩股逼近熔断，隔夜海外存储链重挫" },
-            { scope: "domestic" as const, text: "央行开展2065亿元7天逆回购，利率持平1.40%" },
+            { scope: "global" as const, text: "韩股逼近熔断，隔夜海外存储链重挫" },
+            { scope: "macro" as const, text: "央行开展2065亿元7天逆回购，利率持平1.40%" },
           ],
           sectors: { strong: [{ name: "白酒", note: "避险" }], weak: [{ name: "半导体", note: "承压" }] },
           stocks: [{ name: "兆易创新", changePct: -10, note: "板块领跌" }],

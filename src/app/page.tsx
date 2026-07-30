@@ -41,7 +41,8 @@ async function buildCurrentCard(
     if (!thesis) continue;
     const dims = (thesis.dimensions as unknown as ThesisDimension[]) ?? [];
     const signals = await api.entity.thesisSignals({ id });
-    const hitKeys = new Set(signals.map((s) => s.dimensionKey));
+    // 只数**合格证据**命中的维度：进度条若把通用推测也算成「已验证」，就是在虚报进度。
+    const hitKeys = new Set(signals.items.map((s) => s.dimensionKey));
     const hitDims = dims.filter((d) => hitKeys.has(d.key)).length;
     const progress = dims.length > 0 ? Math.round((hitDims / dims.length) * 100) : 0;
     return {

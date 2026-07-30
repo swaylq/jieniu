@@ -4,6 +4,7 @@ import {
   dimensionKeywords,
   candidateDimensions,
   parseSignals,
+  isEvidenceCandidate,
 } from "./thesis-match";
 import type { ThesisDimension } from "./thesis";
 
@@ -68,4 +69,39 @@ describe("parseSignals", () => {
     const raw = "```json\n" + JSON.stringify([{ dimensionKey: "大客户", direction: "bull", materiality: 70, note: "n" }]) + "\n```";
     expect(parseSignals(raw, keys)).toHaveLength(1);
   });
+});
+
+// 证据候选闸（2026-07-30）：实测探针里 8 条候选 6 条是治理程序文件，模型全部正确返回 []。
+// 夹具取自真库标题，别照类型声明手编。
+describe("isEvidenceCandidate", () => {
+  const PROCEDURAL = [
+    "国盾量子:关于日常关联交易的公告",
+    "国盾量子:关于召开2026年第三次临时股东会的通知",
+    "国盾量子:第四届董事会第二十八次会议决议公告",
+    "某某股份:关于使用闲置募集资金进行现金管理的公告",
+    "某某股份:关于变更会计师事务所的公告",
+    "某某股份:关于为控股子公司提供担保的公告",
+  ];
+  for (const t of PROCEDURAL) {
+    it(`挡掉程序文件：${t.slice(0, 20)}`, () => {
+      expect(isEvidenceCandidate(t)).toBe(false);
+    });
+  }
+
+  // 这些**必须**放行——它们要么带真数字，要么是真治理证据
+  const SUBSTANTIVE = [
+    "澜起科技：首次回购50万股A股股份 回购金额约1.03亿元",
+    "国盾量子:投资者关系活动记录表-7月16日-17日",
+    "兆易创新朱一明抛出不低于10亿元远期增持计划 提议公司回购股份",
+    "摩尔线程发布2026年半年度业绩预告",
+    "某某股份:关于收到上海证券交易所年报问询函的公告",
+    "某某股份:关于董事长辞职的公告",
+    "某某股份:关于差异化分红的法律意见书",
+    "某某股份:关于中标国家电网采购项目的公告",
+  ];
+  for (const t of SUBSTANTIVE) {
+    it(`放行有实质的：${t.slice(0, 20)}`, () => {
+      expect(isEvidenceCandidate(t)).toBe(true);
+    });
+  }
 });

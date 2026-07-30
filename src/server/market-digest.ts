@@ -11,53 +11,67 @@ import {
   tradeDateOf,
   cleanEntityName,
   isDigestWorthyFiling,
+  toDigestEvent,
   DIGEST_SYSTEM,
   type DigestInputs,
-  type DigestNewsIn,
   type DigestStockIn,
   type DigestSectorIn,
   type MarketDigestData,
 } from "../lib/market-digest";
 import { aggregateSectors, rankSectors, type StockFlow } from "../lib/rotation";
-import { rankDigest, isInauspicious, type DigestCandidate } from "../lib/digest-filter";
+import { isInauspicious } from "../lib/digest-filter";
+import { summarizeBreadth, isMarketLevelWorthy } from "../lib/digest-substance";
 import {
-  summarizeBreadth,
-  isMarketLevelWorthy,
-  type MacroCandidate,
-} from "../lib/digest-substance";
-import { rankMacroCandidates } from "../lib/macro-relevance";
+  categorize,
+  mergeEvents,
+  scoreEvent,
+  selectEvents,
+  coverageReport,
+  CATEGORY_LABEL,
+  type CoverageRow,
+  type RankContext,
+  type RawEvent,
+  type ScoredEvent,
+} from "../lib/digest-pipeline";
 import { upcomingDisclosureNodes } from "../lib/earnings-calendar";
 import { fetchIndexQuotes } from "./quote";
 import { llmChat, llmModel } from "./llm";
 
 const NEWS_WINDOW_HOURS = 24;
-const NEWS_TAKE = 10;
 const SECTOR_TAKE = 4;
 const STOCK_TAKE = 8;
-/** 市场级条目每层取几条（海外 / 国内 / 产业各自独立配额，避免一层挤掉另一层）。 */
-const MACRO_PER_SCOPE = 6;
-/** 同一主体在同一层最多几条——不设这个上限，海外层会被同一件事的连续追更占满。 */
-const MACRO_PER_SUBJECT = 2;
+
+// ---------------------------------------------------------------------------
+// 六步事件管线的参数（张楚寒 2026-07-30）
+// ---------------------------------------------------------------------------
+/** 候选池时间窗。30 小时而不是 24：A 股开盘前的隔夜海外消息是当天最重要的外生变量。 */
+const POOL_WINDOW_HOURS = 30;
 /**
- * 市场级候选的 importance 下限。**刻意压到 30**（=未打分的默认值）：不绑个股的条目
- * 大半挤在这一档，门槛卡在 40 会把「SK海力士跌逾17%」「美联储将公布决议」一起扔掉。
- * 质量交给 `marketRelevanceScore` 排序，不交给门槛。
+ * 候选池的 importance 下限，**刻意压得很低**。门槛的活是挡噪音，而噪音该由排序判成低分。
+ * 上一轮把国内宏观整层误杀 41/44 条，就是因为用了一个按产业事件标定的绝对门槛去卡政策类——
+ * **绝对门槛跨层不可比**。
  */
-const MACRO_MIN_IMPORTANCE = 30;
-/** 扫描上限：全市场一天资讯 2500+ 条，取 1200 会在高分档就截断，宏观层永远扫不到。 */
-const MACRO_SCAN_TAKE = 3000;
+const POOL_MIN_IMPORTANCE = 25;
+/** 扫描上限：全市场一天资讯 2500+ 条，取少了会在高分档就截断，宏观/资金层永远扫不到。 */
+const POOL_SCAN_TAKE = 3000;
+/** 张楚寒：「从中选出 15—25 个真正重要的事件」。 */
+const EVENTS_MIN = 15;
+const EVENTS_MAX = 25;
 /**
- * 「好料」的相关性下限。**刻意定得低**：门槛的活是「把噪音挡在外面」，
- * 而噪音应该由评分本身判成负分（行政通报 -6、工商登记 -4、指数复述 -6），不该由门槛兜。
- *
- * 一开始定的是 6，实测踩了坑：国内宏观层 44 条候选被挡掉 41 条，其中
- * 「《国家应对气候变化十五五规划》」「央行上海总部：贷款余额同比增长5.9%」都是真·当天宏观事件——
- * 因为 6 分是按产业事件（有动作＋有金额）标定的，而政策类天生拿不到那么高。
- * **绝对门槛跨层不可比**，所以门槛降到 3，质量交给排序 + 每层配额。
+ * 每类保底/上限：保底防止弱势类被挤空，上限防止公司类吃干名额。
+ * 保底定 3 而不是 2：实测保底 2 时国内宏观从 128 条池子里只出 2 条，
+ * 而「国内有啥大事」正是 sway 连着两轮反馈说不足的那一层——全局分数竞争里它天然弱势
+ * （政策类拿不到产业事件那种「动作＋金额」的高分），只能靠配额保。
  */
-const MACRO_MIN_RELEVANCE = 3;
-/** 每层兜底条数：好料不足时从次一档补，防止我手写的评分词表有洞把整层静默清空。 */
-const MACRO_FLOOR_PER_SCOPE = 3;
+const EVENTS_PER_CATEGORY_FLOOR = 3;
+const EVENTS_PER_CATEGORY_CAP = 8;
+/**
+ * 同一主体在同一类里最多几条。实测第一版公司类 8 个位置有 6 个是同一件事
+ * （「兆易创新朱一明套现44亿后增持回购」的六种写法）——连续追更的措辞和数字都不一样，
+ * 标题相似度收不住，只有主体是同一个。
+ */
+const EVENTS_PER_SUBJECT_CAP = 2;
+
 /** 每只重点股最多带几条自有事实进提示词。 */
 const STOCK_FACTS = 2;
 
@@ -242,67 +256,22 @@ async function attachSectorFacts(db: DigestDb, sectors: DigestSectorIn[]) {
 }
 
 /**
- * 国际 / 国内宏观 / 产业三层素材（张楚寒：「我想要这里放信息量，就是国际市场有啥大事、
- * 国内整体有啥大事，汇总一下当天市场重要信息」）。
+ * 第 1 步：候选事件池（张楚寒：「每天先形成 30—80 个候选事件」）。
  *
- * 判据是**没绑定任何个股**（板块绑定不算）——市场级新闻不会绑到某家公司上，而个股公告一定绑。
- * 这条比关键词稳，也正好避开既有 `gatherNews` 的问题：那条链路按 importance 排，个股公告
- * 75 分永远压过「SK海力士 HBM4 扩产」70 分，宏观层被系统性挤掉。
+ * 与被它取代的 `gatherMacro` + `gatherNews` 的区别不只是合并了两条取数：
+ * 那两条各自按 importance 排序、各自截断，等于**两份互不知情的榜单**——
+ * 个股公告 75 分永远压过「SK海力士 HBM4 扩产」70 分，宏观层被系统性挤掉，
+ * 而重磅榜和宏观榜之间又会重复。现在只有一个池子，去重/分类/配额都在池子上做。
  *
- * 2026-07-30（sway：「还是觉得这块信息不足」）三处放开，每处都有实测数字：
- *   ① 判据从「零绑定」改成「不绑个股」。原来那条把**只绑板块**的宏观新闻整批排除了——
- *      近 24h 有 36 条，里面是「美联储利率决议即将公布」「SK海力士电话会」「欧洲股市多数走高」，
- *      即当天最该讲的海外主线。池子 29 → 58 条。
- *   ② importance 门槛 40 → 30。这不是放水：库里 681 条不绑个股的条目挤在 importance=30
- *      这一默认档，其中既有「SK海力士跌逾17%」也有「釜山破122年最高气温」——importance
- *      在这一档没有鉴别力，得靠 `marketRelevanceScore` 去分辨，不能靠门槛一刀切掉。
- *   ③ 排序主键从 importance 换成相关性（`rankMacroCandidates`），并给同一主体设上限：
- *      原来海外 5 个位置里 4 个是韩股熔断的连续追更。
+ * 池子刻意放宽（importance ≥ 25、近 30 小时）：**质量交给排序和配额，不交给门槛**。
+ * 绝对门槛跨层不可比——这是上一轮把国内宏观整层误杀 41/44 条学到的。
  */
-async function gatherMacro(db: DigestDb) {
-  const since = new Date(Date.now() - NEWS_WINDOW_HOURS * 60 * 60 * 1000);
+async function gatherEventPool(db: DigestDb, hours = POOL_WINDOW_HOURS) {
+  const since = new Date(Date.now() - hours * 60 * 60 * 1000);
   const rows = await db.newsItem.findMany({
-    where: { importance: { gte: MACRO_MIN_IMPORTANCE }, publishedAt: { gte: since } },
+    where: { importance: { gte: POOL_MIN_IMPORTANCE }, publishedAt: { gte: since } },
     orderBy: [{ importance: "desc" }, { publishedAt: "desc" }],
-    take: MACRO_SCAN_TAKE,
-    select: {
-      title: true,
-      brief: true,
-      summary: true,
-      eventType: true,
-      importance: true,
-      source: { select: { name: true } },
-      entities: { select: { entity: { select: { type: true } } } },
-    },
-  });
-  const cands: MacroCandidate[] = rows
-    // 「市场级」= 不绑任何**个股**。绑了板块（SECTOR）的仍然是市场级——一条「美股半导体概念股
-    // 走强，美联储将公布决议」会被打上半导体板块标签，但它讲的不是某家公司。
-    .filter((r) =>
-      r.entities.every((e) => e.entity.type !== "COMPANY" && e.entity.type !== "STOCK"),
-    )
-    .filter((r) => !isInauspicious(r.title, r.eventType))
-    .map((r) => ({
-      title: r.title,
-      brief: (r.brief ?? r.summary ?? "").slice(0, 90),
-      source: r.source.name,
-      importance: r.importance,
-    }));
-  return rankMacroCandidates(cands, {
-    perScope: MACRO_PER_SCOPE,
-    perSubject: MACRO_PER_SUBJECT,
-    minScore: MACRO_MIN_RELEVANCE,
-    floorPerScope: MACRO_FLOOR_PER_SCOPE,
-  });
-}
-
-/** 今日重磅：复用早报选材（剔退市晦气、宏观加权、同主体折叠）。 */
-async function gatherNews(db: DigestDb): Promise<DigestNewsIn[]> {
-  const since = new Date(Date.now() - NEWS_WINDOW_HOURS * 60 * 60 * 1000);
-  const rows = await db.newsItem.findMany({
-    where: { importance: { gte: 55 }, publishedAt: { gte: since } },
-    orderBy: [{ importance: "desc" }, { publishedAt: "desc" }],
-    take: 60,
+    take: POOL_SCAN_TAKE,
     select: {
       id: true,
       title: true,
@@ -310,47 +279,119 @@ async function gatherNews(db: DigestDb): Promise<DigestNewsIn[]> {
       summary: true,
       importance: true,
       eventType: true,
+      tier: true,
       publishedAt: true,
       source: { select: { name: true } },
-      entities: { select: { entityId: true, entity: { select: { type: true } } } },
+      entities: {
+        select: { entityId: true, entity: { select: { name: true, type: true } } },
+      },
     },
   });
-  const briefById = new Map(rows.map((r) => [r.id, r.brief ?? r.summary ?? ""]));
-  const cands: DigestCandidate[] = rows
-    // 复盘只要市场级事件：剔掉募集资金开户 / 监管协议 / 中介核查意见这类纯事务性文件
-    .filter((r) => isDigestWorthyFiling(r.title))
-    .map((r) => ({
+
+  const pool: RawEvent[] = [];
+  for (const r of rows) {
+    if (isInauspicious(r.title, r.eventType)) continue;
+    if (!isDigestWorthyFiling(r.title)) continue;
+    if (!isMarketLevelWorthy(r.title)) continue;
+    pool.push({
       id: r.id,
       title: r.title,
+      brief: (r.brief ?? r.summary ?? "").slice(0, 90),
+      source: r.source.name,
+      tier: r.tier,
       importance: r.importance,
-      eventType: r.eventType,
       publishedAt: r.publishedAt,
-      hasEntity: r.entities.length > 0,
-      entityKeys: r.entities
-        .filter((e) => e.entity.type === "COMPANY" || e.entity.type === "STOCK")
-        .map((e) => e.entityId),
-      source: { name: r.source.name },
-    }));
-  return rankDigest(cands, NEWS_TAKE).map((c) => ({
-    title: c.title,
-    source: c.source.name,
-    brief: (briefById.get(c.id) ?? "").slice(0, 80),
-  }));
+      entityNames: r.entities.map((e) => cleanEntityName(e.entity.name)),
+      entityIds: r.entities.map((e) => e.entityId),
+      entityTypes: r.entities.map((e) => e.entity.type),
+      eventType: r.eventType,
+    });
+  }
+  return pool;
+}
+
+/**
+ * 排序判据要用到的三个集合。这三样都是**当日实况**，不是词表——
+ * 「与当日涨跌的解释力」「与用户持仓的相关度」「是否改变原有投资逻辑」
+ * 分别由它们回答。
+ */
+async function gatherRankContext(
+  db: DigestDb,
+  sectors: { strong: DigestSectorIn[]; weak: DigestSectorIn[] },
+  stocks: DigestStockIn[],
+  now: Date,
+): Promise<RankContext> {
+  const hot = new Set<string>();
+  for (const s of [...sectors.strong, ...sectors.weak]) {
+    hot.add(s.name);
+    for (const l of s.leaders) hot.add(cleanEntityName(l));
+  }
+  for (const s of stocks) hot.add(cleanEntityName(s.name));
+
+  const [watched, touched] = await Promise.all([
+    db.$queryRawUnsafe<{ name: string }[]>(`
+      SELECT DISTINCT e.name FROM "Watchlist" w JOIN "Entity" e ON e.id = w."entityId"
+    `),
+    db.$queryRawUnsafe<{ newsId: string }[]>(
+      `SELECT DISTINCT "newsId" FROM "ThesisSignal" WHERE "publishedAt" >= $1`,
+      new Date(now.getTime() - POOL_WINDOW_HOURS * 60 * 60 * 1000),
+    ),
+  ]);
+
+  return {
+    now,
+    hotSubjects: hot,
+    heldSubjects: new Set(watched.map((w) => cleanEntityName(w.name))),
+    thesisTouched: new Set(touched.map((t) => t.newsId)),
+  };
+}
+
+export type PipelineResult = {
+  events: ScoredEvent[];
+  coverage: CoverageRow[];
+  poolSize: number;
+  mergedSize: number;
+};
+
+/**
+ * 第 1–5 步跑完，交给第 6 步（模型）。**零 AI**：分类靠词表、聚类靠字符二元组、
+ * 排序靠既有评分——张楚寒建议这几步用便宜模型，规则做得更省也更稳（可单测、确定性）。
+ */
+export function runEventPipeline(
+  pool: RawEvent[],
+  ctx: RankContext,
+): PipelineResult {
+  const merged = mergeEvents(pool); // 第 2 步：去重合并
+  const scored = merged.map((m) =>
+    scoreEvent({ ...m, category: categorize(m) }, ctx),
+  ); // 第 3 步：分类 + 打分
+  const picked = selectEvents(scored, {
+    min: EVENTS_MIN,
+    max: EVENTS_MAX,
+    perCategoryFloor: EVENTS_PER_CATEGORY_FLOOR,
+    perCategoryCap: EVENTS_PER_CATEGORY_CAP,
+    perSubjectCap: EVENTS_PER_SUBJECT_CAP,
+  }); // 第 5 步：选 15–25
+  const coverage = coverageReport(scored, picked, EVENTS_PER_CATEGORY_FLOOR); // 第 4 步：查遗漏
+  return { events: picked, coverage, poolSize: pool.length, mergedSize: merged.length };
 }
 
 export async function gatherDigestInputs(
   db: DigestDb,
   now = new Date(),
 ): Promise<DigestInputs> {
-  const [indices, sectors, news, macro] = await Promise.all([
+  const [indices, sectors, pool] = await Promise.all([
     fetchIndexQuotes(),
     gatherSectors(db),
-    gatherNews(db),
-    gatherMacro(db),
+    gatherEventPool(db),
   ]);
   const stocks = await gatherStocks(db, sectors.flows);
   // 板块 note 也需要事实支撑，否则只能写「板块走强」——取它代表股当日的消息面
   await attachSectorFacts(db, [...sectors.strong, ...sectors.weak]);
+
+  // 第 1–5 步：候选池 → 去重合并 → 六类分类 → 打分排序 → 选 15–25 + 遗漏检查（零 AI）
+  const ctx = await gatherRankContext(db, sectors, stocks, now);
+  const pipeline = runEventPipeline(pool, ctx);
   return {
     tradeDate: tradeDateOf(now),
     market: "CN",
@@ -361,10 +402,10 @@ export async function gatherDigestInputs(
     })),
     // 指数会骗人：权重护盘时指数只跌 0.5%，个股可能 4000 只在跌。宽度是「今天什么盘」的骨架。
     breadth: sectors.flows.length > 0 ? summarizeBreadth(sectors.flows) : null,
-    macro,
+    events: pipeline.events.map(toDigestEvent),
+    coverage: pipeline.coverage,
     sectors: { strong: sectors.strong, weak: sectors.weak },
     stocks,
-    news,
     // 催化节点是**全市场统一的法定披露截止日**（非个股预约日），所以 name 填报告期而非公司名。
     catalysts: upcomingDisclosureNodes(now, 4).map((n) => ({
       name: n.period,
@@ -395,8 +436,8 @@ export async function generateMarketDigest(
   const inputs = await gatherDigestInputs(db, now);
   const tradeDate = inputs.tradeDate;
 
-  if (inputs.indices.length === 0 && inputs.news.length === 0) {
-    return { status: "no-data", tradeDate, reason: "指数与资讯都取不到" };
+  if (inputs.indices.length === 0 && inputs.events.length === 0) {
+    return { status: "no-data", tradeDate, reason: "指数与事件池都取不到" };
   }
 
   const hash = digestInputHash(inputs);
@@ -408,8 +449,11 @@ export async function generateMarketDigest(
     return { status: "unchanged", tradeDate };
   }
 
+  // 第 6 步：**只有这一次调用**用强模型档——前五步全是纯规则。
+  // 事件从 ~10 条涨到 15–25 条，token 只涨在这一次 prompt 上，不涨调用次数（张楚寒的成本要求）。
   const raw = await llmChat(DIGEST_SYSTEM, buildDigestPrompt(inputs), {
-    maxTokens: 2000,
+    maxTokens: 3200,
+    tier: "strong",
   });
   const data = parseDigestResponse(raw, inputs.breadth, inputs.stocks, [
     ...inputs.sectors.strong,
@@ -433,12 +477,19 @@ export async function generateMarketDigest(
     // 宽度是代码算的，与 AI 文字分开存：模型不产出数字（铁律：数字由代码算）
     stats: data.breadth ?? undefined,
     inputHash: hash,
-    model: llmModel(),
+    model: llmModel("strong"),
   };
   await db.marketDigest.upsert({
     where: { tradeDate_market: { tradeDate, market: inputs.market } },
     create: { tradeDate, market: inputs.market, ...payload },
     update: payload,
   });
+  // 管线选了 N 条事件、模型只写了 M 条 driver —— M 远小于 N 说明它把筛选又做了一遍，
+  // 而这在成品上跟「今天没什么事」完全同形。报出来，别让它静默。
+  if (data.drivers.length < Math.min(inputs.events.length, EVENTS_MIN) * 0.6) {
+    console.warn(
+      `[digest] ⚠ 事件 ${inputs.events.length} 条 → driver 仅 ${data.drivers.length} 条：模型压缩了内容，或判据滤掉太多`,
+    );
+  }
   return { status: "created", tradeDate, data };
 }

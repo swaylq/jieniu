@@ -1,7 +1,13 @@
 import { PrismaClient } from "../../generated/prisma";
 import { classifyNewsAgainstThesis } from "~/server/ai";
-import { isMaterialCandidate, candidateDimensions } from "~/lib/thesis-match";
+import {
+  isMaterialCandidate,
+  candidateDimensions,
+  isEvidenceCandidate,
+  evidenceBody,
+} from "~/lib/thesis-match";
 import { isDigestWorthyFiling } from "~/lib/market-digest";
+import { judgeEvidence } from "~/lib/evidence";
 import type { ThesisDimension } from "~/lib/thesis";
 
 /**
@@ -39,6 +45,8 @@ type Job = {
   summary: string | null;
   eventType: string | null;
   publishedAt: Date;
+  tier: string;
+  sourceName: string;
 };
 
 /** 有 thesis 的实体，按「被自选 → 新闻多」排序。 */
@@ -57,7 +65,11 @@ async function pickEntities(limit: number) {
 }
 
 /** 攒出本轮要上 AI 的 (实体, 新闻) 任务，直到 limit 条为止。 */
-async function buildJobs(limit: number, perEntity: number): Promise<Job[]> {
+async function buildJobs(
+  limit: number,
+  perEntity: number,
+  redoLegacy: boolean,
+): Promise<Job[]> {
   const jobs: Job[] = [];
   // 取比 limit 多的实体候选：大部分实体的新闻早分类完了，会被跳过
   const entities = await pickEntities(Math.max(limit, 400));
@@ -77,21 +89,26 @@ async function buildJobs(limit: number, perEntity: number): Promise<Job[]> {
             id: true,
             title: true,
             summary: true,
+            content: true,
             importance: true,
             eventType: true,
             tier: true,
             publishedAt: true,
             eventId: true,
+            source: { select: { name: true } },
           },
         },
       },
     });
     if (links.length === 0) continue;
 
+    // 「已处理过」的判定：默认=有任何信号；--redo-legacy 时=有**新标准下**的信号（grade 非空）。
     const done = new Set(
       (
         await db.thesisSignal.findMany({
-          where: { entityId: ent.entityId },
+          where: redoLegacy
+            ? { entityId: ent.entityId, grade: { not: null } }
+            : { entityId: ent.entityId },
           select: { newsId: true },
         })
       ).map((s) => s.newsId),
@@ -128,15 +145,20 @@ async function buildJobs(limit: number, perEntity: number): Promise<Job[]> {
       // 募集资金开户 / 监管协议 / 中介核查意见这类程序性文件，模型正确地判定「不触及任何维度」。
       // 复用复盘那套过滤，把 AI 预算花在可能真有料的新闻上。
       if (!isDigestWorthyFiling(n.title)) continue;
+      // 再挡一道纯治理程序文件（股东会通知 / 董事会决议 / 关联交易 / 现金管理）——
+      // 实测探针 8 条候选里 6 条是这类，模型全部正确返回 []，等于白烧 AI 预算。
+      if (!isEvidenceCandidate(n.title)) continue;
       jobs.push({
         entityId: ent.entityId,
         entityName: ent.name,
         dims,
         newsId: n.id,
         title: n.title,
-        summary: n.summary,
+        summary: evidenceBody(n.title, n.content, n.summary),
         eventType: n.eventType,
         publishedAt: n.publishedAt,
+        tier: n.tier,
+        sourceName: n.source.name,
       });
       taken++;
     }
@@ -144,14 +166,52 @@ async function buildJobs(limit: number, perEntity: number): Promise<Job[]> {
   return jobs;
 }
 
+/** 判废统计：**必须可观测**，否则「模型不出货」和「判据太严」长得一模一样。 */
+const rejected = new Map<string, number>();
+/** 模型直接返回 [] 的条数——它和「判据挡掉」是两种完全不同的病，必须分开计数。 */
+let emptyResponses = 0;
+
 async function runJob(j: Job): Promise<number> {
   const cand = candidateDimensions(j.dims, `${j.title}\n${j.summary ?? ""}`);
   const use = cand.length > 0 ? cand : j.dims;
   const signals = await classifyNewsAgainstThesis(
-    { title: j.title, summary: j.summary, eventType: j.eventType },
+    {
+      title: j.title,
+      summary: j.summary,
+      eventType: j.eventType,
+      subject: j.entityName,
+      tier: j.tier,
+      sourceName: j.sourceName,
+    },
     use,
   );
+  if (signals.length === 0) emptyResponses++;
+  let kept = 0;
   for (const s of signals) {
+    // 提示词已经把标准写死了，但模型仍会时不时交出「重大资产重组通常涉及战略调整」这种；
+    // 判据层再滤一道，**不合格的一条都不入库**——库里躺着的推测最终会出现在用户眼前，
+    // 到那时它看起来和真证据一模一样（张楚寒正是这么发现问题的）。
+    const verdict = judgeEvidence({
+      fact: s.fact,
+      why: s.why,
+      dimensionKey: s.dimensionKey,
+      subject: j.entityName,
+      newsTitle: j.title,
+      tier: j.tier,
+    });
+    if (!verdict.ok) {
+      const key = verdict.reason.split("——")[0]!.split("（")[0]!;
+      rejected.set(key, (rejected.get(key) ?? 0) + 1);
+      continue;
+    }
+    const payload = {
+      direction: s.direction,
+      materiality: s.materiality,
+      note: s.fact,
+      fact: s.fact,
+      why: s.why,
+      grade: verdict.grade,
+    };
     await db.thesisSignal.upsert({
       where: {
         entityId_newsId_dimensionKey: {
@@ -164,26 +224,28 @@ async function runJob(j: Job): Promise<number> {
         entityId: j.entityId,
         newsId: j.newsId,
         dimensionKey: s.dimensionKey,
-        direction: s.direction,
-        materiality: s.materiality,
-        note: s.note,
         newsTitle: j.title,
         publishedAt: j.publishedAt,
+        ...payload,
       },
-      update: { direction: s.direction, materiality: s.materiality, note: s.note },
+      update: payload,
     });
+    kept++;
   }
-  return signals.length;
+  return kept;
 }
 
 async function main() {
   const limit = num("limit", 200);
   const concurrency = num("concurrency", 6);
   const perEntity = num("per-entity", 12);
+  const redoLegacy = process.argv.includes("--redo-legacy");
 
   const before = await db.thesisSignal.count();
-  console.log(`[signals] 现有信号 ${before} 条，开始攒本轮任务（上限 ${limit}）…`);
-  const jobs = await buildJobs(limit, perEntity);
+  console.log(
+    `[signals] 现有信号 ${before} 条，开始攒本轮任务（上限 ${limit}${redoLegacy ? "，重跑旧标准行" : ""}）…`,
+  );
+  const jobs = await buildJobs(limit, perEntity, redoLegacy);
   console.log(`[signals] 本轮 ${jobs.length} 条新闻上 AI，并发 ${concurrency}`);
   if (jobs.length === 0) {
     console.log("[signals] 没有待分类的新闻——该轮为空（正常，说明已追平）");
@@ -235,6 +297,21 @@ async function main() {
     `[signals] 完成：本轮 ${done} 条｜新写信号 ${after - before}｜失败 ${failed}｜库内合计 ${after}`,
   );
   console.log(`[signals] 材料度分布：${dist.map((d) => `${d.b}:${d.n}`).join("  ")}`);
+  // 判废是设计的一部分（宁可留空不写推测），但**必须报出来**：判废率突然飙高说明
+  // 提示词坏了或模型换了，不报就会表现成「这些股今天没料」——那正是我们反复栽的坑。
+  const rejTotal = [...rejected.values()].reduce((a, b) => a + b, 0);
+  console.log(
+    `[signals] 产出分布：模型返回空 ${emptyResponses}/${done} 条｜模型给了证据 ${done - emptyResponses} 条｜其中判废 ${rejTotal}｜入库 ${written}`,
+  );
+  if (rejTotal > 0) {
+    console.log(
+      `[signals] 证据判废 ${rejTotal} 条（不入库）：` +
+        [...rejected]
+          .sort((a, b) => b[1] - a[1])
+          .map(([r, n]) => `${r} ${n}`)
+          .join("｜"),
+    );
+  }
 }
 
 main()

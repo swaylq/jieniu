@@ -382,7 +382,8 @@ export default async function EntityPage({
           name={entity.name}
           reason={userThesis.reason}
           dimensions={myDims}
-          signals={thesisSignals}
+          signals={thesisSignals.items}
+          droppedSignals={thesisSignals.dropped}
           updatedAt={userThesis.updatedAt}
         />
       </div>
@@ -391,7 +392,8 @@ export default async function EntityPage({
         <ThesisCard
           name={entity.name}
           data={thesisData}
-          signals={thesisSignals}
+          signals={thesisSignals.items}
+          droppedSignals={thesisSignals.dropped}
           updatedAt={thesis?.updatedAt}
         />
         {session?.user ? <AdoptThesisButton entityId={id} /> : null}
@@ -445,7 +447,7 @@ export default async function EntityPage({
       </div>
     ) : null;
   // 事件时间线复盘（P5-11）：材料级信号 + 你的决策，倒序 + 后续印证判定。
-  const timeline = buildEventTimeline(thesisSignals, decisions);
+  const timeline = buildEventTimeline(thesisSignals.items, decisions);
   const timelineBlock =
     timeline.length > 0 ? (
       <div className="mb-6">

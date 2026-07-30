@@ -1,6 +1,12 @@
 import { PrismaClient } from "../../generated/prisma";
 import { classifyNewsAgainstThesis } from "~/server/ai";
-import { isMaterialCandidate, candidateDimensions } from "~/lib/thesis-match";
+import {
+  isMaterialCandidate,
+  candidateDimensions,
+  isEvidenceCandidate,
+  evidenceBody,
+} from "~/lib/thesis-match";
+import { judgeEvidence } from "~/lib/evidence";
 import type { ThesisDimension } from "~/lib/thesis";
 
 /**
@@ -34,6 +40,7 @@ async function main() {
             id: true,
             title: true,
             summary: true,
+            content: true,
             importance: true,
             eventType: true,
             tier: true,
@@ -78,15 +85,41 @@ async function main() {
       ) {
         continue;
       }
+      if (!isEvidenceCandidate(n.title)) continue;
       processed++;
       const cand = candidateDimensions(dims, `${n.title}\n${n.summary ?? ""}`);
       const use = cand.length > 0 ? cand : dims;
       try {
         const signals = await classifyNewsAgainstThesis(
-          { title: n.title, summary: n.summary, eventType: n.eventType },
+          {
+            title: n.title,
+            summary: evidenceBody(n.title, n.content, n.summary),
+            eventType: n.eventType,
+            subject: th.entity.name,
+            tier: n.tier,
+          },
           use,
         );
+        let kept = 0;
         for (const s of signals) {
+          // 证据判据（张楚寒 2026-07-30）：不合格的一条都不入库。与 backfill-signals 同一把尺子。
+          const verdict = judgeEvidence({
+            fact: s.fact,
+            why: s.why,
+            dimensionKey: s.dimensionKey,
+            subject: th.entity.name,
+            newsTitle: n.title,
+            tier: n.tier,
+          });
+          if (!verdict.ok) continue;
+          const payload = {
+            direction: s.direction,
+            materiality: s.materiality,
+            note: s.fact,
+            fact: s.fact,
+            why: s.why,
+            grade: verdict.grade,
+          };
           await db.thesisSignal.upsert({
             where: {
               entityId_newsId_dimensionKey: {
@@ -99,17 +132,18 @@ async function main() {
               entityId: th.entityId,
               newsId: n.id,
               dimensionKey: s.dimensionKey,
-              direction: s.direction,
-              materiality: s.materiality,
-              note: s.note,
               newsTitle: n.title,
               publishedAt: n.publishedAt,
+              ...payload,
             },
-            update: { direction: s.direction, materiality: s.materiality, note: s.note },
+            update: payload,
           });
           written++;
+          kept++;
         }
-        console.log(`  ${th.entity.name} · "${n.title.slice(0, 22)}…" → ${signals.length} 信号`);
+        console.log(
+          `  ${th.entity.name} · "${n.title.slice(0, 22)}…" → ${kept}/${signals.length} 信号（判废 ${signals.length - kept}）`,
+        );
       } catch (err) {
         console.error(`  ✗ ${n.title.slice(0, 18)}:`, (err as Error).message);
       }

@@ -23,8 +23,29 @@ import { dedupeSearchResults } from "~/lib/search";
 import { classifyStockQuery, normalizeStockName } from "~/lib/add-stock";
 import { REPORT_EVENT_TYPE } from "~/lib/research-reports";
 import { isSeedableStock } from "~/lib/universe";
+import { qualifyStoredSignal, type EvidenceGrade } from "~/lib/evidence";
+
 import { fetchQuote } from "~/server/quote";
 import { resolveCodeByName, ensureStockEntities } from "~/server/stocks";
+
+/**
+ * 逻辑追踪器一条「证据」的对外形状。比库里那行多了 `grade`（直接证据/旁证）与来源信息——
+ * 证据抽屉要展示「来源：公司公告 | 2026-07-17 | 一级来源」，可信度的一半来自知道证据有多硬。
+ */
+export type ThesisSignalOut = {
+  dimensionKey: string;
+  direction: string;
+  materiality: number;
+  note: string;
+  fact: string;
+  why: string;
+  grade: EvidenceGrade;
+  newsTitle: string;
+  newsId: string | null;
+  publishedAt: Date;
+  sourceName: string;
+  tier: string;
+};
 
 export const entityRouter = createTRPCRouter({
   getById: publicProcedure
@@ -102,24 +123,71 @@ export const entityRouter = createTRPCRouter({
     }),
 
   /** 触及该实体投资逻辑维度的信号（Phase 3 P3-3），按材料度×时间。供 thesis 卡显示"近期命中"。 */
+  /**
+   * 逻辑追踪器 / 动态日志的信号源。**读路自带证据判据**（张楚寒 2026-07-30：
+   * 「现在这些『最新证据』很多并不是真正的证据，和投资命题也没有完全对应上」）。
+   *
+   * 判在读路而不是只判在写路，是为了让存量 395 条**立刻**按新标准过滤——
+   * 等回填意味着这几天用户还在看假证据。写入时已判过的行采信 grade，不重复算。
+   */
   thesisSignals: publicProcedure
     .input(z.object({ id: z.string() }))
-    .query(({ ctx, input }) =>
-      ctx.db.thesisSignal.findMany({
-        where: { entityId: input.id },
-        orderBy: [{ materiality: "desc" }, { publishedAt: "desc" }],
-        take: 40,
-        select: {
-          dimensionKey: true,
-          direction: true,
-          materiality: true,
-          note: true,
-          newsTitle: true,
-          newsId: true,
-          publishedAt: true,
-        },
-      }),
-    ),
+    .query(async ({ ctx, input }) => {
+      const [entity, rows] = await Promise.all([
+        ctx.db.entity.findUnique({
+          where: { id: input.id },
+          select: { name: true },
+        }),
+        ctx.db.thesisSignal.findMany({
+          where: { entityId: input.id },
+          orderBy: [{ materiality: "desc" }, { publishedAt: "desc" }],
+          take: 60,
+          select: {
+            dimensionKey: true,
+            direction: true,
+            materiality: true,
+            note: true,
+            fact: true,
+            why: true,
+            grade: true,
+            newsTitle: true,
+            newsId: true,
+            publishedAt: true,
+            news: {
+              select: { tier: true, source: { select: { name: true } } },
+            },
+          },
+        }),
+      ]);
+      const subject = entity?.name ?? "";
+      const out: ThesisSignalOut[] = [];
+      for (const r of rows) {
+        const v = qualifyStoredSignal(
+          { ...r, tier: r.news.tier },
+          subject,
+        );
+        if (!v.ok) continue;
+        out.push({
+          dimensionKey: r.dimensionKey,
+          direction: r.direction,
+          materiality: r.materiality,
+          note: r.fact ?? r.note,
+          fact: r.fact ?? r.note,
+          why: r.why ?? "",
+          grade: v.grade,
+          newsTitle: r.newsTitle,
+          newsId: r.newsId,
+          publishedAt: r.publishedAt,
+          sourceName: r.news.source.name,
+          tier: r.news.tier,
+        });
+        if (out.length >= 40) break;
+      }
+      // `dropped` 是**给用户看的诚实**：判废后追踪器可能一条证据都不剩，
+      // 若此时只说「近期无动态触及逻辑」就是在撒谎——明明有 20 条，只是都没达到证据标准。
+      // 兜底/降级机制必须可观测，这条在数据侧和 UI 侧都成立。
+      return { items: out, dropped: rows.length - out.length };
+    }),
 
   /** 覆盖图谱（Phase 3 P3-5）：公司所属行业 + 同板块竞品，及各自近期资讯，把生态纳入监控视野。 */
   ecosystem: publicProcedure

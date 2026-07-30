@@ -6,6 +6,14 @@ import "./src/env.js";
 
 /** @type {import("next").NextConfig} */
 const config = {
+  /**
+   * 构建产物目录。默认 `.next`，但**可以用 `NEXT_DIST_DIR` 挪开**——这不是洁癖，是防事故：
+   * 线上那台 `next start` 把 build manifest 载在内存里，任何人在同一个 `.next` 上再跑一次
+   * `build`/`dev`，改动过的静态资源立刻 400，首页却仍然 200（我们已经踩过两次）。
+   * 于是「本地开个 dev server 看一眼 UI」这种无害动作会打穿线上。
+   * 现在验证 UI 一律：`NEXT_DIST_DIR=.next-dev next dev -p 3939`，与线上产物完全隔离。
+   */
+  distDir: process.env.NEXT_DIST_DIR ?? ".next",
   experimental: {
     /**
      * 客户端路由缓存存活时间（秒）。

@@ -5,7 +5,12 @@
 
 import type { AlertKind } from "./alert-outbox";
 import type { MarketDigestData } from "./market-digest";
-import { SCOPE_LABEL, type DigestScope, type MarketBreadth } from "./digest-substance";
+import { type MarketBreadth } from "./digest-substance";
+import {
+  CATEGORIES,
+  CATEGORY_LABEL,
+  type EventCategory,
+} from "./digest-pipeline";
 import type { UserDigestData } from "./user-digest";
 
 export type MailItem = {
@@ -120,13 +125,13 @@ function briefSection(n: number, title: string, inner: string): string {
 
 /** 核心驱动按「国际 / 国内 / 产业」三层铺开——与首屏同构（2026-07-29 改版）。 */
 function driverGroups(drivers: MailBrief["data"]["drivers"]): string {
-  const scopes: DigestScope[] = ["overseas", "domestic", "industry"];
+  const scopes: EventCategory[] = [...CATEGORIES];
   return scopes
     .map((s) => {
       const items = drivers.filter((d) => d.scope === s).map((d) => d.text);
       if (items.length === 0) return "";
       return `<div style="margin-top:8px">
-        <div style="font-size:11px;font-weight:700;letter-spacing:.05em;color:#b45309">${SCOPE_LABEL[s]}</div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:.05em;color:#b45309">${CATEGORY_LABEL[s]}</div>
         ${bullets(items)}
       </div>`;
     })

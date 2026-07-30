@@ -6,14 +6,32 @@
 
 const DEFAULT_MODEL = "deepseek/deepseek-chat";
 
-export function llmModel(): string {
+/**
+ * 模型分层（张楚寒 2026-07-30）：「成本上不用把所有内容都交给贵模型：行情统计用程序完成，
+ * 便宜模型负责分类、聚类和打标，较强模型只负责最终 15—25 条卡片和总判断。
+ * 内容增加两三倍，模型成本不需要同步增加两三倍。」
+ *
+ * 解牛的实现比这更省一档：**分类/聚类/打标全是纯规则**（`digest-pipeline.ts`，零 token、
+ * 确定性、可单测），所以只剩两档——默认档（便宜模型，跑所有常规调用）与 `strong` 档
+ * （只给复盘的最终成文与总判断）。`strong` 没配就退回默认档，不会因为漏配环境变量而静默变贵/变差。
+ */
+export type LlmTier = "default" | "strong";
+
+export function llmModel(tier: LlmTier = "default"): string {
+  if (tier === "strong") {
+    return (
+      process.env.OPENROUTER_MODEL_STRONG ??
+      process.env.OPENROUTER_MODEL ??
+      DEFAULT_MODEL
+    );
+  }
   return process.env.OPENROUTER_MODEL ?? DEFAULT_MODEL;
 }
 
 export async function llmChat(
   system: string,
   user: string,
-  opts: { maxTokens?: number; temperature?: number } = {},
+  opts: { maxTokens?: number; temperature?: number; tier?: LlmTier } = {},
 ): Promise<string> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) {
@@ -30,7 +48,7 @@ export async function llmChat(
       "X-Title": "jieniu",
     },
     body: JSON.stringify({
-      model: llmModel(),
+      model: llmModel(opts.tier ?? "default"),
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },

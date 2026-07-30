@@ -1,5 +1,9 @@
 import type { MarketDigestData, DigestDriverOut } from "~/lib/market-digest";
-import { SCOPE_LABEL, type DigestScope } from "~/lib/digest-substance";
+import {
+  CATEGORY_LABEL,
+  CATEGORIES,
+  type EventCategory,
+} from "~/lib/digest-pipeline";
 
 export type MarketBriefProps = {
   tradeDate: string;
@@ -42,16 +46,18 @@ function Pct({ v }: { v: number | null }) {
   );
 }
 
-const SCOPE_ORDER: DigestScope[] = ["overseas", "domestic", "industry"];
+/** 六类的展示顺序＝张楚寒给的顺序：宏观、全球市场、行业、公司、资金、日历。
+ * 这里把「全球市场」放最前——A 股当天最大的外生变量常常在隔夜海外。 */
+const SCOPE_ORDER: EventCategory[] = [...CATEGORIES];
 
-/** 紧凑版每层最多几条。生成侧每层写 2-3 条，这里给 3 = 不削。 */
-const COMPACT_PER_SCOPE = 3;
+/** 紧凑版每类最多几条。六类 × 2 = 最多 12 条，比原来三层 × 3 更多，也不至于铺满首屏。 */
+const COMPACT_PER_SCOPE = 2;
 
 function DriverGroup({
   scope,
   items,
 }: {
-  scope: DigestScope;
+  scope: EventCategory;
   items: DigestDriverOut[];
 }) {
   if (items.length === 0) return null;
@@ -60,7 +66,7 @@ function DriverGroup({
       <div className="mb-1 flex items-center gap-1.5">
         <span className="h-3 w-1 rounded-full bg-brand/60" aria-hidden />
         <span className="text-[11px] font-bold tracking-wide text-brand">
-          {SCOPE_LABEL[scope]}
+          {CATEGORY_LABEL[scope]}
         </span>
       </div>
       <Bullets items={items.map((d) => d.text)} />
@@ -97,13 +103,15 @@ function BreadthStrip({ b }: { b: NonNullable<MarketDigestData["breadth"]> }) {
  * 每日 AI 市场复盘卡（首屏）。
  *
  * 2026-07-29 改版（张楚寒：「我感觉太简略了」「看似复盘 实则没内容」「我想要这里放信息量，就是
- * 国际市场有啥大事、国内整体有啥大事」）：核心驱动按**国际 / 国内 / 产业**三层铺开，上面压一条
- * 代码算出来的市场宽度；紧凑版不再退化成「一句概况 + 判断」，而是保留宽度与国际/国内各两条——
- * 那两句正是被吐槽「每天都能写一样」的部分，光留它们等于把废话浓缩了一遍。
+ * 国际市场有啥大事、国内整体有啥大事」）：核心驱动按层铺开，上面压一条代码算出来的市场宽度；
+ * 紧凑版不再退化成「一句概况 + 判断」——那两句正是被吐槽「每天都能写一样」的部分。
+ *
+ * 2026-07-30 再改：分层从三层扩到**六类**（全球市场 / 国内宏观 / 行业 / 公司 / 资金 / 日历），
+ * 与复盘生成侧的六步事件管线对齐。老数据里的 overseas/domestic 由 `normalizeScope` 映射过来。
  */
 export function MarketBrief({ tradeDate, data, compact }: MarketBriefProps) {
   const hasSectors = data.sectors.strong.length + data.sectors.weak.length > 0;
-  const byScope = (s: DigestScope) => data.drivers.filter((d) => d.scope === s);
+  const byScope = (s: EventCategory) => data.drivers.filter((d) => d.scope === s);
   /**
    * 紧凑版**不再削核心驱动**。2026-07-30 sway：「还是觉得这块信息不足」——他看的就是首页这版，
    * 而库里当天有 5 条 driver，这里只渲染出 3 条（国际1/国内1/产业1）：老逻辑是

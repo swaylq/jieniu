@@ -19,10 +19,16 @@ import {
   isVacuousWatchpoint,
   isSubstantive,
   isValidAttribution,
-  type DigestScope,
   type MacroCandidate,
   type MarketBreadth,
 } from "./digest-substance";
+import {
+  CATEGORIES,
+  CATEGORY_LABEL,
+  type CoverageRow,
+  type EventCategory,
+  type ScoredEvent,
+} from "./digest-pipeline";
 
 /**
  * 资金流数据里的 `Entity.name` 自带代码后缀（「贵州茅台(600519)」）。提示词里再拼一次代码
@@ -67,18 +73,52 @@ export type DigestStockIn = {
 export type DigestNewsIn = { title: string; source: string; brief: string };
 export type DigestCatalystIn = { name: string; label: string; date: string };
 
+/** 管线选出的一条事件在提示词里的形状（只留模型需要的字段，指纹才稳定）。 */
+export type DigestEventIn = {
+  category: EventCategory;
+  title: string;
+  brief: string;
+  source: string;
+  primary: boolean;
+  /** 几家在报道同一件事——多源印证是重要性的直接证据。 */
+  sources: number;
+  /** 该事件涉及的主体（板块/公司），用于让模型把事件和板块/个股串起来。 */
+  subjects: string[];
+  /** 排序判据的分项贡献，只用于日志与复核，不进提示词。 */
+  reasons?: Record<string, number>;
+};
+
 export type DigestInputs = {
   tradeDate: string;
   market: string;
   indices: DigestIndex[];
   breadth: MarketBreadth | null;
-  /** 市场级条目按「海外 / 国内宏观 / 产业与公司」分层——回答「国际有啥大事、国内有啥大事」。 */
-  macro: Record<DigestScope, MacroCandidate[]>;
+  /**
+   * 六步管线选出的 15–25 条事件（张楚寒 2026-07-30）。
+   * 取代了原来「三层 macro + 十条重磅资讯」两份各自为政的罗列——那种形态就是他说的
+   * 「抓到几条新闻，然后让模型总结」：没有候选池、没有去重、没有分类配额、没有遗漏检查。
+   */
+  events: DigestEventIn[];
+  /** 每类的池子/入选数，随提示词一起给模型看，让它知道哪一类今天确实没事。 */
+  coverage: CoverageRow[];
   sectors: { strong: DigestSectorIn[]; weak: DigestSectorIn[] };
   stocks: DigestStockIn[];
-  news: DigestNewsIn[];
   catalysts: DigestCatalystIn[];
 };
+
+/** 把管线的 ScoredEvent 收敛成提示词输入。 */
+export function toDigestEvent(e: ScoredEvent): DigestEventIn {
+  return {
+    category: e.category,
+    title: e.title,
+    brief: e.brief.slice(0, 90),
+    source: e.source,
+    primary: e.tier === "PRIMARY",
+    sources: e.mergedCount,
+    subjects: e.entityNames.slice(0, 3),
+    reasons: e.reasons,
+  };
+}
 
 export type DigestSectorOut = { name: string; note: string };
 export type DigestStockOut = {
@@ -86,8 +126,23 @@ export type DigestStockOut = {
   changePct: number | null;
   note: string;
 };
-/** 核心驱动带 scope：首屏能分「国际市场 / 国内宏观 / 产业与公司」三栏铺开。 */
-export type DigestDriverOut = { scope: DigestScope; text: string };
+/**
+ * 核心驱动带 scope：首屏按类铺开。
+ * 2026-07-30 从三层（overseas/domestic/industry）扩到张楚寒要的六类
+ * （全球市场 / 国内宏观 / 行业 / 公司 / 资金 / 日历）；旧库里的三层值由
+ * `normalizeScope` 映射过来，不用改历史数据。
+ */
+export type DigestDriverOut = { scope: EventCategory; text: string };
+
+/** 旧值 → 新六类。overseas→global、domestic→macro、industry 不变。 */
+export function normalizeScope(v: unknown): EventCategory {
+  if (typeof v !== "string") return "industry";
+  if (v === "overseas") return "global";
+  if (v === "domestic") return "macro";
+  return (CATEGORIES as readonly string[]).includes(v)
+    ? (v as EventCategory)
+    : "industry";
+}
 
 export type MarketDigestData = {
   overview: string;
@@ -161,6 +216,43 @@ function macroBlock(items: MacroCandidate[]): string {
   );
 }
 
+/** 一条事件在提示词里的样子。带上一手标记与多源数——模型据此判轻重。 */
+function eventLine(e: DigestEventIn): string {
+  const tags = [
+    e.primary ? "一手" : null,
+    e.sources > 1 ? `${e.sources}源同报` : null,
+    e.subjects.length > 0 ? `涉及 ${e.subjects.join("、")}` : null,
+  ].filter(Boolean);
+  return `- 【${e.source}】${e.title}${e.brief ? `——${e.brief}` : ""}${
+    tags.length > 0 ? `（${tags.join("｜")}）` : ""
+  }`;
+}
+
+function eventsBlock(events: DigestEventIn[], coverage: CoverageRow[]): string {
+  const byCat = new Map<EventCategory, DigestEventIn[]>();
+  for (const c of CATEGORIES) byCat.set(c, []);
+  for (const e of events) byCat.get(e.category)?.push(e);
+
+  const parts: string[] = [];
+  for (const c of CATEGORIES) {
+    const list = byCat.get(c)!;
+    const cov = coverage.find((x) => x.category === c);
+    if (list.length === 0) {
+      // 空类也要显式说明「今天这一类没事」，否则模型会去别的类里借素材硬凑
+      parts.push(
+        `【${CATEGORY_LABEL[c]}】（今日无入选事件${cov && cov.pool > 0 ? `，候选 ${cov.pool} 条但都不够重要` : "，候选池为空"}）`,
+      );
+      continue;
+    }
+    parts.push(
+      `【${CATEGORY_LABEL[c]}·${list.length}条${cov ? `／候选 ${cov.pool} 条` : ""}】\n${list
+        .map(eventLine)
+        .join("\n")}`,
+    );
+  }
+  return parts.join("\n\n");
+}
+
 export function buildDigestPrompt(i: DigestInputs): string {
   const indices = orNone(
     i.indices.map((x) => `- ${x.label} ${x.price} ${fmtPct(x.changePct)}`),
@@ -189,9 +281,6 @@ export function buildDigestPrompt(i: DigestInputs): string {
           : "    · 今日相关：（无该股自身的消息面事实）"),
     ),
   );
-  const news = orNone(
-    i.news.map((n) => `- 【${n.source}】${n.title}${n.brief ? `——${n.brief}` : ""}`),
-  );
   const catalysts = orNone(
     i.catalysts.map((c) => `- ${c.date} ${c.name} ${c.label}`),
   );
@@ -204,14 +293,13 @@ ${indices}
 【市场宽度（涨跌家数——指数会骗人，这才是今天什么盘）】
 ${breadth}
 
-【国际市场今日大事】
-${macroBlock(i.macro.overseas)}
+【今日事件清单——已经过筛选，不要再自己找素材】
+下面这 ${i.events.length} 条，是从当日 ${i.coverage.reduce((a, c) => a + c.pool, 0)} 条候选事件里
+**去重合并 → 按六类分类 → 逐类检查遗漏 → 按重要性排序**之后选出来的。
+排序判据是：市场影响程度、与当日涨跌的解释力、信息新鲜度、来源可靠性、与用户持仓的相关度、
+是否改变原有投资逻辑。**你的工作是把它们写成人话并串起来，不是再做一次筛选。**
 
-【国内宏观与政策今日大事】
-${macroBlock(i.macro.domestic)}
-
-【产业与公司层面今日大事】
-${macroBlock(i.macro.industry)}
+${eventsBlock(i.events, i.coverage)}
 
 【今日强势板块】
 ${strong}
@@ -222,21 +310,16 @@ ${weak}
 【重点个股（自选/热门覆盖池）及其当日自有事实】
 ${stocks}
 
-【今日重磅资讯与公告】
-${news}
-
 【下一交易日已知日程】
 ${catalysts}
 
 各字段要写什么：
 - overview：大盘概况——指数、**涨跌家数结构**、资金与情绪特征。要用上宽度数字表达「指数与个股是否背离」。
-- drivers：核心驱动，**每一类各写 2-3 条，全篇 6-9 条**，每条必须对应上面某一件具体的事，并给出 scope：
-  · scope="overseas" 国际市场（隔夜美股/日韩台、美联储、关税、海外龙头公司动向）
-  · scope="domestic" 国内宏观与政策（央行操作、部委表态、经济数据、监管口径）
-  · scope="industry" 产业与公司（价格、产能、订单、回购增持、重大公司事件）
-  上面每一类都给了素材，就**每一类都要写满 2-3 条**——读者要的正是「国际有啥大事、国内有啥大事」，
-  某一类只给一条等于没回答。只有当那一类的素材是「（无）」时才允许不给。
-  同一件事**只写一条**（素材里同一主体的多条追更要合成一条，别把三个位置花在同一件事上）。
+- drivers：核心驱动。**清单里有 ${i.events.length} 条事件，你就要写 ${i.events.length} 条 driver**
+  ——一条事件对应一条，不要合并、不要挑着写、不要「择其要者」。清单已经替你筛过了，
+  你再筛一遍就等于把筛选做了两次，用户看到的信息量会掉回改版前。
+  scope 用该条所在的类别原值：global / macro / industry / company / flow / calendar。
+  某一类标着「今日无入选事件」就**不要给它编 driver**——那一类今天确实没事，留空是正确答案。
   写法要求：把「什么事」和「对市场意味着什么」串起来，**不要只复述标题**，也**不要用板块涨跌当原因**。
 - sectors.strong / sectors.weak：板块名取自上面给的；note **必须引用该板块「今日相关」里的事实**，
   说清为什么强/为什么弱。该板块「今日相关」为（无）时，note 一律返回空字符串 ""。
@@ -248,7 +331,7 @@ ${catalysts}
 
 **正文里不要出现「1.」「2.」这类段号，也不要重复字段名当前缀**（例如别写「收尾判断：」开头）。
 只输出这个结构的 JSON：
-{"overview":"","drivers":[{"scope":"overseas","text":""}],"sectors":{"strong":[{"name":"","note":""}],"weak":[{"name":"","note":""}]},"stocks":[{"name":"","changePct":0,"note":""}],"watchpoints":[],"judgment":""}`;
+{"overview":"","drivers":[{"scope":"global","text":""}],"sectors":{"strong":[{"name":"","note":""}],"weak":[{"name":"","note":""}]},"stocks":[{"name":"","changePct":0,"note":""}],"watchpoints":[],"judgment":""}`;
 }
 
 function asStrings(v: unknown, max = 8): string[] {
@@ -259,26 +342,22 @@ function asStrings(v: unknown, max = 8): string[] {
     .slice(0, max);
 }
 
-const SCOPES: DigestScope[] = ["overseas", "domestic", "industry"];
-
 /**
  * 核心驱动。**过不了 `isSubstantive` 的直接丢**——循环归因或没有事实锚点的条目就是
  * 张楚寒说的「正确的废话」，留下来只会稀释整段。兼容旧库里的 `string[]` 形态。
  */
-function asDrivers(v: unknown, max = 9): DigestDriverOut[] {
+function asDrivers(v: unknown, max = 25): DigestDriverOut[] {
   if (!Array.isArray(v)) return [];
   const out: DigestDriverOut[] = [];
   for (const raw of v) {
-    let scope: DigestScope = "industry";
+    let scope: EventCategory = "industry";
     let text = "";
     if (typeof raw === "string") {
       text = raw.trim();
     } else if (raw && typeof raw === "object") {
       const o = raw as Record<string, unknown>;
       text = typeof o.text === "string" ? o.text.trim() : "";
-      if (typeof o.scope === "string" && (SCOPES as string[]).includes(o.scope)) {
-        scope = o.scope as DigestScope;
-      }
+      scope = normalizeScope(o.scope);
     }
     if (!text || !isSubstantive(text)) continue;
     out.push({ scope, text });
@@ -346,11 +425,7 @@ export function normalizeDrivers(v: unknown): DigestDriverOut[] {
       const o = raw as { scope?: unknown; text?: unknown };
       const text = typeof o.text === "string" ? o.text.trim() : "";
       if (!text) continue;
-      const scope =
-        typeof o.scope === "string" && (SCOPES as string[]).includes(o.scope)
-          ? (o.scope as DigestScope)
-          : "industry";
-      out.push({ scope, text });
+      out.push({ scope: normalizeScope(o.scope), text });
     }
   }
   return out;
@@ -404,10 +479,13 @@ export function parseDigestResponse(
 
   const factsBySector = new Map(sectorInputs.map((x) => [x.name, x.facts.length > 0]));
 
-  const drivers = asDrivers(o.drivers, 9);
+  const drivers = asDrivers(o.drivers, 25);
   // 核心驱动是这张卡的信息量所在。滤完不足 2 条 = 这轮模型只产出了废话，整篇判废重来，
   // 别让首屏顶着一段「指数跌了、板块弱了」的空壳（同「宁可没有也不要半截」的既有立场）。
   if (drivers.length < 2) return null;
+  // **判废率也要能看见**：管线选了 25 条事件、模型只交出 6 条 driver，说明它把筛选又做了一遍；
+  // 而这件事在成品上长得跟「今天没什么事」一模一样（上一轮「信息不足」就是这么来的）。
+  // 这里不判废，只把数字交给调用方决定要不要吵。
 
   const sec = (o.sectors ?? {}) as Record<string, unknown>;
   return {

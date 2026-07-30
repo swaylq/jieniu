@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { api } from "~/trpc/react";
-import { SignalLogItem } from "./signal-log";
+import { SignalLogList } from "./signal-log-list";
 import {
   personalizeSignals,
   SENSITIVITY_THRESHOLD,
@@ -20,6 +20,13 @@ type SignalItem = {
   note: string;
   newsTitle: string;
   newsId?: string | null;
+  publishedAt?: Date | string | null;
+  // 证据三件套（2026-07-30 张楚寒反馈）——「我的逻辑」卡与共享框架卡共用同一份证据。
+  fact?: string;
+  why?: string;
+  grade?: string;
+  sourceName?: string | null;
+  tier?: string | null;
 };
 
 const SENS_LABEL: Record<Sensitivity, string> = { low: "低", normal: "中", high: "高" };
@@ -35,6 +42,7 @@ export function MyThesisCard({
   reason: reason0,
   dimensions: dims0,
   signals,
+  droppedSignals = 0,
   updatedAt,
 }: {
   entityId: string;
@@ -42,6 +50,8 @@ export function MyThesisCard({
   reason: string | null;
   dimensions: UserDimension[];
   signals: SignalItem[];
+  /** 因未达证据标准被滤掉的条数——空态要说实话，不能装作没消息。 */
+  droppedSignals?: number;
   updatedAt: Date;
 }) {
   const router = useRouter();
@@ -209,16 +219,14 @@ export function MyThesisCard({
         </h3>
         {shown.length === 0 ? (
           <p className="text-xs leading-relaxed text-muted">
-            {signals.length === 0
-              ? "近期还没有信号触及这几个维度——解牛只在新闻真的打到你盯的维度上时才记一条，没有就是没有。"
-              : `近期有 ${signals.length} 条触及你的维度，但都没达到你设的敏感度门槛。把相关维度调到「高」可以放宽到材料度 ${SENSITIVITY_THRESHOLD.high}。`}
+            {signals.length > 0
+              ? `近期有 ${signals.length} 条触及你的维度，但都没达到你设的敏感度门槛。把相关维度调到「高」可以放宽到材料度 ${SENSITIVITY_THRESHOLD.high}。`
+              : droppedSignals > 0
+                ? `近期有 ${droppedSignals} 条动态触及这些命题，但都没达到证据标准（通用推测 / 券商观点 / 与命题对不上的已滤除）——宁可留空，不给你看假证据。`
+                : "近期还没有信号触及这几个维度——解牛只在新闻真的打到你盯的维度上时才记一条，没有就是没有。"}
           </p>
         ) : (
-          <ul className="space-y-2.5">
-            {shown.slice(0, 8).map((s, i) => (
-              <SignalLogItem key={`${s.dimensionKey}-${i}`} s={s} />
-            ))}
-          </ul>
+          <SignalLogList signals={shown} dimKeys={dims.map((d) => d.key)} />
         )}
       </div>
 

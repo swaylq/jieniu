@@ -159,7 +159,14 @@ model ThesisSignal {
   dimensionKey String // 命中的维度 key
   direction    String // bull | bear | neutral（偏兑现 / 偏恶化 / 中性）
   materiality  Int // 0-100 材料度（够不够改变对该维度的判断）
-  note         String // 一句话：为什么命中 / 影响
+  note         String // 一句话：为什么命中 / 影响（= fact，保留给旧读路）
+  // 证据三件套（2026-07-30 张楚寒反馈：「最新证据」很多不是真证据）。
+  // fact = 资讯里**已经发生**的可核查陈述；why = 为什么能验证该命题 + 它证明不了什么；
+  // grade = direct(本公司事实) / supporting(旁证) / inference(推测，不展示)。
+  // 旧行三者为 null，读路会拿 note 现判一次（见 lib/evidence.ts）。
+  fact         String?
+  why          String?
+  grade        String?
   newsTitle    String
   publishedAt  DateTime
   createdAt    DateTime @default(now())

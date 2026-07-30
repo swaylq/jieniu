@@ -55,3 +55,6 @@ yarn-error.log*
 
 # agent 内部开发日志（含内部决策/第三方信息），不进公开仓库
 /memory/
+
+# 本地验证 UI 用的隔离构建目录（NEXT_DIST_DIR），绝不能碰线上那份 .next
+/.next-dev/

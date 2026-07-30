@@ -8,6 +8,7 @@ import {
   isTwoSided,
   cleanEntityName,
   isDigestWorthyFiling,
+  normalizeScope,
   type DigestInputs,
 } from "./market-digest";
 
@@ -22,20 +23,28 @@ const inputs: DigestInputs = {
     counted: 5316, up: 900, down: 4300, flat: 116,
     limitUp: 12, limitDown: 48, medianChangePct: -1.62,
   },
-  macro: {
-    overseas: [{ title: "韩国首尔综指大跌8%，接近触发熔断", brief: "", source: "东方财富·快讯", importance: 70 }],
-    domestic: [{ title: "央行今日开展2065亿元7天期逆回购操作", brief: "利率1.40%", source: "华尔街见闻·A股", importance: 55 }],
-    industry: [{ title: "机构：第二季度智能手机内存价格环比增长超80%", brief: "", source: "东方财富·快讯", importance: 55 }],
-  },
+  // 六步管线选出的事件（2026-07-30 起取代原来的三层 macro + 十条重磅资讯）
+  events: [
+    { category: "global", title: "韩国首尔综指大跌8%，接近触发熔断", brief: "", source: "东方财富·快讯", primary: false, sources: 2, subjects: [] },
+    { category: "macro", title: "央行今日开展2065亿元7天期逆回购操作", brief: "利率1.40%", source: "华尔街见闻·A股", primary: false, sources: 1, subjects: [] },
+    { category: "industry", title: "机构：第二季度智能手机内存价格环比增长超80%", brief: "", source: "东方财富·快讯", primary: false, sources: 1, subjects: [] },
+    { category: "company", title: "东山精密:关于首次回购公司股份的公告", brief: "首次回购1150万元", source: "东方财富·公告", primary: true, sources: 1, subjects: ["东山精密"] },
+    { category: "flow", title: "北向资金今日净买入80.3亿元", brief: "", source: "财联社", primary: false, sources: 1, subjects: [] },
+  ],
+  coverage: [
+    { category: "global", label: "全球市场", pool: 12, picked: 1, gap: false },
+    { category: "macro", label: "国内宏观", pool: 9, picked: 1, gap: false },
+    { category: "industry", label: "行业", pool: 20, picked: 1, gap: false },
+    { category: "company", label: "公司", pool: 40, picked: 1, gap: false },
+    { category: "flow", label: "资金", pool: 6, picked: 1, gap: false },
+    { category: "calendar", label: "日历", pool: 0, picked: 0, gap: false },
+  ],
   sectors: {
     strong: [{ name: "半导体", avgChangePct: 2.4, signal: "共振", leaders: ["兆易创新", "北方华创"], facts: ["兆易创新:半年度业绩预告"] }],
     weak: [{ name: "白酒", avgChangePct: -1.8, signal: "共跌", leaders: ["贵州茅台"], facts: [] }],
   },
   stocks: [
     { name: "宁德时代", ticker: "300750", price: 268.4, changePct: 3.1, facts: ["宁德时代回应大额回购方案"] },
-  ],
-  news: [
-    { title: "东山精密:关于首次回购公司股份的公告", source: "东方财富·公告", brief: "首次回购1150万元" },
   ],
   catalysts: [{ name: "兆易创新", label: "半年报预约披露", date: "2026-07-30" }],
 };
@@ -108,7 +117,9 @@ describe("parseDigestResponse", () => {
     const d = parseDigestResponse(good, null, stockFacts, sectorFacts);
     expect(d).not.toBeNull();
     expect(d!.drivers).toHaveLength(2);
-    expect(d!.drivers[0]!.scope).toBe("domestic");
+    // 旧的三层值（overseas/domestic/industry）自动映射到六类——库里存着几万条历史行，
+    // 不能因为扩类就让它们渲染到错误的分组里
+    expect(d!.drivers[0]!.scope).toBe("macro");
     expect(d!.sectors.strong[0]!.name).toBe("半导体");
     // 半导体当天有代表股事实 → note 留得下；白酒没有 → 置空
     expect(d!.sectors.strong[0]!.note).toBe("设备招标带动");
@@ -241,5 +252,44 @@ describe("合规护栏", () => {
     expect(isTwoSided("若 A 成立则修复；反之若 B 则回吐。")).toBe(true);
     expect(isTwoSided("一旦财报不及预期，波动可能放大。反之，若指引改善则获支撑。")).toBe(true);
     expect(isTwoSided("市场将继续上涨。")).toBe(false);
+  });
+});
+
+describe("normalizeScope — 三层扩到六类，历史数据不能渲染错组", () => {
+  it("旧值映射：overseas→global、domestic→macro、industry 不变", () => {
+    expect(normalizeScope("overseas")).toBe("global");
+    expect(normalizeScope("domestic")).toBe("macro");
+    expect(normalizeScope("industry")).toBe("industry");
+  });
+  it("新值原样保留", () => {
+    for (const c of ["global", "macro", "industry", "company", "flow", "calendar"]) {
+      expect(normalizeScope(c)).toBe(c);
+    }
+  });
+  it("垃圾值兜底到 industry，不崩", () => {
+    expect(normalizeScope(undefined)).toBe("industry");
+    expect(normalizeScope(42)).toBe("industry");
+    expect(normalizeScope("nonsense")).toBe("industry");
+  });
+});
+
+describe("buildDigestPrompt — 事件清单要把「已经筛过了」讲清楚", () => {
+  it("六类都出现，空类要显式说明今天没事（否则模型会去别类借素材凑）", () => {
+    const p = buildDigestPrompt(inputs);
+    expect(p).toContain("全球市场");
+    expect(p).toContain("国内宏观");
+    expect(p).toContain("资金");
+    expect(p).toContain("【日历】（今日无入选事件");
+  });
+  it("告诉模型候选池多大、判据是什么——它的活是写不是再筛一遍", () => {
+    const p = buildDigestPrompt(inputs);
+    expect(p).toContain("87 条候选事件"); // 12+9+20+40+6+0
+    expect(p).toContain("与用户持仓的相关度");
+    expect(p).toContain("不是再做一次筛选");
+  });
+  it("一手来源与多源同报要标出来", () => {
+    const p = buildDigestPrompt(inputs);
+    expect(p).toContain("一手");
+    expect(p).toContain("2源同报");
   });
 });

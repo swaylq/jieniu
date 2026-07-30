@@ -4,7 +4,7 @@ import {
   sortDimensionsByActivity,
 } from "~/lib/thesis-status";
 import { LogicTracker } from "./logic-tracker-card";
-import { SignalLogItem } from "./signal-log";
+import { SignalLogList } from "./signal-log-list";
 
 export type ThesisCardData = {
   summary: string;
@@ -24,6 +24,12 @@ export type ThesisSignalItem = {
   newsTitle: string;
   newsId?: string | null;
   publishedAt?: Date | string | null;
+  // 证据三件套（2026-07-30 张楚寒反馈）。旧行没有，读路会拿 note 兜底。
+  fact?: string;
+  why?: string;
+  grade?: string;
+  sourceName?: string | null;
+  tier?: string | null;
 };
 
 /** 投资逻辑框架卡（Phase 3 核心，P3-4 围绕 thesis 重构）。颜色只用 amber/灰阶——方向/材料度是论点非涨跌，不用红绿。 */
@@ -36,11 +42,14 @@ export function ThesisCard({
   name,
   data,
   signals = [],
+  droppedSignals = 0,
   updatedAt,
 }: {
   name: string;
   data: ThesisCardData;
   signals?: ThesisSignalItem[];
+  /** 因未达证据标准被滤掉的条数。**必须显示**——否则「一条都没有」看起来像没抓到消息。 */
+  droppedSignals?: number;
   updatedAt?: Date;
 }) {
   const status = thesisActivityStatus(signals);
@@ -66,24 +75,29 @@ export function ThesisCard({
           ) : null}
         </div>
       ) : (
-        <p className="mt-3 text-xs text-muted">{status.headline}</p>
+        <p className="mt-3 text-xs leading-relaxed text-muted">
+          {/* 判废后可能一条证据都不剩。此时说「近期无动态触及逻辑」是在撒谎——
+              明明有 N 条，只是都没达到证据标准。把这件事直说，比装作没消息更可信。 */}
+          {droppedSignals > 0
+            ? `近期有 ${droppedSignals} 条动态触及这些命题，但都没达到证据标准（通用推测 / 券商观点 / 与命题对不上的已滤除），因此这里留空。`
+            : status.headline}
+        </p>
       )}
 
       <div className="mt-4 rounded-xl border border-line/70 bg-surface p-3">
         <LogicTracker dims={dims} signals={signals} />
       </div>
 
-      {/* 近期触及逻辑的动态（监控日志） */}
+      {/* 近期触及逻辑的动态（监控日志）。整条可点开证据抽屉——与追踪器同一个交互。 */}
       {signals.length > 0 ? (
         <div className="mt-4">
           <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted">
             近期触及逻辑的动态 · {signals.length}
           </h3>
-          <ul className="space-y-2.5">
-            {signals.slice(0, 8).map((s, i) => (
-              <SignalLogItem key={`${s.dimensionKey}-${i}`} s={s} />
-            ))}
-          </ul>
+          <SignalLogList
+            signals={signals}
+            dimKeys={data.dimensions.map((d) => d.key)}
+          />
         </div>
       ) : null}
 

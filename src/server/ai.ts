@@ -249,20 +249,69 @@ export async function generateThesis(
   }
 }
 
-const SIGNAL_SYSTEM = `你是"解牛"App 的投资逻辑监控助手。给你一条财经资讯和某公司的"投资逻辑维度"清单，你判断这条资讯**触及了哪些维度**，以及对该维度逻辑的**材料度**（实质影响程度）。这是监控判断，不是投资建议。
+const SIGNAL_SYSTEM = `你是"解牛"App 的投资逻辑监控助手。给你一条财经资讯和某公司的"投资逻辑维度"清单，你判断这条资讯**为哪些维度提供了证据**。这是监控判断，不是投资建议。
 ${COMPLIANCE_CLAUSE}
-- 材料度=这条消息够不够改变对该维度"兑现/恶化"的判断，**不是涨跌预测**；
+
+**「证据」的标准（不满足就别输出这个维度，返回空数组是完全正常的）**：
+
+1. **证据是事实，不是推论。** fact 必须是这条资讯里**已经发生**的可核查陈述——谁、什么时候、
+   做了什么、多少。能从原文里指出来的才算，需要你推演一步才成立的都不算。
+   ✗「重大资产重组通常涉及公司战略调整，可能带来积极变化」——通用推测，换任何一家公司都成立
+   ✗「营收增长表明市场需求强劲」——前半句是事实，后半句是你加的结论
+   ✓「公司公告拟以8.6亿元收购上海骨科100%股权，标的2025年营收3.1亿元」
+
+2. **证据要对得上命题盯的那个指标。** 命题盯毛利率，就要有毛利率/成本/售价的数字；
+   净利润增长证明不了毛利率改善（也可能来自收入增长、费用下降或非经常损益）。
+   对不上就**不要输出这个维度**，别硬挂。
+
+3. **观点不是事实。** 券商研报看好、机构给增持评级、分析师认为——这些只能验证
+   「市场预期/估值」类命题，**不能**验证「行业景气/毛利率/订单/产能」这类经营事实类命题。
+   ✗ 用「研报强调公司GPU领军地位」去验证「行业景气」——那只说明券商看好这家公司，
+     不说明行业需求增强。
+
+4. **别用综述稿冒充公司事实。** 如果这条资讯是早报/榜单/汇总，而里面讲的是别家公司的事，
+   就不要把它算作这家公司的证据。
+
+5. **why 必须写出局限**：这条事实能验证该命题到什么程度，以及它**证明不了什么**。
+   诚实的"部分验证"比虚假的"已验证"有价值得多。
+
+**要禁止的是「用推论冒充事实」，不是「部分支持」。**
+一条真事实只能部分支持某个命题时，**照样要输出**——把 materiality 给低一些，在 why 里说清
+它到什么程度、证明不了什么。别因为"不能完全证明"就整条丢掉，那样用户什么都看不到。
+
+示范（这是合格输出的样子）：
+资讯「摩尔线程发布2026年半年度业绩预告：营业收入同比增长62%，净利润扭亏为盈，
+公司称主要由产品销售增长推动」，命题有「行业景气」「公司竞争力」「毛利率」：
+[
+ {"dimensionKey":"公司竞争力","direction":"bull","materiality":75,
+  "fact":"公告称上半年营业收入同比增长62%，净利润扭亏为盈，主因产品销售增长",
+  "why":"收入大幅增长且由销量推动，直接说明产品卖得动；但单季数据不代表长期份额"},
+ {"dimensionKey":"行业景气","direction":"bull","materiality":45,
+  "fact":"公告称上半年营业收入同比增长62%，主因产品销售增长",
+  "why":"一家公司的收入增长可以支持AI计算需求增强，但不能单独证明行业整体景气"}
+]
+注意「毛利率」**没有出现**——业绩预告里没有毛利率、成本或售价数据，硬挂就是编。
+
+其余：
+- 材料度=这条事实够不够改变对该维度"兑现/恶化"的判断，**不是涨跌预测**；
 - direction：bull=偏向该维度兑现/向好，bear=偏向恶化/风险，neutral=相关但方向不明；
-- 只输出真正被触及的维度；都没触及就返回空数组 []。`;
+- 资讯与所有命题都无关时返回 []（例如股东会通知、大宗交易、纯资本运作），这是正常的。`;
 
 function signalUserPrompt(
-  n: { title: string; summary?: string | null; eventType?: string | null },
+  n: {
+    title: string;
+    summary?: string | null;
+    eventType?: string | null;
+    subject?: string;
+    tier?: string | null;
+    sourceName?: string | null;
+  },
   dims: ThesisDimension[],
 ): string {
-  return `资讯：
+  return `${n.subject ? `这是【${n.subject}】的投资逻辑监控。\n` : ""}资讯：
 【标题】${n.title}
 【摘要】${n.summary ?? ""}
-${n.eventType ? `【事件】${n.eventType}` : ""}
+${n.eventType ? `【事件】${n.eventType}` : ""}${n.sourceName ? `\n【来源】${n.sourceName}${n.tier === "PRIMARY" ? "（一级来源：公司公告/交易所）" : "（媒体报道）"}` : ""}
 
 该公司的投资逻辑维度（dimensionKey 只能取下列某个 key 原文）：
 ${JSON.stringify(
@@ -270,13 +319,23 @@ ${JSON.stringify(
 )}
 
 **只输出一个 JSON 数组**，元素形如：
-{ "dimensionKey": "<上面某维度的 key 原文>", "direction": "bull|bear|neutral", "materiality": <0-100 整数>, "note": "<一句话：为什么命中/影响>" }
-只列真正被触及的维度；没有就输出 []。不要任何解释文字或 Markdown 围栏。`;
+{ "dimensionKey": "<上面某维度的 key 原文>", "direction": "bull|bear|neutral", "materiality": <0-100 整数>,
+  "fact": "<客观事实：这条资讯里已经发生的可核查陈述，尽量带上数字与主体，≤50字，不加任何推论>",
+  "why": "<为什么这条事实能验证该命题，以及它证明不了什么，≤60字>" }
+
+只列**真正有证据**的维度；没有就输出 []。不要任何解释文字或 Markdown 围栏。`;
 }
 
-/** 判断一条资讯触及某公司投资逻辑的哪些维度 + 材料度（AI）。非投资建议、非涨跌预测。 */
+/** 判断一条资讯为某公司投资逻辑的哪些维度提供了**证据** + 材料度（AI）。非投资建议、非涨跌预测。 */
 export async function classifyNewsAgainstThesis(
-  n: { title: string; summary?: string | null; eventType?: string | null },
+  n: {
+    title: string;
+    summary?: string | null;
+    eventType?: string | null;
+    subject?: string;
+    tier?: string | null;
+    sourceName?: string | null;
+  },
   dims: ThesisDimension[],
 ): Promise<SignalOut[]> {
   const raw = await chat(SIGNAL_SYSTEM, signalUserPrompt(n, dims), 1200);

@@ -28,13 +28,21 @@ async function main() {
     const inputs = await gatherDigestInputs(db);
     const withFacts = inputs.stocks.filter((s) => s.facts.length > 0).length;
     console.log(
-      `[digest] (dry) ${inputs.tradeDate}｜指数 ${inputs.indices.length}｜强势板块 ${inputs.sectors.strong.length}｜弱势 ${inputs.sectors.weak.length}｜个股 ${inputs.stocks.length}(有自有事实 ${withFacts})｜资讯 ${inputs.news.length}｜日程 ${inputs.catalysts.length}`,
-    );
-    console.log(
-      `[digest] (dry) 市场级素材：国际 ${inputs.macro.overseas.length}｜国内 ${inputs.macro.domestic.length}｜产业 ${inputs.macro.industry.length}｜宽度 ${
+      `[digest] (dry) ${inputs.tradeDate}｜指数 ${inputs.indices.length}｜强势板块 ${inputs.sectors.strong.length}｜弱势 ${inputs.sectors.weak.length}｜个股 ${inputs.stocks.length}(有自有事实 ${withFacts})｜日程 ${inputs.catalysts.length}｜宽度 ${
         inputs.breadth ? `涨${inputs.breadth.up}/跌${inputs.breadth.down}` : "—"
       }`,
     );
+    // 六步管线的逐类账本：**每一类都要能回答「池子多少 / 选了几条」**。
+    // 兜底/降级不可观测，就会把上游 bug 伪装成「今天这类没事」（上一轮的教训）。
+    const poolTotal = inputs.coverage.reduce((a, c) => a + c.pool, 0);
+    console.log(
+      `[digest] (dry) 事件管线：候选 ${poolTotal} → 入选 ${inputs.events.length} 条`,
+    );
+    for (const c of inputs.coverage) {
+      console.log(
+        `    ${c.label.padEnd(5, "　")} 池 ${String(c.pool).padStart(3)} → 选 ${String(c.picked).padStart(2)}${c.gap ? "   ⚠ 有料却一条没选中" : ""}`,
+      );
+    }
     console.log("—— 提示词 ——");
     console.log(buildDigestPrompt(inputs));
     return;
