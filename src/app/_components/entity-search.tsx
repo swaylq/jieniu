@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { api } from "~/trpc/react";
 import { entityTypeLabel } from "~/lib/format";
 import { brandBtn, fieldCls } from "./section-head";
+import { splitNameCode } from "~/lib/watch-label";
 
 export function EntitySearch() {
   const [q, setQ] = useState("");
@@ -79,10 +80,10 @@ export function EntitySearch() {
                   className="flex items-center justify-between px-3 py-2.5 hover:bg-canvas"
                 >
                   <span className="text-sm">
-                    {e.name}
-                    {e.ticker ? (
+                    {splitNameCode(e.name).name}
+                    {(splitNameCode(e.name).code ?? e.ticker) ? (
                       <span className="tabular ml-1 text-muted">
-                        {e.ticker}
+                        {splitNameCode(e.name).code ?? e.ticker}
                       </span>
                     ) : null}
                   </span>

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { api } from "~/trpc/react";
 import { dirLabel } from "~/lib/thesis-status";
+import { nameWithCode } from "~/lib/watch-label";
 
 type Picked = { id: string; name: string; type: string; ticker: string | null };
 
@@ -109,7 +110,9 @@ export function OnboardingFlow() {
               }}
               className="flex w-full items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-left transition-colors hover:border-brand"
             >
-              <span className="text-sm font-medium text-ink">{e.name}</span>
+              <span className="text-sm font-medium text-ink">
+                {nameWithCode(e.name, e.ticker)}
+              </span>
               {e.ticker ? (
                 <span className="tabular text-xs text-muted">{e.ticker}</span>
               ) : null}
@@ -134,7 +137,9 @@ export function OnboardingFlow() {
     return (
       <div>
         {dots}
-        <h1 className="text-xl font-bold text-ink">{picked.name}</h1>
+        <h1 className="text-xl font-bold text-ink">
+          {nameWithCode(picked.name, picked.ticker)}
+        </h1>
         <p className="mt-1 text-sm text-muted">
           告诉解牛你和它的关系，它据此决定盯什么。
         </p>

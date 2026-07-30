@@ -1,5 +1,7 @@
 import Link from "next/link";
 import type { RankedSector, Discovery } from "~/lib/rotation";
+import { splitNameCode } from "~/lib/watch-label";
+import { HoverPrefetchLink } from "./hover-prefetch-link";
 
 /**
  * 板块轮动 / 个股发现（A 股）。
@@ -11,12 +13,56 @@ import type { RankedSector, Discovery } from "~/lib/rotation";
  *  · 「共振/共跌/分化」用 amber/灰阶——它描述的是成分股步调是否一致，不是方向建议。
  */
 
-type SectorRow = RankedSector & { sectorId: string | null };
+/** 代表股 / 个股都带上自己的实体 id——**代码和名称一起**链到个股页（sway：点名称也要能进去）。 */
+type LeaderRow = RankedSector["leaders"][number] & { entityId: string | null };
+type SectorRow = Omit<RankedSector, "leaders"> & {
+  sectorId: string | null;
+  leaders: LeaderRow[];
+};
 type DiscoveryRow = Discovery & {
   sectorId: string | null;
-  /** 个股自己的实体 id——代码要链到个股页，不是板块页。 */
+  /** 个股自己的实体 id——链到个股页，不是板块页。 */
   entityId: string | null;
 };
+
+/**
+ * 一个可点的标的：代码 + 名称同在一个链接里。
+ * 名称里的 `(6位代码)` 剥掉——代码已经单独显示在前面，再带一遍是重复
+ * （代码本该是字段而不是名字里的字符串，同 `lib/watch-label` 那条）。
+ * 拿不到实体 id 就退化成纯文本，绝不产生 `/entity/null` 这种死链。
+ */
+function StockLink({
+  entityId,
+  code,
+  name,
+}: {
+  entityId: string | null;
+  code?: string;
+  name: string;
+}) {
+  const label = splitNameCode(name).name;
+  const body = (
+    <>
+      {code ? (
+        <span className="tabular text-sm font-bold">{code}</span>
+      ) : null}
+      <span className={code ? "text-sm" : undefined}>{label}</span>
+    </>
+  );
+  if (!entityId) {
+    return (
+      <span className="text-ink inline-flex items-baseline gap-2">{body}</span>
+    );
+  }
+  return (
+    <HoverPrefetchLink
+      href={`/entity/${entityId}`}
+      className="text-brand hover:text-brand-dark inline-flex items-baseline gap-2 transition-colors"
+    >
+      {body}
+    </HoverPrefetchLink>
+  );
+}
 
 function fmtDate(d: Date | string): string {
   const dt = typeof d === "string" ? new Date(d) : d;
@@ -79,7 +125,9 @@ export function SectorRotation({
       </div>
 
       <div className="mt-3 overflow-x-auto">
-        <table className="w-full min-w-[34rem] text-xs">
+        {/* 整表 nowrap：这是一张数据表，外层已有 overflow-x-auto。允许折行的话，
+            窄屏会把「半导体」竖成三行、「板块共跌」竖成四行，而不是横向滚动。 */}
+        <table className="w-full min-w-[34rem] text-xs whitespace-nowrap">
           <thead>
             <tr className="text-left text-muted">
               <th className="pb-1.5 font-medium">板块</th>
@@ -122,8 +170,19 @@ export function SectorRotation({
                     板块{s.signal}
                   </span>
                 </td>
-                <td className="py-2 pl-3 text-muted">
-                  {s.leaders.map((l) => l.name).join("、")}
+                <td className="text-muted py-2 pl-3">
+                  {s.leaders.map((l, i) => (
+                    <span key={l.code}>
+                      {i > 0 ? "、" : ""}
+                      {/* 代表股也带上代码（张楚寒：「现在有的公司有代码有的没有，不然都加上代码吧」）——
+                          `l.code` 本来就在行里（它是 key），只是没往下传。 */}
+                      <StockLink
+                        entityId={l.entityId}
+                        code={l.code}
+                        name={l.name}
+                      />
+                    </span>
+                  ))}
                 </td>
               </tr>
             ))}
@@ -169,19 +228,7 @@ export function StockDiscovery({
             className="rounded-xl border border-line/70 bg-canvas px-3 py-2.5"
           >
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-              <span className="flex items-baseline gap-2">
-                {s.entityId ? (
-                  <Link
-                    href={`/entity/${s.entityId}`}
-                    className="tabular text-sm font-bold text-brand transition-opacity hover:opacity-80"
-                  >
-                    {s.code}
-                  </Link>
-                ) : (
-                  <span className="tabular text-sm font-bold text-ink">{s.code}</span>
-                )}
-                <span className="text-sm text-ink">{s.name}</span>
-              </span>
+              <StockLink entityId={s.entityId} code={s.code} name={s.name} />
               <span className="flex items-baseline gap-3">
                 <Pct v={s.changePct} />
                 <span className="tabular text-xs text-muted">{s.price}</span>

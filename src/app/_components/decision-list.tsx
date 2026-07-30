@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { ACTION_LABEL, actionTone, normalizeAction } from "~/lib/decision";
 import { relativeTime } from "~/lib/format";
+import { nameWithCode } from "~/lib/watch-label";
 
 export type DecisionItem = {
   id: string;
@@ -9,7 +10,13 @@ export type DecisionItem = {
   reason: string;
   price: number | null;
   createdAt: Date | string;
-  entity?: { id: string; name: string } | null;
+  entity?: {
+    id: string;
+    name: string;
+    ticker?: string | null;
+    /** 该公司发行的股票——代码烙在它身上（张楚寒：「都加上代码吧」）。 */
+    relFrom?: { to: { ticker: string | null } }[];
+  } | null;
 };
 
 /** 决策时间线（P4-3，presentational）。动作标签用 amber(建仓侧)/灰(减仓侧)——非红绿、非涨跌。price 仅观察。 */
@@ -41,7 +48,11 @@ export function DecisionList({
                   href={`/entity/${d.entity.id}`}
                   className="font-medium text-ink hover:text-brand"
                 >
-                  {d.entity.name}
+                  {nameWithCode(
+                    d.entity.name,
+                    d.entity.ticker,
+                    d.entity.relFrom?.[0]?.to.ticker ?? null,
+                  )}
                 </Link>
               ) : null}
               <span className="text-muted">{relativeTime(new Date(d.createdAt))}</span>

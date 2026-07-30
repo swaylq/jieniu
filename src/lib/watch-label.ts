@@ -43,3 +43,22 @@ export function watchEntityLabel(e: WatchEntityInput): {
   const ticker = e.ticker ?? code ?? e.issuedTicker ?? null;
   return { name, sub: ticker ?? entityTypeLabel(e.type) };
 }
+
+/**
+ * 「名字 + 代码」合成一行，用于页头标题、卡片标题这类**只有一行**的位置
+ * （张楚寒 2026-07-30：「现在有的公司有代码有的没有，不然都加上代码吧」——
+ * 他截图里 `东山精密(002384)` 有码而 `长鑫科技` 没有，正是孪生实体两侧的差别：
+ * 实测 5498 家 COMPANY 的 `ticker` 全为 null、名字里也全无代码，而 5500 只 STOCK 名字里 100% 有）。
+ *
+ * **幂等**：名字里已经带代码就原样返回，不会拼成「东山精密(002384)(002384)」。
+ * 拿不到代码（板块 / 人物 / 未上市公司，实测只有 2 家）就返回原名，不留空括号。
+ */
+export function nameWithCode(
+  name: string,
+  ticker?: string | null,
+  issuedTicker?: string | null,
+): string {
+  const { name: bare, code } = splitNameCode(name);
+  const t = code ?? ticker ?? issuedTicker ?? null;
+  return t ? `${bare}(${t})` : bare;
+}

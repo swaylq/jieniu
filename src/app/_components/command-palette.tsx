@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { api } from "~/trpc/react";
 import { entityTypeLabel, moveHighlight } from "~/lib/format";
 import { matchNav } from "~/lib/command-nav";
+import { splitNameCode } from "~/lib/watch-label";
 
 type PaletteCtx = { open: boolean; setOpen: (v: boolean) => void };
 
@@ -170,10 +171,10 @@ function CommandPaletteOverlay({
                       className={rowCls(i === highlight)}
                     >
                       <span className="text-sm text-ink">
-                        {e.name}
-                        {e.ticker ? (
+                        {splitNameCode(e.name).name}
+                        {(splitNameCode(e.name).code ?? e.ticker) ? (
                           <span className="tabular ml-1.5 text-xs text-muted">
-                            {e.ticker}
+                            {splitNameCode(e.name).code ?? e.ticker}
                           </span>
                         ) : null}
                       </span>

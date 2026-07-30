@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { splitNameCode, watchEntityLabel } from "./watch-label";
+import { splitNameCode, watchEntityLabel, nameWithCode } from "./watch-label";
 
 describe("splitNameCode — 代码是烙在 STOCK 名字里的，展示前要拆出来", () => {
   it("拆掉尾部的 6 位代码", () => {
@@ -93,5 +93,30 @@ describe("watchEntityLabel — 自选列表里孪生两份必须长得一样（s
         issuedTicker: null,
       }),
     ).toEqual({ name: "某未上市公司", sub: "公司" });
+  });
+});
+
+// 张楚寒 2026-07-30：「现在有的公司有代码有的没有，不然都加上代码吧」
+describe("nameWithCode — 页头/卡片标题的单行口径", () => {
+  it("COMPANY 借它发行股票的代码（他截图里没代码的那种）", () => {
+    expect(nameWithCode("长鑫科技", null, "688826")).toBe("长鑫科技(688826)");
+  });
+
+  it("STOCK 名字里已经有代码 → 原样，不拼两遍", () => {
+    expect(nameWithCode("东山精密(002384)", "002384", null)).toBe("东山精密(002384)");
+    expect(nameWithCode("东山精密(002384)")).toBe("东山精密(002384)");
+  });
+
+  it("自带 ticker 的（美股等）也拼上", () => {
+    expect(nameWithCode("英伟达", "NVDA")).toBe("英伟达(NVDA)");
+  });
+
+  it("拿不到代码就返回原名，不留空括号", () => {
+    expect(nameWithCode("半导体")).toBe("半导体");
+    expect(nameWithCode("朱一明", null, null)).toBe("朱一明");
+  });
+
+  it("名字里的非代码括号不被误当代码剥掉", () => {
+    expect(nameWithCode("某某(集团)", null, "600000")).toBe("某某(集团)(600000)");
   });
 });

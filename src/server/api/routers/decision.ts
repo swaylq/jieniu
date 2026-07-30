@@ -48,7 +48,18 @@ export const decisionRouter = createTRPCRouter({
           reason: true,
           price: true,
           createdAt: true,
-          entity: { select: { id: true, name: true } },
+          entity: {
+            select: {
+              id: true,
+              name: true,
+              ticker: true,
+              relFrom: {
+                where: { type: "ISSUES" as const },
+                select: { to: { select: { ticker: true } } },
+                take: 1,
+              },
+            },
+          },
         },
       }),
     ),

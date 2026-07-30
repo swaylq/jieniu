@@ -3,6 +3,7 @@ import { HoverPrefetchLink } from "./hover-prefetch-link";
 
 import { streamStamp } from "~/lib/format";
 import { chipClass } from "./section-head";
+import { nameWithCode } from "~/lib/watch-label";
 
 type NewsLite = {
   id: string;
@@ -69,7 +70,7 @@ export function EcosystemCoverage({
             <span className="text-xs font-semibold text-muted">竞品 · {peers.length}</span>
             {peers.map((p) => (
               <Link key={p.id} href={`/entity/${p.id}`} className={chipClass}>
-                {p.name}
+                {nameWithCode(p.name, p.ticker)}
               </Link>
             ))}
           </div>

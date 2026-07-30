@@ -10,6 +10,7 @@ import { entityTypeLabel } from "~/lib/format";
 import { collapseAnnouncementBursts } from "~/lib/announcements";
 import { groupByMonth, isExpanded, spanSummary } from "~/lib/milestones";
 import { resolveQuoteTicker, type RelationBucket } from "~/lib/entity-graph";
+import { nameWithCode } from "~/lib/watch-label";
 import { ecosystemPeers } from "~/lib/relation-view";
 import { EntityTabs } from "../../_components/entity-tabs";
 import { asStringArray, type ThesisDimension } from "~/lib/thesis";
@@ -201,6 +202,15 @@ export default async function EntityPage({
   // 美股（NVDA 等，行情/披露规则完全不同）若照挂：行情卡永远返回 null 只剩骨架、到价提醒永不触发、
   // 催化日历显示与其无关的 A股财报截止日——都是不体面的边缘态（QA loop run 8 维度 h）。
   const quotable = isAShareTicker(quoteTicker);
+  /**
+   * 页头与各卡片标题统一带上代码（张楚寒：「现在有的公司有代码有的没有，不然都加上代码吧」）。
+   * 代码在数据模型里是**烙在 STOCK 名字里的字符串**而不是 COMPANY 的字段——5498 家 COMPANY
+   * 的 ticker 全为 null。`quoteTicker` 已经替我们把配对股票的代码取出来了，这里复用它。
+   */
+  const displayName = nameWithCode(entity.name, entity.ticker, quoteTicker);
+  /** 交易所前缀同理：COMPANY 自己没有，借配对股票那份。 */
+  const displayExchange =
+    entity.exchange ?? groups.stocks.find((e) => e.ticker)?.exchange ?? null;
   const buckets = (Object.keys(groups) as RelationBucket[]).filter(
     (b) => groups[b].length > 0,
   );
@@ -379,7 +389,7 @@ export default async function EntityPage({
       <div className="mb-6">
         <MyThesisCard
           entityId={id}
-          name={entity.name}
+          name={displayName}
           reason={userThesis.reason}
           dimensions={myDims}
           signals={thesisSignals.items}
@@ -390,7 +400,7 @@ export default async function EntityPage({
     ) : thesisData ? (
       <div className="mb-6">
         <ThesisCard
-          name={entity.name}
+          name={displayName}
           data={thesisData}
           signals={thesisSignals.items}
           droppedSignals={thesisSignals.dropped}
@@ -401,7 +411,7 @@ export default async function EntityPage({
     ) : entity.type === "COMPANY" || entity.type === "STOCK" ? (
       // 没有 thesis 时**不能不渲染**——那样「有的页有、有的页没有」，用户会以为这只股不支持。
       // 改成占位卡 + 客户端触发按需生成（服务端直接生成会把 SSR 拖 ~16s）。
-      <ThesisPending entityId={id} name={entity.name} />
+      <ThesisPending entityId={id} name={displayName} />
     ) : null;
   const ecosystemBlock =
     ecosystem.sectors.length > 0 || ecosystem.peers.length > 0 ? (
@@ -470,12 +480,12 @@ export default async function EntityPage({
             {entityTypeLabel(entity.type)}
           </span>
           <h1 className={`mt-2 text-2xl lg:text-3xl ${displayCls}`}>
-            {entity.name}
+            {displayName}
           </h1>
           <p className="text-muted mt-1 text-sm">
-            {entity.ticker ? (
+            {quoteTicker ? (
               <span className="tabular">
-                {entity.exchange ?? ""} {entity.ticker} ·{" "}
+                {displayExchange ?? ""} {quoteTicker} ·{" "}
               </span>
             ) : null}
             {followers} 人关注

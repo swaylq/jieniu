@@ -11,6 +11,7 @@ import { Pager } from "../_components/pager";
 import { entityTypeLabel } from "~/lib/format";
 import { abs, openGraph, twitter } from "~/lib/seo";
 import type { EntityType } from "../../../generated/prisma";
+import { splitNameCode } from "~/lib/watch-label";
 
 export const dynamic = "force-dynamic";
 
@@ -72,10 +73,10 @@ export default async function DiscoverPage({
           {data.items.map((e) => (
             <li key={e.id}>
               <HoverPrefetchLink href={`/entity/${e.id}`} className={chipClass}>
-                {e.name}
-                {e.ticker ? (
+                {splitNameCode(e.name).name}
+                {(splitNameCode(e.name).code ?? e.ticker) ? (
                   <span className="tabular ml-1.5 text-xs text-muted">
-                    {e.ticker}
+                    {splitNameCode(e.name).code ?? e.ticker}
                   </span>
                 ) : null}
               </HoverPrefetchLink>
@@ -166,11 +167,11 @@ export default async function DiscoverPage({
                   <div className="min-w-0">
                     <div className="flex items-baseline gap-2">
                       <span className="truncate font-semibold text-ink">
-                        {item.name}
+                        {splitNameCode(item.name).name}
                       </span>
-                      {item.ticker ? (
+                      {(splitNameCode(item.name).code ?? item.ticker) ? (
                         <span className="tabular shrink-0 text-xs text-muted">
-                          {item.ticker}
+                          {splitNameCode(item.name).code ?? item.ticker}
                         </span>
                       ) : null}
                     </div>
@@ -204,10 +205,10 @@ export default async function DiscoverPage({
                 {items.slice(0, DISPLAY_CAP).map((e) => (
                   <li key={e.id}>
                     <HoverPrefetchLink href={`/entity/${e.id}`} className={chipClass}>
-                      {e.name}
-                      {e.ticker ? (
+                      {splitNameCode(e.name).name}
+                      {(splitNameCode(e.name).code ?? e.ticker) ? (
                         <span className="tabular ml-1.5 text-xs text-muted">
-                          {e.ticker}
+                          {splitNameCode(e.name).code ?? e.ticker}
                         </span>
                       ) : null}
                     </HoverPrefetchLink>

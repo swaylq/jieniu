@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nameWithCode } from "~/lib/watch-label";
 
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { sanitizeHoldingNumbers } from "~/lib/portfolio";
@@ -57,7 +58,21 @@ export const portfolioRouter = createTRPCRouter({
       const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
       const holdings = await ctx.db.watchlist.findMany({
         where: { userId: ctx.session.user.id, status: "HOLDING" },
-        select: { entityId: true, entity: { select: { name: true } } },
+        select: {
+          entityId: true,
+          entity: {
+            select: {
+              name: true,
+              ticker: true,
+              // 公司那份自己没有代码，借它发行股票的（张楚寒：「都加上代码吧」）
+              relFrom: {
+                where: { type: "ISSUES" as const },
+                select: { to: { select: { ticker: true } } },
+                take: 1,
+              },
+            },
+          },
+        },
       });
       if (holdings.length === 0) return [];
       const entityIds = holdings.map((h) => h.entityId);
@@ -79,7 +94,16 @@ export const portfolioRouter = createTRPCRouter({
         byEntity.set(s.entityId, arr);
       }
       return holdings.map((h) =>
-        rollUpHoldingChange(h.entityId, h.entity.name, byEntity.get(h.entityId) ?? []),
+        rollUpHoldingChange(
+          h.entityId,
+          // 这条链路的 name 只进展示（首页「今日你的组合变了什么」），所以直接带上代码
+          nameWithCode(
+            h.entity.name,
+            h.entity.ticker,
+            h.entity.relFrom?.[0]?.to.ticker ?? null,
+          ),
+          byEntity.get(h.entityId) ?? [],
+        ),
       );
     }),
 
@@ -91,7 +115,21 @@ export const portfolioRouter = createTRPCRouter({
       const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
       const holdings = await ctx.db.watchlist.findMany({
         where: { userId: ctx.session.user.id, status: "HOLDING" },
-        select: { entityId: true, entity: { select: { name: true } } },
+        select: {
+          entityId: true,
+          entity: {
+            select: {
+              name: true,
+              ticker: true,
+              // 公司那份自己没有代码，借它发行股票的（张楚寒：「都加上代码吧」）
+              relFrom: {
+                where: { type: "ISSUES" as const },
+                select: { to: { select: { ticker: true } } },
+                take: 1,
+              },
+            },
+          },
+        },
       });
       if (holdings.length < 2) return []; // 传播需要 ≥2 持仓才有意义
       const holdingIds = holdings.map((h) => h.entityId);

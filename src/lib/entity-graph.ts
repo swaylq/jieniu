@@ -5,6 +5,8 @@ export type RelatedEntity = {
   name: string;
   type: EntityType;
   ticker?: string | null;
+  /** 交易所前缀（SH/SZ/BJ…）。COMPANY 自己没有，页头要借配对股票那份来显示「SH 688826」。 */
+  exchange?: string | null;
 };
 export type Direction = "out" | "in";
 export type GraphRelation = {

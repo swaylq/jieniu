@@ -72,6 +72,7 @@ export const entityRouter = createTRPCRouter({
             name: r.to.name,
             type: r.to.type,
             ticker: r.to.ticker,
+            exchange: r.to.exchange,
           },
         })),
         ...entity.relTo.map((r) => ({
@@ -82,6 +83,7 @@ export const entityRouter = createTRPCRouter({
             name: r.from.name,
             type: r.from.type,
             ticker: r.from.ticker,
+            exchange: r.from.exchange,
           },
         })),
       ];
@@ -328,12 +330,24 @@ export const entityRouter = createTRPCRouter({
 
   listByType: publicProcedure
     .input(z.object({ type: z.enum(["SECTOR", "COMPANY", "STOCK", "PERSON"]) }))
-    .query(({ ctx, input }) =>
-      ctx.db.entity.findMany({
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db.entity.findMany({
         where: { type: input.type },
         orderBy: { name: "asc" },
-      }),
-    ),
+        include: {
+          // 代码补齐同 listByTypePage（COMPANY 自己没有）
+          relFrom: {
+            where: { type: "ISSUES" as const },
+            select: { to: { select: { ticker: true } } },
+            take: 1,
+          },
+        },
+      });
+      return rows.map(({ relFrom, ...e }) => ({
+        ...e,
+        ticker: e.ticker ?? relFrom?.[0]?.to.ticker ?? null,
+      }));
+    }),
 
   /**
    * 按分类分页浏览（2026-07-23）：发现页原来每类只列前 90 个、其余「靠搜索找」——
@@ -356,11 +370,25 @@ export const entityRouter = createTRPCRouter({
           orderBy: { name: "asc" },
           skip: (input.page - 1) * input.perPage,
           take: input.perPage,
-          select: { id: true, name: true, ticker: true },
+          select: {
+            id: true,
+            name: true,
+            ticker: true,
+            // COMPANY 自己没有代码（实测 5498 家全为 null），借它发行股票的
+            // ——张楚寒：「现在有的公司有代码有的没有，不然都加上代码吧」
+            relFrom: {
+              where: { type: "ISSUES" as const },
+              select: { to: { select: { ticker: true } } },
+              take: 1,
+            },
+          },
         }),
       ]);
       return {
-        items,
+        items: items.map(({ relFrom, ...e }) => ({
+          ...e,
+          ticker: e.ticker ?? relFrom?.[0]?.to.ticker ?? null,
+        })),
         total,
         page: input.page,
         pages: Math.max(1, Math.ceil(total / input.perPage)),
@@ -394,14 +422,30 @@ export const entityRouter = createTRPCRouter({
       }),
       ctx.db.entity.findMany({
         where: { id: { in: ids }, type: { in: ["COMPANY", "STOCK"] } },
-        select: { id: true, name: true, ticker: true, type: true },
+        select: {
+          id: true,
+          name: true,
+          ticker: true,
+          type: true,
+          // COMPANY 借它发行股票的代码（张楚寒：「都加上代码吧」）
+          relFrom: {
+            where: { type: "ISSUES" as const },
+            select: { to: { select: { ticker: true } } },
+            take: 1,
+          },
+        },
       }),
     ]);
 
     const primaryMap = new Map(
       primaries.map((p) => [p.entityId, p._count.entityId]),
     );
-    const entMap = new Map(entities.map((e) => [e.id, e]));
+    const entMap = new Map(
+      entities.map((e) => [
+        e.id,
+        { ...e, ticker: e.ticker ?? e.relFrom?.[0]?.to.ticker ?? null },
+      ]),
+    );
     const rows: AttentionRow[] = totals
       .filter((t) => entMap.has(t.entityId))
       .map((t) => {
