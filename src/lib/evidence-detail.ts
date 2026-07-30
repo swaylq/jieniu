@@ -9,6 +9,11 @@
 // 它告诉用户「这条消息不能拿来说毛利率」，而这正是他批评现状时想要的诚实。
 
 import { classifyLogicImpact, type LogicImpact } from "./logic-impact";
+import {
+  SOURCE_LEVEL_LABEL,
+  isHardSource,
+  type SourceLevel,
+} from "./evidence-source";
 
 export type EvidenceSignal = {
   dimensionKey: string;
@@ -22,6 +27,8 @@ export type EvidenceSignal = {
   publishedAt?: Date | string | null;
   sourceName?: string | null;
   tier?: string | null;
+  /** 六级来源等级。抽屉里的「证据强度」那一环靠它。 */
+  sourceLevel?: SourceLevel;
 };
 
 export type EvidenceImpact = {
@@ -42,6 +49,14 @@ export type EvidenceDetail = {
   fact: string;
   why: string;
   grade: string;
+  /** 证据强度：来源等级 + 是否够格支撑「已验证」。 */
+  strength: {
+    level: SourceLevel;
+    levelLabel: string;
+    hard: boolean;
+    /** 一句话说清这条证据能把命题推到哪一步。 */
+    verdict: string;
+  };
   impacts: EvidenceImpact[];
 };
 
@@ -97,6 +112,18 @@ export function buildEvidenceDetail(
     return { dimensionKey: k, touched: true, label: im.label, tone: im.tone };
   });
 
+  // 证据强度（张楚寒第二轮）：来源等级 × 是否直接支持命题。两条都够才撑得起「已验证」。
+  const level = target.sourceLevel ?? 4;
+  const hard = isHardSource(level);
+  const direct = target.grade === "direct";
+  const verdict = hard
+    ? direct
+      ? "一至三级来源 + 直接支持命题 → 足以支撑「已验证」"
+      : "来源够硬，但这条事实不是直接关于这家公司的 → 最多「部分验证」"
+    : direct
+      ? "直接关于这家公司，但来源是媒体/研报 → 最多「部分验证」"
+      : "媒体/研报来源的旁证 → 只能作参考，不足以验证命题";
+
   return {
     newsTitle: target.newsTitle,
     newsId: target.newsId ?? null,
@@ -106,6 +133,12 @@ export function buildEvidenceDetail(
     fact: target.fact,
     why: target.why,
     grade: target.grade,
+    strength: {
+      level,
+      levelLabel: SOURCE_LEVEL_LABEL[level],
+      hard,
+      verdict,
+    },
     impacts,
   };
 }

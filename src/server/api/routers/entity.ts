@@ -24,6 +24,7 @@ import { classifyStockQuery, normalizeStockName } from "~/lib/add-stock";
 import { REPORT_EVENT_TYPE } from "~/lib/research-reports";
 import { isSeedableStock } from "~/lib/universe";
 import { qualifyStoredSignal, type EvidenceGrade } from "~/lib/evidence";
+import type { SourceLevel } from "~/lib/evidence-source";
 
 import { fetchQuote } from "~/server/quote";
 import { resolveCodeByName, ensureStockEntities } from "~/server/stocks";
@@ -45,6 +46,8 @@ export type ThesisSignalOut = {
   publishedAt: Date;
   sourceName: string;
   tier: string;
+  /** 六级来源等级（张楚寒 2026-07-30 第二轮）。一到三级才够格支撑「已验证」。 */
+  sourceLevel: SourceLevel;
 };
 
 export const entityRouter = createTRPCRouter({
@@ -154,7 +157,12 @@ export const entityRouter = createTRPCRouter({
             newsId: true,
             publishedAt: true,
             news: {
-              select: { tier: true, source: { select: { name: true } } },
+              select: {
+                tier: true,
+                brief: true,
+                summary: true,
+                source: { select: { name: true } },
+              },
             },
           },
         }),
@@ -163,7 +171,12 @@ export const entityRouter = createTRPCRouter({
       const out: ThesisSignalOut[] = [];
       for (const r of rows) {
         const v = qualifyStoredSignal(
-          { ...r, tier: r.news.tier },
+          {
+            ...r,
+            tier: r.news.tier,
+            sourceName: r.news.source.name,
+            brief: r.news.brief ?? r.news.summary ?? "",
+          },
           subject,
         );
         if (!v.ok) continue;
@@ -180,6 +193,7 @@ export const entityRouter = createTRPCRouter({
           publishedAt: r.publishedAt,
           sourceName: r.news.source.name,
           tier: r.news.tier,
+          sourceLevel: v.sourceLevel,
         });
         if (out.length >= 40) break;
       }

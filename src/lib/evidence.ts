@@ -21,6 +21,7 @@
 
 import { hasFactAnchor } from "./digest-substance";
 import { ROUNDUP_TITLE } from "./relevance";
+import { classifySourceLevel, type SourceLevel } from "./evidence-source";
 
 /** direct=本公司的可核查事实；supporting=同业/上游/外部事实（旁证）；inference=推测，不展示。 */
 export type EvidenceGrade = "direct" | "supporting" | "inference";
@@ -36,12 +37,17 @@ export type EvidenceInput = {
   newsTitle: string;
   /** PRIMARY=一手（公司公告/交易所），其余为媒体。 */
   tier: string;
+  /** 库里的来源名与摘要——用来算六级来源等级（张楚寒 2026-07-30 第二轮）。 */
+  sourceName?: string;
+  brief?: string;
 };
 
 export type EvidenceVerdict = {
   ok: boolean;
   grade: EvidenceGrade;
   reason: string;
+  /** 六级来源等级。一到三级才够格支撑「已验证」（见 logic-tracker）。 */
+  sourceLevel: SourceLevel;
 };
 
 // ---------------------------------------------------------------------------
@@ -220,13 +226,25 @@ const MIN_FACT_LEN = 8;
  */
 export function judgeEvidence(i: EvidenceInput): EvidenceVerdict {
   const fact = i.fact.trim();
+  const sourceLevel = classifySourceLevel({
+    sourceName: i.sourceName ?? "",
+    tier: i.tier,
+    title: i.newsTitle,
+    brief: i.brief ?? "",
+  });
   const no = (reason: string): EvidenceVerdict => ({
     ok: false,
     grade: "inference",
     reason,
+    sourceLevel,
   });
 
   if (fact.length < MIN_FACT_LEN) return no("证据为空或过短");
+  // 六级＝市场传闻 / 社交媒体。张楚寒把它列为最低一档，而**没有编辑问责的内容不该当证据展示**——
+  // 「据传公司将获大额订单」看起来和真订单一模一样，这正是他批评的那种「看着像证据」。
+  if (sourceLevel === 6) {
+    return no("来源是市场传闻 / 社交媒体（六级），不作为证据展示");
+  }
   // 「是什么东西」比「怎么写的」更根本：一条券商观点无论措辞多硬，都证不了经营事实，
   // 所以观点判据排在措辞类判据（通论/推演）前面——reason 要报最根本的那个原因。
   const family = dimensionFamily(i.dimensionKey);
@@ -273,6 +291,7 @@ export function judgeEvidence(i: EvidenceInput): EvidenceVerdict {
   return {
     ok: true,
     grade: direct ? "direct" : "supporting",
+    sourceLevel,
     reason: direct
       ? i.tier === "PRIMARY"
         ? "一手来源 · 本公司事实"
@@ -302,6 +321,8 @@ export type StoredSignal = {
   grade?: string | null;
   newsTitle: string;
   tier?: string | null;
+  sourceName?: string | null;
+  brief?: string | null;
 };
 
 /**
@@ -315,12 +336,26 @@ export function qualifyStoredSignal(
   s: StoredSignal,
   subject: string,
 ): EvidenceVerdict {
+  // 来源等级每次读都现算：它只依赖资讯本身（来源名/tier/标题/摘要），不依赖当初判过没判过，
+  // 所以不需要存一列，改判据也不用回填。
+  const sourceLevel = classifySourceLevel({
+    sourceName: s.sourceName ?? "",
+    tier: s.tier ?? "MEDIA",
+    title: s.newsTitle,
+    brief: s.brief ?? "",
+  });
   if (s.grade && GRADES.has(s.grade)) {
     const grade = s.grade as EvidenceGrade;
     return {
-      ok: grade !== "inference",
+      ok: grade !== "inference" && sourceLevel !== 6,
       grade,
-      reason: grade === "inference" ? "写入时已判为推测" : "写入时已通过证据判据",
+      sourceLevel,
+      reason:
+        sourceLevel === 6
+          ? "来源是市场传闻 / 社交媒体（六级），不作为证据展示"
+          : grade === "inference"
+            ? "写入时已判为推测"
+            : "写入时已通过证据判据",
     };
   }
   return judgeEvidence({
@@ -328,6 +363,8 @@ export function qualifyStoredSignal(
     why: s.why ?? "",
     dimensionKey: s.dimensionKey,
     subject,
+    sourceName: s.sourceName ?? "",
+    brief: s.brief ?? "",
     newsTitle: s.newsTitle,
     tier: s.tier ?? "MEDIA",
   });

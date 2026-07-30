@@ -11,6 +11,11 @@ import { impactBadgeClass } from "~/lib/logic-impact";
 import { relativeTime } from "~/lib/format";
 import { gradeLabel, type EvidenceGrade } from "~/lib/evidence";
 import {
+  SOURCE_LEVEL_SHORT,
+  isHardSource,
+  type SourceLevel,
+} from "~/lib/evidence-source";
+import {
   buildEvidenceDetail,
   type EvidenceDetail,
   type EvidenceSignal,
@@ -26,6 +31,7 @@ export type TrackerSignal = DimSignal & {
   newsId?: string | null;
   sourceName?: string | null;
   tier?: string | null;
+  sourceLevel?: SourceLevel;
 };
 
 /**
@@ -33,11 +39,14 @@ export type TrackerSignal = DimSignal & {
  * 每个投资命题 | 当前状态(已验证/部分验证/待验证/未验证) | 变化(增强/削弱) | 最新证据。
  * 纯规则（`logic-tracker.ts`），零 AI；配色 amber/灰、无红绿。
  *
- * 2026-07-30（张楚寒）两处改动：
+ * 2026-07-30（张楚寒）三处改动：
  * ① 「最新证据」整条**可点**，点开右侧证据抽屉（客观事实 / 为什么能验证该命题 / 影响判断）。
  *    他把这条称作「解牛的核心交互之一」——用户能核对证据，可信度才立得住。
- * ② 证据带**分级**标注（直接证据 / 旁证）。旁证不是坏事，但用户有权知道这条不是关于这家公司的；
- *    真正不合格的（通用推测）在读路就被 `qualifyStoredSignal` 拦掉了，压根到不了这里。
+ * ② 证据带**分级**标注（直接证据 / 旁证 + 六级来源等级）。旁证不是坏事，但用户有权知道
+ *    这条不是关于这家公司的；真正不合格的（通用推测、市场传闻）在读路就被拦掉了。
+ * ③ 模块改名为「**逻辑追踪器：证据如何改变投资判断**」，并把他要的那条链显式画出来：
+ *    新闻 → 客观事实 → 对应命题 → 证据强度 → 逻辑增强或削弱。
+ *    他的原话：「而不是简单把『最新证据』做成新闻链接。新闻可点击只是第一步。」
  */
 export function LogicTracker({
   dims,
@@ -62,13 +71,23 @@ export function LogicTracker({
 
   return (
     <div>
-      <div className="mb-1 flex items-baseline gap-2">
-        <h3 className="text-xs font-semibold tracking-wide text-muted">
-          逻辑追踪器
+      <div className="mb-2">
+        <h3 className="text-xs font-semibold tracking-wide text-ink">
+          逻辑追踪器：证据如何改变投资判断
         </h3>
-        <span className="text-[11px] text-muted">
-          每个命题验证到哪一步 · 点证据看原始出处
-        </span>
+        {/* 他要的那条链，直接写在标题下面当作阅读说明——用户一眼知道这张表在干什么 */}
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[11px] text-muted">
+          {["新闻", "客观事实", "对应命题", "证据强度", "逻辑增强或削弱"].map(
+            (step, i) => (
+              <span key={step} className="flex items-center gap-1">
+                {i > 0 ? <span className="text-muted/50">→</span> : null}
+                <span className={i === 3 ? "font-medium text-brand" : undefined}>
+                  {step}
+                </span>
+              </span>
+            ),
+          )}
+        </p>
       </div>
       {/* 桌面列头 */}
       <div className="hidden grid-cols-[1fr_auto_auto] gap-2 border-b border-line/60 px-3 pb-1.5 text-[11px] font-medium text-muted sm:grid">
@@ -86,7 +105,12 @@ export function LogicTracker({
               <div className="flex flex-wrap items-center gap-2 sm:grid sm:grid-cols-[1fr_auto_auto]">
                 <span className="text-sm font-semibold text-ink">{d.key}</span>
                 <span className="sm:w-16 sm:text-center">
-                  <span className={statusBadgeClass(t.statusTone)}>
+                  {/* title 里放判定理由：「已验证」现在有硬门槛（一至三级来源 + 直接支持命题），
+                      不说明凭什么，用户会以为是随机的 */}
+                  <span
+                    className={statusBadgeClass(t.statusTone)}
+                    title={t.statusWhy}
+                  >
                     {t.statusLabel}
                   </span>
                 </span>
@@ -127,6 +151,19 @@ export function LogicTracker({
                     {latest.fact ?? latest.note}
                   </span>
                   <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted">
+                    {/* 证据强度＝来源等级 × 直接性。一到三级用 amber 实心，四到六级留灰——
+                        用户扫一眼就知道这条「已验证」是靠公告撑起来的还是靠一篇研报 */}
+                    {latest.sourceLevel ? (
+                      <span
+                        className={
+                          isHardSource(latest.sourceLevel)
+                            ? "rounded bg-brand/15 px-1.5 py-0.5 font-semibold text-brand"
+                            : "rounded bg-line/60 px-1.5 py-0.5 font-medium"
+                        }
+                      >
+                        {SOURCE_LEVEL_SHORT[latest.sourceLevel]}
+                      </span>
+                    ) : null}
                     {latest.grade ? (
                       <span className="rounded bg-line/60 px-1.5 py-0.5 font-medium">
                         {gradeLabel(latest.grade as EvidenceGrade)}
@@ -173,5 +210,6 @@ function toEvidence(s: TrackerSignal): EvidenceSignal {
     publishedAt: s.publishedAt,
     sourceName: s.sourceName,
     tier: s.tier,
+    sourceLevel: s.sourceLevel,
   };
 }

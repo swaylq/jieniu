@@ -1,5 +1,7 @@
 import { PrismaClient } from "../../generated/prisma";
 import { keepQualified, gradeLabel } from "../lib/evidence";
+import { SOURCE_LEVEL_SHORT, isHardSource } from "../lib/evidence-source";
+import { trackDimension, type DimSignal } from "../lib/logic-tracker";
 
 /**
  * 存量「最新证据」体检（张楚寒 2026-07-30 反馈）。**只读，不写库。**
@@ -30,8 +32,11 @@ async function main() {
       newsTitle: true,
       materiality: true,
       direction: true,
+      publishedAt: true,
       entity: { select: { name: true } },
-      news: { select: { tier: true } },
+      news: {
+        select: { tier: true, brief: true, summary: true, source: { select: { name: true } } },
+      },
     },
   });
 
@@ -42,6 +47,8 @@ async function main() {
     subject: r.entity.name,
     newsTitle: r.newsTitle,
     tier: r.news.tier,
+    sourceName: r.news.source.name,
+    brief: r.news.brief ?? r.news.summary ?? "",
     _raw: r,
   }));
 
@@ -65,6 +72,39 @@ async function main() {
   for (const [r, n] of [...byReason].sort((a, b) => b[1] - a[1])) {
     console.log(`    ${String(n).padStart(4)}  ${r}`);
   }
+
+  // 来源等级分布：张楚寒的新门槛只认一到三级，先看看真库里够格的有多少
+  const byLevel = new Map<number, number>();
+  for (const k of kept) byLevel.set(k.verdict.sourceLevel, (byLevel.get(k.verdict.sourceLevel) ?? 0) + 1);
+  console.log(`  合格证据的来源等级分布：`);
+  for (const lv of [1, 2, 3, 4, 5, 6] as const) {
+    const n = byLevel.get(lv) ?? 0;
+    if (n > 0) console.log(`    ${SOURCE_LEVEL_SHORT[lv]}  ${n}${isHardSource(lv) ? "  ← 够格支撑「已验证」" : ""}`);
+  }
+  const hard = kept.filter((k) => isHardSource(k.verdict.sourceLevel) && k.verdict.grade === "direct");
+  console.log(`  其中「一至三级 + 直接支持命题」＝够格把命题标成「已验证」的：${hard.length} 条`);
+
+  // 按维度算一遍状态分布——这是用户真正看到的东西（「已验证」的新门槛落到实处是什么样）
+  const byDim = new Map<string, DimSignal[]>();
+  for (const k of kept) {
+    const key = `${k.item.subject}｜${k.item.dimensionKey}`;
+    const arr = byDim.get(key) ?? [];
+    arr.push({
+      direction: k.item._raw.direction,
+      materiality: k.item._raw.materiality,
+      note: k.item.fact,
+      publishedAt: k.item._raw.publishedAt,
+      sourceLevel: k.verdict.sourceLevel,
+      grade: k.verdict.grade,
+    });
+    byDim.set(key, arr);
+  }
+  const statusCount = new Map<string, number>();
+  for (const arr of byDim.values()) {
+    const t = trackDimension(arr);
+    statusCount.set(t.statusLabel, (statusCount.get(t.statusLabel) ?? 0) + 1);
+  }
+  console.log(`  有证据的命题共 ${byDim.size} 个，状态分布：${[...statusCount].map(([k, v]) => `${k} ${v}`).join("｜")}`);
 
   console.log(`\n—— 判废样本（复核重点：有没有误杀真证据）——`);
   for (const d of dropped.slice(0, show)) {

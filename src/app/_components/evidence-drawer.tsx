@@ -99,6 +99,31 @@ export function EvidenceDrawer({
             </section>
           ) : null}
 
+          {/* 证据强度——张楚寒那条链的第 4 环。他的原话：
+              「『已验证』最好至少需要一条能够直接支持命题的一级至三级证据。
+                只有研报观点或者AI推断，最多标为『部分验证』。」
+              把这条规则**当场讲给用户听**，比只丢一个徽章可信得多。 */}
+          <section>
+            <h3 className="text-xs font-semibold text-ink">证据强度</h3>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              <span
+                className={
+                  detail.strength.hard
+                    ? "rounded bg-brand/15 px-2 py-0.5 text-[11px] font-semibold text-brand"
+                    : "rounded border border-line px-2 py-0.5 text-[11px] font-medium text-muted"
+                }
+              >
+                {detail.strength.level} 级 · {detail.strength.levelLabel}
+              </span>
+              <span className="rounded border border-line px-2 py-0.5 text-[11px] font-medium text-muted">
+                {gradeLabel(detail.grade as EvidenceGrade)}
+              </span>
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-ink/75">
+              {detail.strength.verdict}
+            </p>
+          </section>
+
           <section>
             <h3 className="text-xs font-semibold text-ink">影响判断</h3>
             <p className="mt-0.5 text-[11px] text-muted">

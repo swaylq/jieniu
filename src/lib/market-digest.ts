@@ -19,7 +19,6 @@ import {
   isVacuousWatchpoint,
   isSubstantive,
   isValidAttribution,
-  type MacroCandidate,
   type MarketBreadth,
 } from "./digest-substance";
 import {
@@ -208,12 +207,6 @@ function fmtPct(n: number): string {
 
 function orNone(lines: string[]): string {
   return lines.length > 0 ? lines.join("\n") : "（无）";
-}
-
-function macroBlock(items: MacroCandidate[]): string {
-  return orNone(
-    items.map((m) => `- 【${m.source}】${m.title}${m.brief ? `——${m.brief}` : ""}`),
-  );
 }
 
 /** 一条事件在提示词里的样子。带上一手标记与多源数——模型据此判轻重。 */
