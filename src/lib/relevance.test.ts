@@ -36,6 +36,30 @@ describe("isRoundupNews", () => {
     }
   });
 
+  // 2026-07-30 run2 实测漏网的两条：扩容那天各绑了 4 只科创板股（COMPANY+STOCK 共 8 条绑定），
+  // 靠「扇出≥8」勉强兜住，标题判据一个都没命中——`\d+只股` 匹配不到「282只科创板股」（中间隔字）、
+  // 「排行榜」也不在词表里。补标题判据才算真正堵住，扇出兜底不该是唯一防线。
+  it("flags 排行榜 / 「N 只 XX 股」这类榜单（run2 补洞）", () => {
+    for (const t of [
+      "科创板活跃股排行榜（5月13日）",
+      "282只科创板股融资余额环比增加",
+      "沪市主板股融资余额排行榜",
+      "36只创业板股获机构调研",
+    ]) {
+      expect(isRoundupNews(t, 2), t).toBe(true);
+    }
+  });
+
+  it("补的词表不误伤单股新闻（「只」是量词也可能出现在真个股新闻里）", () => {
+    for (const t of [
+      "新希望：上半年出栏肉鸡1000万只，同比增长12%",
+      "领益智造开盘涨停",
+      "恒瑞医药:关于获得药物临床试验批准通知书的公告",
+    ]) {
+      expect(isRoundupNews(t, 2), t).toBe(false);
+    }
+  });
+
   it("flags anything binding to >=8 entities regardless of title", () => {
     expect(isRoundupNews("某个看似普通的标题", 8)).toBe(true);
     expect(isRoundupNews("某个看似普通的标题", 7)).toBe(false);

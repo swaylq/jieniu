@@ -7,6 +7,7 @@
 
 import { PrismaClient } from "../../generated/prisma";
 import { isRoundupNews, isEtfMarketing } from "../lib/relevance";
+import { subjectOnlySourceNames } from "../server/ingest/subject-only";
 
 const db = new PrismaClient();
 
@@ -23,15 +24,28 @@ async function main() {
   // 取所有已绑定资讯的标题
   const items = await db.newsItem.findMany({
     where: { id: { in: [...countBy.keys()] } },
-    select: { id: true, title: true },
+    select: { id: true, title: true, source: { select: { name: true } } },
   });
 
+  // subjectOnly 源豁免：与 runner.ts 同一条规则（`!def.subjectOnly && isRoundupNews(...)`）。
+  // 少了这一句，本脚本会把龙虎榜/大宗交易/研报的**权威**个股绑定判成错绑——
+  // 2026-07-30 实测：不豁免时报 2527 条，其中 2511 条（99.4%）来自这些结构化源。
+  const subjectOnly = subjectOnlySourceNames();
   const roundupIds: string[] = [];
+  let exempted = 0;
   for (const it of items) {
     const c = countBy.get(it.id) ?? 0;
-    if (isEtfMarketing(it.title) || isRoundupNews(it.title, c)) roundupIds.push(it.id);
+    if (!(isEtfMarketing(it.title) || isRoundupNews(it.title, c))) continue;
+    if (subjectOnly.has(it.source.name)) {
+      exempted++;
+      continue;
+    }
+    roundupIds.push(it.id);
   }
-  console.log(`扫描 ${items.length} 条已绑定资讯 → 判定综述/榜单/ETF ${roundupIds.length} 条`);
+  console.log(
+    `扫描 ${items.length} 条已绑定资讯 → 判定综述/榜单/ETF ${roundupIds.length} 条` +
+      `（另有 ${exempted} 条命中标题词但来自 subjectOnly 结构化源，主体由源权威给出，豁免）`,
+  );
 
   if (roundupIds.length === 0) return;
 

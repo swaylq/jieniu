@@ -53,10 +53,19 @@ async function main() {
       if (!ent) continue;
       if (ent.type !== "COMPANY" && ent.type !== "STOCK") continue;
       if (stillMatch.has(e.entityId)) continue;
-      // 权威主体保护：标题以「公司名:」开头说明源明确指定了主体，不动。
+      // 权威主体保护：标题以公司名开头说明源明确指定了主体，不动。
+      //
+      // 2026-07-30 run2 修：原来只护带冒号的「公司名:」，于是
+      // 「重庆水务一季度实现净利2.69亿元 同比增长10.63%」——公司自己的业绩新闻——被判成误绑
+      // （13 条候选里 1 条误判）。但不能直接放开 `startsWith(公司名)`：本脚本要治的正是
+      // 「**中国银行**间市场交易商协会…」这种公司名被更长机构名吞掉的情形，那也是以公司名开头。
+      // 判据落在**边界**上：以公司名开头即算权威，除非紧接着的那几个字构成已知陷阱短语。
       const bare = ent.name.replace(/[（(][^）)]*[）)]\s*$/, "");
-      if (r.title.startsWith(`${bare}:`) || r.title.startsWith(`${bare}：`))
-        continue;
+      const swallowedByTrap = TRAPS.some((t) =>
+        r.title.slice(0, bare.length + t.length).includes(t),
+      );
+      if (r.title.startsWith(`${bare}:`) || r.title.startsWith(`${bare}：`)) continue;
+      if (r.title.startsWith(bare) && !swallowedByTrap) continue;
       doomed.push({
         newsId: r.id,
         entityId: e.entityId,
