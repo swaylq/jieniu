@@ -72,7 +72,12 @@ async function main() {
     const REPORT_HOT_N = 10; // 热门股定向（补 targetsByNeed 永不选中热门股、漏采其新研报，run 44）
     const to = new Date();
     const from = new Date(to.getTime() - 60 * 24 * 60 * 60 * 1000);
-    const cold = (await targetsByNeed(db)).slice(0, REPORT_REFRESH_N);
+    const cold = (
+      await targetsByNeed(db, {
+        market: "A", // 东财研报接口只认 A 股代码
+        onSkip: (n) => n > 0 && console.log(`[targets] 跳过 ${n} 只（退市死壳 + 非 A 股）`),
+      })
+    ).slice(0, REPORT_REFRESH_N);
     const hot = await hotStockTargets(db, REPORT_HOT_N);
     const seen = new Set<string>();
     const targets = [...hot, ...cold].filter(

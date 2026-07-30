@@ -23,7 +23,11 @@ async function main() {
   const from = new Date(to);
   from.setMonth(from.getMonth() - months);
 
-  const all = await targetsByNeed(db); // 已按绑定数升序
+  // 已按绑定数升序；退市死壳已剔除（否则队头永远是那 81 只壳）
+  const all = await targetsByNeed(db, {
+    market: "A", // 东财 A 股接口，喂美股代码取不到东西
+    onSkip: (n) => n > 0 && console.log(`[targets] 跳过 ${n} 只（退市死壳 + 非 A 股）`),
+  });
   const targets = all.filter((t) => t.bound < under);
   console.log(
     `覆盖股 ${all.length} 只 → 绑定<${under} 的 ${targets.length} 只需丰富回填，区间 ${from.toISOString().slice(0, 10)}~${to.toISOString().slice(0, 10)}`,

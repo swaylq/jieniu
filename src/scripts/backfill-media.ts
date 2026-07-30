@@ -16,7 +16,10 @@ async function main() {
   const batchSize = Math.max(1, numArg("batch", 20));
   const ps = numArg("ps", 30);
 
-  const all = await targetsByNeed(db);
+  const all = await targetsByNeed(db, {
+    // 不限市场：东财个股资讯搜索对美股也有结果，只需去掉退市死壳
+    onSkip: (n) => n > 0 && console.log(`[targets] 跳过 ${n} 只退市死壳（无资金流）`),
+  });
   const targets = all.slice(0, limit);
   console.log(
     `覆盖股 ${all.length} 只 → 本轮媒体回填 ${targets.length} 只（每股搜 ${ps} 条个股资讯）`,

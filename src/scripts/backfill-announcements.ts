@@ -9,59 +9,26 @@ import { PrismaClient } from "../../generated/prisma";
 import { ingestSource } from "../server/ingest/runner";
 import { cninfoForCodes } from "../server/ingest/sources/cninfo";
 import { eastmoneyStockNewsForCodes } from "../server/ingest/sources/eastmoney-stocknews";
+import { targetsByNeed } from "../server/backfill-targets";
 
 const db = new PrismaClient();
 
-/** 全部覆盖公司及其代码 + 当前已绑定资讯数，最少者优先（自愈：先补最空的，修「公告 0」）。 */
-async function companiesByNeed(): Promise<{ code: string; name: string; bound: number }[]> {
-  const companies = await db.entity.findMany({
-    where: { type: "COMPANY" },
-    select: { id: true },
-  });
-  const companyIds = companies.map((c) => c.id);
-  if (companyIds.length === 0) return [];
-
-  // 公司 → 其股票代码（ISSUES → STOCK.ticker）
-  const issues = await db.entityRelation.findMany({
-    where: { fromId: { in: companyIds }, type: "ISSUES", to: { type: "STOCK" } },
-    select: { fromId: true, to: { select: { name: true, ticker: true } } },
-  });
-  const codeByCompany = new Map<string, { code: string; name: string }>();
-  for (const i of issues) {
-    if (i.to.ticker) codeByCompany.set(i.fromId, { code: i.to.ticker, name: i.to.name });
-  }
-
-  // 每个公司当前已绑定资讯数
-  const counts = await db.newsEntity.groupBy({
-    by: ["entityId"],
-    where: { entityId: { in: companyIds } },
-    _count: { entityId: true },
-  });
-  const boundBy = new Map(counts.map((c) => [c.entityId, c._count.entityId]));
-
-  const rows: { code: string; name: string; bound: number }[] = [];
-  for (const cid of companyIds) {
-    const cc = codeByCompany.get(cid);
-    if (!cc) continue;
-    rows.push({ code: cc.code, name: cc.name, bound: boundBy.get(cid) ?? 0 });
-  }
-  // 去重代码，最缺者优先（bound 升序）
-  const byCode = new Map<string, { code: string; name: string; bound: number }>();
-  for (const r of rows) {
-    const prev = byCode.get(r.code);
-    if (!prev || r.bound < prev.bound) byCode.set(r.code, r);
-  }
-  return [...byCode.values()].sort((a, b) => a.bound - b.bound);
-}
+// 队列复用 `targetsByNeed`（原来这里有一份自己的 companiesByNeed，形状一样但**没有存活过滤**，
+// 于是这条每 2 小时的 cron 一直在捞那 81 只退市死壳。两份队列并存必漂，删掉重复实现）。
 
 async function main() {
   const limitArg = process.argv.find((a) => a.startsWith("--limit="));
   const limit = limitArg ? Number(limitArg.slice("--limit=".length)) : 40;
-  const need = await companiesByNeed();
+  let skipped = 0;
+  const need = await targetsByNeed(db, {
+    market: "A", // 巨潮公告只认 A 股代码
+    onSkip: (n) => (skipped = n),
+  });
   const batch = need.slice(0, Number.isFinite(limit) ? limit : 40);
   const empties = need.filter((r) => r.bound === 0).length;
   console.log(
-    `覆盖公司 ${need.length} 家（其中当前资讯为 0 的 ${empties} 家）→ 本轮回填最缺的 ${batch.length} 家`,
+    `覆盖公司 ${need.length} 家（其中当前资讯为 0 的 ${empties} 家；跳过退市死壳/非 A 股 ${skipped} 只）` +
+      ` → 本轮回填最缺的 ${batch.length} 家`,
   );
   console.log("  " + batch.map((b) => `${b.name}(${b.code},${b.bound})`).join(" "));
 

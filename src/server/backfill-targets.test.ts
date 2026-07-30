@@ -1,6 +1,83 @@
 import { describe, it, expect, vi } from "vitest";
 
-import { hotStockTargets } from "./backfill-targets";
+import { hotStockTargets, targetsByNeed } from "./backfill-targets";
+
+// 2026-07-30 实测事故：`targetsByNeed` 按 bound 升序返回全部 5500 只，而 81 只**退市死壳**
+// 恒为 bound=0，稳定占据队头。所有调用方都是 `.slice(0, N)`（ingest 的研报/媒体刷新、
+// backfill-announcements / -reports / -media / -year 共五条路径），于是每轮都在捞同一批死壳，
+// 自 7-26 起 100% 空转。判据不能用名字（「玉龙股份」「广汽长丰」「太行水泥」都是死壳但不含「退/ST」，
+// 队头 40 只里名字判据只覆盖 31 只），要用**有没有资金流信号**——它每天刷新，覆盖队头 40/40。
+describe("targetsByNeed · 退市死壳不许锁死队头", () => {
+  /**
+   * 四只股，覆盖四种情形：
+   * - sA 在交易、有大量陈年绑定 → 活，但不缺料，排后面
+   * - sB 在交易、零绑定（新股）→ 活，**最缺料，应在队头**
+   * - sC 无资金流、只有陈年绑定（中国北车那类吸并退市股）→ **死，必须剔除**
+   * - sD 非 A 股六位代码（美股 NVDA，压根不在 A 股资金流快照里）→ 活，保留
+   */
+  function makeDb(opts: { flowFor: string[] }) {
+    const ALL = [
+      { entityId: "sA", _count: { entityId: 7 } },
+      { entityId: "cA", _count: { entityId: 3 } },
+      { entityId: "sC", _count: { entityId: 4 } }, // 陈年绑定，不足以证明活着
+      // sB / sD 零绑定
+    ];
+    return {
+      entity: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "sA", name: "甲公司(600001)", ticker: "600001" },
+          { id: "sB", name: "新上市(600002)", ticker: "600002" },
+          { id: "sC", name: "中国北车(600003)", ticker: "600003" },
+          { id: "sD", name: "英伟达(NVDA)", ticker: "NVDA" },
+        ]),
+      },
+      entityRelation: {
+        findMany: vi.fn().mockResolvedValue([{ fromId: "cA", toId: "sA" }]),
+      },
+      newsEntity: { groupBy: vi.fn().mockResolvedValue(ALL) },
+      entitySignal: {
+        findMany: vi
+          .fn()
+          .mockResolvedValue(opts.flowFor.map((entityId) => ({ entityId }))),
+      },
+    } as never;
+  }
+
+  it("陈年绑定不算活着——吸并退市股被剔除，零资讯但在交易的新股留在队头", async () => {
+    const res = await targetsByNeed(makeDb({ flowFor: ["sA", "sB"] }));
+    const codes = res.map((t) => t.code);
+    expect(codes).not.toContain("600003"); // sC：4 条陈年误绑 + 无资金流 → 死
+    expect(codes[0]).toBe("600002"); // 零绑定的在交易新股排队头
+    expect(codes.indexOf("600002")).toBeLessThan(codes.indexOf("600001"));
+  });
+
+  it("非 A 股六位代码的实体（美股）不需要资金流就算活——它们不在 A 股快照里", async () => {
+    const res = await targetsByNeed(makeDb({ flowFor: ["sA"] }));
+    expect(res.map((t) => t.code)).toContain("NVDA");
+    expect(res.map((t) => t.code)).not.toContain("600002"); // sB 是 A 股代码且无资金流
+  });
+
+  it("「近期有资讯」不能当活着的证据——那个信号被死壳的误绑污染了", async () => {
+    // sC 有 4 条陈年绑定（实测全是误绑：「美的电器」←「南疆中亚家博城奠基」那一类），
+    // 只要它没有资金流，就必须判死。
+    const res = await targetsByNeed(makeDb({ flowFor: ["sA", "sB"] }));
+    expect(res.map((t) => t.code)).not.toContain("600003");
+  });
+
+  it("死壳一旦重新有资金流（恢复上市）自动回到队头——判据是动态的，不是黑名单", async () => {
+    const res = await targetsByNeed(makeDb({ flowFor: ["sA", "sB", "sC"] }));
+    expect(res.map((t) => t.code)).toContain("600003");
+  });
+
+  it("报告被跳过的数量，别让降级静默发生", async () => {
+    const seen: number[] = [];
+    const res = await targetsByNeed(makeDb({ flowFor: ["sA", "sB"] }), {
+      onSkip: (n) => seen.push(n),
+    });
+    expect(res).toHaveLength(3); // sA / sB / sD(NVDA)
+    expect(seen).toEqual([1]); // 只剔掉 sC
+  });
+});
 
 // 热门股定向刷新（QA loop run 7 backlog，run 44 sway 授权执行）：report/media-refresh 原只用 targetsByNeed
 // （绑定最少优先=冷尾），热门股永不入选、其每日新研报/媒体被系统性漏采。hotStockTargets 补齐：

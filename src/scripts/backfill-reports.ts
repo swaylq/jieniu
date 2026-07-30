@@ -25,7 +25,10 @@ async function main() {
   const from = new Date(to);
   from.setMonth(from.getMonth() - months);
 
-  const all = await targetsByNeed(db);
+  const all = await targetsByNeed(db, {
+    market: "A", // 东财 A 股接口，喂美股代码取不到东西
+    onSkip: (n) => n > 0 && console.log(`[targets] 跳过 ${n} 只（退市死壳 + 非 A 股）`),
+  });
   const batchTargets = all.slice(offset, offset + limit);
   console.log(
     `覆盖股 ${all.length} 只 → 本轮研报回填 [${offset}, ${offset + batchTargets.length}) 共 ${batchTargets.length} 只` +
