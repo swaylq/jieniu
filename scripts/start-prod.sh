@@ -36,17 +36,22 @@ sleep 1
 # 熵太低不该拿来签会话；store 里是标准的 `openssl rand -base64 32`。进程 env 优先级高于
 # `.env`，注入即生效。`.env` 的弱值保留只为让 `next build` / 本地 dev 的 env 校验能过——
 # 真要绕过本脚本裸起，下面的 [boot] 自检会把「用的是弱密钥」喊出来。
-# 手机号登录（2026-07-31）：签名**留空即关闭**——登录页只显示邮箱/密码两档，不会出现
-# 一个点了发不出的 tab。要开启就带着签名起：
-#   ALI_SMS_SIGN_NAME=执楠科技 scripts/start-prod.sh
-# 签名必须是阿里云已过审的那几个之一（执楠科技 / 上海执楠信息科技 / live这一刻）；
-# 模板默认 SMS_185822459，需要换用 ALI_SMS_TEMPLATE_CODE 覆盖。
+# 手机号登录（2026-07-31，sway 拍板用「执楠科技」签名）。
+#
+# **签名写死在这里，不靠调用方传。** 它不是密钥（用户收到的短信落款就是它，公开信息），
+# 而「靠启动时的 shell 环境传入」是不留痕的依赖——下次谁直接跑一次 start-prod.sh
+# 就把手机号登录静默关了，而页面照常 200、日志零报错。7-24 / 7-25 两次事故都是这个形状。
+# 要临时换签名/模板：`ALI_SMS_SIGN_NAME=xxx scripts/start-prod.sh`（下面的 :- 会让位）。
+# 签名必须是阿里云已过审的那几个之一（执楠科技 / 上海执楠信息科技 / live这一刻）。
+# 模板同理写死：该账号 QuerySmsTemplateList 列出 4 个全是 AUDIT_STATE_PASS，
+# 但 SendSms **只认 SMS_501775398**，其余报「该账号下找不到对应模板」（2026-07-31 实测）。
 echo "→ 启动（secret exec 注入 ALI_KEY / ALI_SECRET / OPENROUTER_API_KEY / AUTH_SECRET）"
 secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY AUTH_SECRET -- \
   env NODE_ENV=production PORT="$PORT" \
   MAIL_FROM="解牛 <noreply@mail.auramate.net>" \
   ALI_REGION=cn-hangzhou \
-  ALI_SMS_SIGN_NAME="${ALI_SMS_SIGN_NAME:-}" \
+  ALI_SMS_SIGN_NAME="${ALI_SMS_SIGN_NAME:-执楠科技}" \
+  ALI_SMS_TEMPLATE_CODE="${ALI_SMS_TEMPLATE_CODE:-SMS_501775398}" \
   nohup npm run start >"$LOG" 2>&1 &
 disown
 

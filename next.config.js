@@ -14,6 +14,16 @@ const config = {
    * 现在验证 UI 一律：`NEXT_DIST_DIR=.next-dev next dev -p 3939`，与线上产物完全隔离。
    */
   distDir: process.env.NEXT_DIST_DIR ?? ".next",
+  /**
+   * 应急逃生口：`NEXT_SKIP_LINT=1` 时构建跳过 eslint。
+   *
+   * 为什么需要它：`next build` 在 lint 阶段失败**也已经就地重写了 `.next`**，
+   * 于是线上立刻 CSS 400（首页照旧 200，看不出来）。而在多 session 共享的工作区里，
+   * 别人正在写的文件随时可能带着 lint 错误——我这边的构建就被他们的半成品卡住，
+   * 线上却已经坏了。这时唯一正确的动作是**先把 `.next` 恢复成一个有效构建**。
+   * 平时**绝不要**用它：lint 是部署前置门槛（vitest + tsc + next lint 三件套）。
+   */
+  eslint: { ignoreDuringBuilds: process.env.NEXT_SKIP_LINT === "1" },
   experimental: {
     /**
      * 客户端路由缓存存活时间（秒）。

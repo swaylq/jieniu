@@ -29,9 +29,18 @@ export function register() {
     authSecret.length > 0 &&
     (/\s/.test(authSecret) || !/^[A-Za-z0-9+/=_-]+$/.test(authSecret));
 
+  /**
+   * 手机号登录（2026-07-31）。签名由 `scripts/start-prod.sh` 写死注入，不是密钥，
+   * 但**缺了同样是静默的**：登录页会安静地少掉一档，没人会报错。所以一并打出来。
+   */
+  const smsSign = process.env.ALI_SMS_SIGN_NAME ?? "";
+  const smsLine = smsSign
+    ? `｜手机号登录 ✓（签名 ${smsSign}）`
+    : "｜⚠ 手机号登录未开启（缺 ALI_SMS_SIGN_NAME，登录页只剩邮箱/密码）";
+
   if (missing.length === 0) {
     console.log(
-      `[boot] ✓ 密钥齐全：AI + 邮件可用${weakAuth ? " ｜ ⚠ AUTH_SECRET 是弱值（含空格/非 base64），说明没走 scripts/start-prod.sh" : ""}`,
+      `[boot] ✓ 密钥齐全：AI + 邮件可用${smsLine}${weakAuth ? " ｜ ⚠ AUTH_SECRET 是弱值（含空格/非 base64），说明没走 scripts/start-prod.sh" : ""}`,
     );
     return;
   }

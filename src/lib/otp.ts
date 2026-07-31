@@ -10,8 +10,15 @@ export function hashCode(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
 
-/** 验证码有效期：10 分钟。 */
+/** 邮箱验证码有效期：10 分钟（邮件正文里写的就是 10 分钟）。 */
 export const OTP_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * 短信验证码有效期：**5 分钟**。不是拍脑袋——阿里云那个已过审模板的文案写死了
+ * 「5分钟内有效」，模板改不了（要重新报备）。TTL 比文案长就是产品在说一套做一套：
+ * 用户第 8 分钟试出来能用，下次就会以为 8 分钟都行。以文案为准。
+ */
+export const SMS_OTP_TTL_MS = 5 * 60 * 1000;
 
 /**
  * 单个验证码允许的最大校验尝试次数。超过即作废该码，逼迫重新获取

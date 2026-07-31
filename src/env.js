@@ -24,7 +24,13 @@ export const env = createEnv({
      * （`smsConfigured()` 返回 false，登录页只显示邮箱那一档）——不会静默发失败。
      */
     ALI_SMS_SIGN_NAME: z.string().optional(),
-    ALI_SMS_TEMPLATE_CODE: z.string().default("SMS_185822459"),
+    /**
+     * 短信模板。默认 SMS_501775398「尊敬的用户，您的注册验证码为：${code}，5分钟内有效」。
+     * **不要照着 QuerySmsTemplateList 挑**：该账号列出 4 个模板全是 AUDIT_STATE_PASS，
+     * 但实测只有这一个能被 SendSms 认（其余报「该账号下找不到对应模板」）——
+     * 列表接口与发送接口在阿里云这边不是同一份账本。换模板前先真发一条验。
+     */
+    ALI_SMS_TEMPLATE_CODE: z.string().default("SMS_501775398"),
     MAIL_FROM: z.string().default("解牛 <noreply@mail.auramate.net>"),
     OPENROUTER_API_KEY: z.string().optional(),
     // 生产机在中国大陆网络：OpenRouter 的 anthropic/openai provider 会 403（provider ToS/地域封锁）。

@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
 import { env } from "~/env";
-import { generateCode, hashCode, OTP_TTL_MS } from "~/lib/otp";
+import { generateCode, hashCode, OTP_TTL_MS, SMS_OTP_TTL_MS } from "~/lib/otp";
 import { sendVerificationEmail } from "~/server/email";
 import { sendVerificationSms, smsConfigured } from "~/server/sms";
 import { isValidPhone, normalizePhone, maskPhone, phoneIdentifier } from "~/lib/phone";
@@ -150,7 +150,7 @@ export const authRouter = createTRPCRouter({
         data: {
           identifier,
           token: hashCode(`${identifier}:${code}`),
-          expires: new Date(Date.now() + OTP_TTL_MS),
+          expires: new Date(Date.now() + SMS_OTP_TTL_MS),
         },
       });
 
