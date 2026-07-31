@@ -17,6 +17,14 @@ export const env = createEnv({
       .default("development"),
     ALI_KEY: z.string().optional(),
     ALI_SECRET: z.string().optional(),
+    /**
+     * 站点 canonical origin。**生产必须显式给**（`scripts/start-prod.sh` 已写死）：
+     * 解牛跑在 xray(443) → Caddy(8443) → rathole → 本机 3838 后面，Auth.js 自己探测出来的
+     * origin 是 `localhost:3838` —— 实测无论怎么传 Host / X-Forwarded-Host 都不改，
+     * 于是「退出登录」跳到 https://localhost:3838/，用户掉线到一个打不开的地址。
+     * Auth.js 直接读 `process.env.AUTH_URL`，这里声明只为可见；开发环境留空即按 localhost 走。
+     */
+    AUTH_URL: z.string().url().optional(),
     ALI_REGION: z.string().default("cn-hangzhou"),
     /**
      * 短信签名与模板（手机号登录）。签名**必须是阿里云已过审的那几个之一**，
@@ -57,6 +65,7 @@ export const env = createEnv({
     NODE_ENV: process.env.NODE_ENV,
     ALI_KEY: process.env.ALI_KEY,
     ALI_SECRET: process.env.ALI_SECRET,
+    AUTH_URL: process.env.AUTH_URL,
     ALI_REGION: process.env.ALI_REGION,
     ALI_SMS_SIGN_NAME: process.env.ALI_SMS_SIGN_NAME,
     ALI_SMS_TEMPLATE_CODE: process.env.ALI_SMS_TEMPLATE_CODE,

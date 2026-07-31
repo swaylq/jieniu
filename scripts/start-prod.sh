@@ -36,6 +36,11 @@ sleep 1
 # 熵太低不该拿来签会话；store 里是标准的 `openssl rand -base64 32`。进程 env 优先级高于
 # `.env`，注入即生效。`.env` 的弱值保留只为让 `next build` / 本地 dev 的 env 校验能过——
 # 真要绕过本脚本裸起，下面的 [boot] 自检会把「用的是弱密钥」喊出来。
+# AUTH_URL：**必须显式钉死**。解牛跑在 xray(443) → Caddy(8443) → rathole → 本机 3838 后面，
+# Auth.js 自己探测出来的 origin 是 `localhost:3838`（实测：无论怎么传 Host / X-Forwarded-Host
+# 都不改）——于是「退出登录」跳到 https://localhost:3838/，用户直接掉线到一个打不开的地址。
+# 这一条只影响服务端生成的绝对跳转，改它不需要重新构建，重启即可生效。
+#
 # 手机号登录（2026-07-31，sway 拍板用「执楠科技」签名）。
 #
 # **签名写死在这里，不靠调用方传。** 它不是密钥（用户收到的短信落款就是它，公开信息），
@@ -48,6 +53,7 @@ sleep 1
 echo "→ 启动（secret exec 注入 ALI_KEY / ALI_SECRET / OPENROUTER_API_KEY / AUTH_SECRET）"
 secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY AUTH_SECRET -- \
   env NODE_ENV=production PORT="$PORT" \
+  AUTH_URL="${AUTH_URL:-https://jieniu.swaylab.ai}" \
   MAIL_FROM="解牛 <noreply@mail.auramate.net>" \
   ALI_REGION=cn-hangzhou \
   ALI_SMS_SIGN_NAME="${ALI_SMS_SIGN_NAME:-执楠科技}" \
