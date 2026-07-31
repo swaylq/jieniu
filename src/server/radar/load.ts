@@ -9,6 +9,7 @@ import {
   type GradedCatalyst,
 } from "../../lib/radar/catalyst";
 import type { RadarBar } from "../../lib/radar/series";
+import { hasMechanicalGap } from "../../lib/radar/qfq";
 
 /**
  * 机会雷达的取数层：`MarketDaily` + 板块归属 + 近 3 日资讯 → 引擎的输入。
@@ -173,25 +174,14 @@ export async function loadMarket(
       .map((b) => b.amount)
       .filter((v): v is number => v !== null && v > 0);
     /**
-     * 机械性异动（复牌/缩股）判定。
-     *
-     * **优先用前复权价**：未复权序列在除权日会算出巨大偏差（10 送 10 = -50%），
-     * 那不是异动、是分红送转，把它当异动会把整批高分红股误杀。前复权序列与官方
-     * 涨跌幅本应自洽，仍然对不上才是真断裂（复牌、缩股、数据错）。
-     * 没有复权价时退回未复权 + 宽阈值（>11%，超过任何板块的日内上限）。
+     * 机械性异动（复牌/缩股）判定，逐对独立选口径——判据与阈值见
+     * `lib/radar/qfq.ts` 的 `hasMechanicalGap`（那里有「老行有四价、新行没有」
+     * 会让检测静默失效的完整说明）。
      */
-    const hasAdj = rs.some((r) => r.adjClose !== null);
-    let gap = false;
-    for (let i = Math.max(1, rs.length - 5); i < rs.length; i++) {
-      const prevRow = rs[i - 1]!;
-      const cur = rs[i]!;
-      const prev = hasAdj ? prevRow.adjClose : prevRow.close;
-      const now = hasAdj ? cur.adjClose : cur.close;
-      if (prev !== null && now !== null && prev > 0) {
-        const implied = (now / prev - 1) * 100;
-        if (Math.abs(implied - cur.changePct) > (hasAdj ? 3 : 11)) gap = true;
-      }
-    }
+    const gap = hasMechanicalGap(
+      rs.map((r) => ({ close: r.close, adjClose: r.adjClose, changePct: r.changePct })),
+      5,
+    );
 
     /**
      * 一字涨停：开=收=高=低 且当日上涨。需求 §5 要求排除——它买不到。

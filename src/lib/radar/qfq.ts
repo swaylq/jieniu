@@ -70,3 +70,39 @@ export function gapVsReported(
   if (!(prevClose > 0)) return null;
   return (close / prevClose - 1) * 100 - reportedChangePct;
 }
+
+export type GapRow = {
+  close: number;
+  adjClose: number | null;
+  changePct: number;
+};
+
+/** 前复权口径的偏差阈值（百分点）。复权序列本应自洽，超过就是真断裂。 */
+export const GAP_ADJ = 3;
+/** 未复权口径的偏差阈值。要宽到超过任何板块的日内涨跌幅上限，否则除息就会误报。 */
+export const GAP_RAW = 11;
+
+/**
+ * 最近 `window` 个交易日内有没有机械性断裂（复牌 / 缩股 / 数据错）。
+ *
+ * **逐对独立选口径**，不是整条序列选一次：原来写的是
+ * `const hasAdj = rs.some(r => r.adjClose !== null)`——老行有四价、新交易日还没回填时，
+ * `hasAdj` 仍是 true，可最近几行的 `adjClose` 是 null，于是 `if (prev !== null && ...)`
+ * 整个被跳过，**异动检测正好在它该看的那 5 天里静默失效**。
+ * 现在每一对自己决定：两边都有复权价就用复权价（严阈值），否则退回未复权（宽阈值）。
+ */
+export function hasMechanicalGap(rows: GapRow[], window = 5): boolean {
+  for (let i = Math.max(1, rows.length - window); i < rows.length; i++) {
+    const prev = rows[i - 1]!;
+    const cur = rows[i]!;
+    const useAdj =
+      prev.adjClose !== null && cur.adjClose !== null && prev.adjClose > 0;
+    const p = useAdj ? prev.adjClose! : prev.close;
+    const n = useAdj ? cur.adjClose! : cur.close;
+    if (!(p > 0) || !(n > 0)) continue;
+    const implied = (n / p - 1) * 100;
+    if (Math.abs(implied - cur.changePct) > (useAdj ? GAP_ADJ : GAP_RAW))
+      return true;
+  }
+  return false;
+}

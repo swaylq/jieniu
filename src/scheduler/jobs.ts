@@ -366,31 +366,6 @@ export const JOBS: JobDef[] = [
         ],
       },
       {
-        /**
-         * 前复权四价回补。**必须有这一步**：一字板判定与机械异动判定都建立在四价上，
-         * 只回补资金流不回补四价，新交易日就会没有四价——一字板退回到对最终候选现拉
-         * K 线（仍正确，但多几个外网请求），异动判定则会逐日退回未复权的宽口径。
-         * days=8 只补最近几天（历史日收盘后不变），minFilled 给大数让全市场都过一遍。
-         */
-        name: "前复权四价回补",
-        script: "src/scripts/backfill-ohlc.ts",
-        args: ["--limit=6000", "--days=12", "--minFilled=99999", "--concurrency=8"],
-        env: { SKIP_ENV_VALIDATION: "1", NODE_ENV: "development" },
-        timeoutMs: 30 * 60_000,
-        // 腾讯限流时这一步会大面积失败，但不该挡住信号生成（有降级路径）
-        runEvenIfPrevFailed: true,
-        checks: [
-          {
-            id: "ohlc-failed",
-            metric: "failed",
-            op: "gt",
-            threshold: 800,
-            message:
-              "前复权四价有 800 只以上取不到（腾讯限流或接口变更）——一字板与异动判定会退回旧口径",
-          },
-        ],
-      },
-      {
         name: "生成机会信号",
         script: "src/scripts/generate-radar.ts",
         args: ["--ai"],

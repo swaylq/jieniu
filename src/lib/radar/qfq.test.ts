@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { parseTencentQfq, isOneWord, gapVsReported } from "./qfq";
+import {
+  parseTencentQfq,
+  isOneWord,
+  gapVsReported,
+  hasMechanicalGap,
+} from "./qfq";
 
 /** 夹具从真实响应拷贝（2026-07-31 实测 web.ifzq.gtimg.cn，sh600519）。 */
 const REAL = {
@@ -80,5 +85,38 @@ describe("gapVsReported（复权价与上报涨跌幅的偏差）", () => {
   it("前收 ≤0 返回 null，不产生 Infinity", () => {
     expect(gapVsReported(0, 5, 1)).toBeNull();
     expect(gapVsReported(-1, 5, 1)).toBeNull();
+  });
+});
+
+describe("hasMechanicalGap（复权价缺失时必须退回未复权，不能静默跳过）", () => {
+  const row = (close: number, adj: number | null, chg: number) => ({ close, adjClose: adj, changePct: chg });
+
+  it("前复权序列自洽 → 不算异动", () => {
+    expect(hasMechanicalGap([row(10, 6.0, 0), row(11, 6.6, 10)])).toBe(false);
+  });
+
+  it("前复权与官方涨跌幅对不上 3pp 以上 → 异动", () => {
+    expect(hasMechanicalGap([row(10, 6.0, 0), row(11, 6.6, 4)])).toBe(true);
+  });
+
+  it("完全没有复权价 → 退回未复权 + 宽阈值（>11pp）", () => {
+    expect(hasMechanicalGap([row(10, null, 0), row(9.5, null, -5)])).toBe(false);
+    expect(hasMechanicalGap([row(10, null, 0), row(5, null, 0)])).toBe(true);
+  });
+
+  it("**老行有复权价、最近几行没有** → 那几天退回未复权判断，不是跳过不判", () => {
+    // 新交易日的四价还没回填：最后一对必须仍然被检查
+    const rows = [row(10, 6.0, 0), row(11, 6.6, 10), row(5, null, 0)];
+    expect(hasMechanicalGap(rows)).toBe(true);
+  });
+
+  it("窗口只看最近 N 对，更早的断裂不算数（20 日前除权不影响今天可比性）", () => {
+    const old = [row(10, null, 0), row(5, null, 0)];
+    const rest = Array.from({ length: 6 }, () => row(5, null, 0));
+    expect(hasMechanicalGap([...old, ...rest], 5)).toBe(false);
+  });
+
+  it("价格 ≤0 的行不参与判断，不产生 Infinity", () => {
+    expect(hasMechanicalGap([row(0, null, 0), row(5, null, 0)])).toBe(false);
   });
 });
