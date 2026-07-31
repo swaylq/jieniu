@@ -153,7 +153,6 @@ export default async function EntityPage({
     data,
     newsPage,
     milestoneData,
-    followers,
     scorecard,
     thesis,
     thesisSignals,
@@ -167,7 +166,6 @@ export default async function EntityPage({
     getEntityData(id),
     api.entity.newsPage({ id, tab: listTab, page: pageNum }),
     api.entity.milestones({ id, months: 12 }),
-    api.entity.followerCount({ id }),
     api.entity.scorecard({ id }),
     api.entity.thesis({ id }),
     api.entity.thesisSignals({ id }),
@@ -482,14 +480,15 @@ export default async function EntityPage({
           <h1 className={`mt-2 text-2xl lg:text-3xl ${displayCls}`}>
             {displayName}
           </h1>
-          <p className="text-muted mt-1 text-sm">
-            {quoteTicker ? (
+          {/* 「N 人关注」已去掉（sway 2026-07-31：用户还少的时候「1 人关注」只会减分）。
+              于是这行只剩交易所 + 代码，没有代码就整行不渲染，别留个空段落撑高度。 */}
+          {quoteTicker ? (
+            <p className="text-muted mt-1 text-sm">
               <span className="tabular">
-                {displayExchange ?? ""} {quoteTicker} ·{" "}
+                {displayExchange ?? ""} {quoteTicker}
               </span>
-            ) : null}
-            {followers} 人关注
-          </p>
+            </p>
+          ) : null}
         </div>
         <FollowButton
           entityId={entity.id}

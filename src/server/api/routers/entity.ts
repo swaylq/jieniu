@@ -853,6 +853,11 @@ export const entityRouter = createTRPCRouter({
       return { companyId, name, ticker: code };
     }),
 
+  /**
+   * 自选该实体的人数。**当前没有任何界面在用**——个股页页头的「N 人关注」2026-07-31 下线
+   * （sway：用户还少的时候「1 人关注」只会减分）。保留过程本体是因为它便宜、有测试，
+   * 用户量起来后想重新露出，接回页头即可（记得一并恢复 `useWatchlistRefresh` 里的失效）。
+   */
   followerCount: publicProcedure
     .input(z.object({ id: z.string() }))
     .query(({ ctx, input }) =>

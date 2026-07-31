@@ -24,7 +24,7 @@ export function useWatchlistRefresh() {
     void utils.watchlist.isFollowing.invalidate();
     void utils.portfolio.list.invalidate();
     void utils.feed.myFeed.invalidate();
-    void utils.entity.followerCount.invalidate();
+    // 这里原本还失效 `entity.followerCount`——个股页的「N 人关注」已下线，没人订阅它了。
     if (refreshServer) router.refresh();
   };
 }

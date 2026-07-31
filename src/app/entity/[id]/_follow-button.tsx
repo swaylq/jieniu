@@ -19,7 +19,7 @@ export function FollowButton({
   const pathname = usePathname();
   const [following, setFollowing] = useState(initialFollowing);
 
-  // 关注状态变化后刷新所有依赖它的视图：侧栏「持仓与观察」、实体关注数、自选流、组合。
+  // 关注状态变化后刷新所有依赖它的视图：侧栏「持仓与观察」、自选流、组合。
   const refreshFollowViews = useWatchlistRefresh();
 
   const track = api.analytics.track.useMutation();
