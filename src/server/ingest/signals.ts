@@ -1,4 +1,5 @@
 import type { PrismaClient } from "../../../generated/prisma";
+import { COMMODITY_MAP as RADAR_COMMODITIES } from "../../lib/radar/commodity";
 
 // 个股结构化信号填充（数据类源，非事件）——写入 EntitySignal，每 (实体,kind) 只留最新一条。
 // margin 融资余额 / consensus 一致预期(脱敏) / unlock 下次限售解禁(前瞻)。数据类走东财数据中心。
@@ -226,11 +227,19 @@ export async function populateSignals(
   return result;
 }
 
-// 产业链大宗商品 → 板块（一板块一代表品种，避免 (entity,kind) 唯一键冲突）。
-const COMMODITY_MAP = [
-  { sym: "nf_LC0", name: "碳酸锂", sector: "新能源", unit: "元/吨" },
-  { sym: "nf_PS0", name: "多晶硅", sector: "光伏", unit: "元/吨" },
-];
+/**
+ * 产业链大宗商品 → 板块。品种表已抽到 `lib/radar/commodity.ts` 与机会雷达共用一份，
+ * 这里只做"一板块一代表品种"的收口——`EntitySignal` 的唯一键是 `(entityId, kind)`，
+ * 一个板块存不下两条 commodity 信号。同板块多品种时取**当日绝对涨跌幅最大**的那个当代表，
+ * 其余放进 `detail.others`，展示层要列全也拿得到。
+ *
+ * 顺带修掉一个静默失效：原来的表挂的是「新能源 / 光伏」，而 `BELONGS_TO` 用的板块名是
+ * 「电池 / 光伏设备」——信号落在了没有成分股的实体上，个股页/板块页都取不到。
+ */
+type FlatCommodity = { sym: string; name: string; sector: string; unit: string };
+const COMMODITY_MAP: FlatCommodity[] = RADAR_COMMODITIES.flatMap((c) =>
+  c.sectors.map((sector) => ({ sym: c.sym, name: c.name, sector, unit: c.unit })),
+);
 
 /**
  * 填充板块级信号（数据类·定向，按 §八 关联广度门控——只挂相关板块）：
@@ -266,17 +275,43 @@ export async function populateSectorSignals(
     if (res.ok) {
       const raw = new TextDecoder("gbk").decode(await res.arrayBuffer());
       const lines = raw.split("\n");
+      // 先把行情解出来，再按板块分组挑代表——不能边解边 upsert，
+      // 否则同板块的第二个品种会把第一个覆盖掉（唯一键是 (entityId, kind)）
+      type Priced = FlatCommodity & { price: number; chg: number };
+      const priced: Priced[] = [];
       for (const c of COMMODITY_MAP) {
-        const sid = sectorByName.get(c.sector);
-        if (!sid) continue;
+        if (!sectorByName.has(c.sector)) continue;
         const line = lines.find((l) => l.includes(`hq_str_${c.sym}=`));
         const f = (/="([^"]*)"/.exec(line ?? "")?.[1] ?? "").split(",");
         const price = Number(f[8]);
         const prev = Number(f[10]);
         if (!Number.isFinite(price) || !Number.isFinite(prev) || prev <= 0) continue;
-        const chg = ((price - prev) / prev) * 100;
-        const s = commodityToSignal(c.name, price, chg, c.unit);
-        if (s) { await upsert(sid, s); result.commodity++; }
+        priced.push({ ...c, price, chg: ((price - prev) / prev) * 100 });
+      }
+      const bySector = new Map<string, Priced[]>();
+      for (const p of priced) {
+        const arr = bySector.get(p.sector);
+        if (arr) arr.push(p);
+        else bySector.set(p.sector, [p]);
+      }
+      for (const [sector, list] of bySector) {
+        const sid = sectorByName.get(sector);
+        if (!sid) continue;
+        const sorted = [...list].sort((a, b) => Math.abs(b.chg) - Math.abs(a.chg));
+        const lead = sorted[0]!;
+        const sig = commodityToSignal(lead.name, lead.price, lead.chg, lead.unit);
+        if (!sig) continue;
+        const others = sorted.slice(1).map((o) => ({
+          name: o.name,
+          price: o.price,
+          changePct: Number(o.chg.toFixed(2)),
+          unit: o.unit,
+        }));
+        await upsert(sid, {
+          ...sig,
+          detail: { ...(sig.detail as object), others },
+        });
+        result.commodity++;
       }
     }
   } catch (e) {

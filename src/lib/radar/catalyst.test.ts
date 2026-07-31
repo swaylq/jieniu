@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { gradeCatalyst, pickCatalysts, type CatalystNews } from "./catalyst";
+import {
+  gradeCatalyst,
+  pickCatalysts,
+  mergeReserving,
+  type CatalystNews,
+  type GradedCatalyst,
+} from "./catalyst";
 
 function news(p: Partial<CatalystNews>): CatalystNews {
   return {
@@ -163,5 +169,48 @@ describe("gradeCatalyst — 媒体稿不能凭一个行业词升到「高」", (
   it("一手公告不受这条影响（公告的主体本来就由信源给定）", () => {
     const n = { ...media, sourceName: "东方财富·公告", tier: "PRIMARY", title: "关于签订重大合同的公告" };
     expect(gradeCatalyst(n, "沃尔核材(002130)")).toBe("HIGH");
+  });
+});
+
+describe("mergeReserving（给不同维度的证据留位）", () => {
+  const g = (id: string, grade: "HIGH" | "MEDIUM", title: string): GradedCatalyst => ({
+    id,
+    title,
+    sourceName: "s",
+    tier: "PRIMARY",
+    url: "u",
+    publishedAt: new Date("2026-07-30T02:00:00Z"),
+    importance: 60,
+    eventType: null,
+    boundCount: 1,
+    grade,
+  });
+  const news = [g("n1", "HIGH", "公告一"), g("n2", "HIGH", "公告二"), g("n3", "HIGH", "公告三")];
+  const price = [g("p1", "MEDIUM", "碳酸锂期货下跌 2.8%")];
+
+  it("低等级的价格证据也能占住一个位，不被高等级新闻全部挤掉", () => {
+    const r = mergeReserving(price, news, 3, 1);
+    expect(r.items.map((i) => i.id)).toContain("p1");
+    expect(r.items).toHaveLength(3);
+  });
+
+  it("整体等级仍取最高的那条（中档价格 + 高档公告 = 高）", () => {
+    expect(mergeReserving(price, news, 3, 1).grade).toBe("HIGH");
+  });
+
+  it("没有要保留的证据时退化成普通合并", () => {
+    const r = mergeReserving([], news, 3, 1);
+    expect(r.items.map((i) => i.id)).toEqual(["n1", "n2", "n3"]);
+  });
+
+  it("保留位比可用条数多时不补空", () => {
+    const r = mergeReserving(price, [], 3, 2);
+    expect(r.items).toHaveLength(1);
+  });
+
+  it("两边都空 → NONE 并给出「暂无明确催化」", () => {
+    const r = mergeReserving([], [], 3, 1);
+    expect(r.grade).toBe("NONE");
+    expect(r.emptyNote).toContain("暂无明确催化");
   });
 });

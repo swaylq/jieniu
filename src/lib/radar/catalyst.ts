@@ -202,3 +202,39 @@ export function mergeGraded(
         : null,
   };
 }
+
+/**
+ * 合并两类证据，并**给第一类留位**。
+ *
+ * 为什么需要它：`mergeGraded` 按等级排序取前 N，于是「碳酸锂期货下跌 2.8%」（中档）
+ * 会被三条高档公告整个挤掉——实测 7/27 的「电池」板块就是这样，
+ * 商品价格明明有料，落库时一条都没留下。
+ *
+ * 价格与公告是**两个维度**的证据，不该在同一个 top-N 里竞争：
+ * 三条公告 + 零条价格，信息量不如两条公告 + 一条价格。
+ */
+export function mergeReserving(
+  reserved: GradedCatalyst[],
+  rest: GradedCatalyst[],
+  take: number,
+  reserveN = 1,
+): CatalystPick {
+  const byGrade = (a: GradedCatalyst, b: GradedCatalyst) =>
+    ORDER[b.grade] - ORDER[a.grade] ||
+    b.publishedAt.getTime() - a.publishedAt.getTime();
+  const head = [...reserved].sort(byGrade).slice(0, Math.min(reserveN, take));
+  const seen = new Set(head.map((i) => i.title.trim()));
+  const tail = [...rest]
+    .sort(byGrade)
+    .filter((i) => !seen.has(i.title.trim()))
+    .slice(0, take - head.length);
+  const items = [...head, ...tail].sort(byGrade);
+  return {
+    grade: items.length === 0 ? "NONE" : items[0]!.grade,
+    items,
+    emptyNote:
+      items.length === 0
+        ? "暂无明确催化，属于资金与价格异动，仍需验证。"
+        : null,
+  };
+}

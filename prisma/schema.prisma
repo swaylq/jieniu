@@ -629,6 +629,10 @@ model OpportunitySignal {
   catalystNewsIds Json
   /// 强模型生成的通俗解释（whyWatch / fundStory / stage / catalyst / verify / risk）
   narrative       Json?
+  /// **自带链接**的证据（商品价格这类没有站内 NewsItem 的硬数据）。
+  /// 与 `catalystNewsIds` 分开：那一列的语义是站内资讯主键，混进合成 id 会让
+  /// 前台按 id 查 NewsItem 时静默丢证据。结构见 `lib/radar/commodity.ts` 的 ExtraEvidence。
+  extraEvidence   Json?
   /// 信号基准交易日
   tradeDate       DateTime @db.Date
   generatedAt     DateTime @default(now())

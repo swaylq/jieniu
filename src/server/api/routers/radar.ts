@@ -1,5 +1,11 @@
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
 import type { CardNarrative } from "~/lib/radar/narrative";
+import {
+  mergeEvidence,
+  type EvidenceItem,
+  type NewsLite,
+} from "~/lib/radar/evidence-merge";
+import type { ExtraEvidence } from "~/lib/radar/commodity";
 
 /**
  * 机会雷达 + 市场强弱地图。
@@ -11,6 +17,7 @@ import type { CardNarrative } from "~/lib/radar/narrative";
  * 全部读库、零外部请求：信号由 `src/scripts/generate-radar.ts` 定时算好落库
  * （渲染时现算要扫 5300 只股 × 60 天，那是后台作业的活，不是请求路径的活）。
  */
+
 
 export type RadarCard = {
   id: string;
@@ -25,13 +32,7 @@ export type RadarCard = {
   reasons: string[];
   risks: string[];
   metrics: Record<string, number | boolean | null>;
-  evidence: {
-    id: string;
-    title: string;
-    url: string;
-    sourceName: string;
-    publishedAt: Date;
-  }[];
+  evidence: EvidenceItem[];
   generatedAt: Date;
   expiresAt: Date;
   status: string;
@@ -129,16 +130,11 @@ export const radarRouter = createTRPCRouter({
       reasons: (r.reasons as string[]) ?? [],
       risks: (r.risks as string[]) ?? [],
       metrics: (r.metrics as Record<string, number | boolean | null>) ?? {},
-      evidence: (r.catalystNewsIds as string[])
-        .map((id) => newsById.get(id))
-        .filter((n): n is NonNullable<typeof n> => !!n)
-        .map((n) => ({
-          id: n.id,
-          title: n.title,
-          url: n.url,
-          sourceName: n.source.name,
-          publishedAt: n.publishedAt,
-        })),
+      evidence: mergeEvidence(
+        r.catalystNewsIds as string[],
+        newsById,
+        r.extraEvidence as ExtraEvidence[] | null,
+      ),
       generatedAt: r.generatedAt,
       expiresAt: r.expiresAt,
       status: r.status,

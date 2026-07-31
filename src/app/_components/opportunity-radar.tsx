@@ -176,12 +176,25 @@ function Card({ c }: { c: RadarCard }) {
           <ul className="mt-1 space-y-1">
             {c.evidence.map((e) => (
               <li key={e.id} className="text-[12px] leading-snug">
-                <Link
-                  href={`/news/${e.id}`}
-                  className="text-brand hover:underline"
-                >
-                  {e.title}
-                </Link>
+                {/* 站外证据（商品行情）直接外跳——它没有站内 NewsItem，
+                    链到 /news/<合成id> 会 404 */}
+                {e.external ? (
+                  <a
+                    href={e.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-brand hover:underline"
+                  >
+                    {e.title} ↗
+                  </a>
+                ) : (
+                  <Link
+                    href={`/news/${e.id}`}
+                    className="text-brand hover:underline"
+                  >
+                    {e.title}
+                  </Link>
+                )}
                 <span className="text-muted ml-1.5">
                   {e.sourceName} ·{" "}
                   {new Date(e.publishedAt).toISOString().slice(5, 10)}

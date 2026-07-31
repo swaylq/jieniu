@@ -4,6 +4,16 @@ import { fetchShape } from "./limit-shape";
 import { runRadar, type RadarResult } from "../../lib/radar/engine";
 import { sectorNarrative, stockNarrative } from "../../lib/radar/narrative";
 import { expiryFor, advanceSignal } from "../../lib/radar/lifecycle";
+import {
+  fetchCommodityCatalysts,
+  type CommodityResult,
+} from "./commodity-fetch";
+import {
+  asGradedCatalyst,
+  isCommodityId,
+  type ExtraEvidence,
+} from "../../lib/radar/commodity";
+import { mergeReserving } from "../../lib/radar/catalyst";
 import { llmChat } from "../llm";
 
 /**
@@ -60,6 +70,8 @@ export type GenerateResult = {
   expired: number;
   upgraded: number;
   oneWordFiltered: string[];
+  commodityQuotes: number;
+  commodityMaterial: number;
   diagnostics: RadarResult["diagnostics"];
 };
 
@@ -108,6 +120,33 @@ export async function generateRadar(
   opts: { withAI?: boolean; asOf?: string } = {},
 ): Promise<GenerateResult> {
   const market = await loadMarket(db, { asOf: opts.asOf });
+
+  /**
+   * 产业链价格并进行业催化。**只在实时路径上取一次**——回测用不了它
+   * （商品行情是当下快照、没有历史），所以不放进 `loadMarket`。
+   * 合并用 `mergeReserving` 而不是 `mergeGraded`：价格与公告是两个维度的证据，
+   * 按等级排序取前 3 会让中档的价格被高档公告整个挤掉（实测「电池」就是如此）。
+   * 给价格**留一个位**——三条公告 + 零条价格，信息量不如两条公告 + 一条价格。
+   */
+  /**
+   * `--asOf` 回放**不取**商品行情：接口给的是当下快照、没有历史，
+   * 拿今天的碳酸锂价格去解释一个月前的信号就是前视偏差。
+   */
+  const commodity: CommodityResult = opts.asOf
+    ? { bySector: new Map<string, ExtraEvidence[]>(), quotes: 0, material: 0 }
+    : await fetchCommodityCatalysts(
+        market.latestTradeDate ?? new Date().toISOString().slice(0, 10),
+      );
+  const extraBySector = new Map<string, ExtraEvidence[]>();
+  for (const [sector, evs] of commodity.bySector) {
+    extraBySector.set(sector, evs);
+    const prev = market.catalystsBySector.get(sector);
+    market.catalystsBySector.set(
+      sector,
+      mergeReserving(evs.map(asGradedCatalyst), prev?.items ?? [], 3, 1),
+    );
+  }
+
   let result = runRadar(market);
 
   // ---- 一字板核验（只核最终入选的那几只）---------------------------------
@@ -142,6 +181,8 @@ export async function generateRadar(
       expired: 0,
       upgraded: 0,
       oneWordFiltered,
+      commodityQuotes: commodity.quotes,
+      commodityMaterial: commodity.material,
       diagnostics: result.diagnostics,
     };
 
@@ -221,6 +262,11 @@ export async function generateRadar(
   let aiFailed = 0;
 
   for (const s of result.sectors) {
+    // 站内资讯主键与自带链接的证据分开存：混在一起会让前台按 id 查 NewsItem 时静默丢证据
+    const newsIds = s.catalyst.items.filter((i) => !isCommodityId(i.id)).map((i) => i.id);
+    const extra = (extraBySector.get(s.sector) ?? []).filter((e) =>
+      s.catalyst.items.some((i) => i.id === e.id),
+    );
     const draft = sectorNarrative(s);
     let narrative: Record<string, string> = { ...draft };
     if (opts.withAI) {
@@ -245,7 +291,8 @@ export async function generateRadar(
         reasons: s.reasons,
         risks: s.risks,
         metrics: s.metrics,
-        catalystNewsIds: s.catalyst.items.map((i) => i.id),
+        catalystNewsIds: newsIds,
+        extraEvidence: extra.length > 0 ? extra : undefined,
         narrative,
         tradeDate: dateOf(tradeDate),
         expiresAt: expiryFor(s.signalType, dateOf(tradeDate)),
@@ -258,7 +305,8 @@ export async function generateRadar(
         reasons: s.reasons,
         risks: s.risks,
         metrics: s.metrics,
-        catalystNewsIds: s.catalyst.items.map((i) => i.id),
+        catalystNewsIds: newsIds,
+        extraEvidence: extra.length > 0 ? extra : undefined,
         narrative,
         expiresAt: expiryFor(s.signalType, dateOf(tradeDate)),
         status: s.signalType === "CONFIRMED" ? "CONFIRMED" : "ACTIVE",
@@ -350,6 +398,8 @@ export async function generateRadar(
     expired,
     upgraded,
     oneWordFiltered,
+    commodityQuotes: commodity.quotes,
+    commodityMaterial: commodity.material,
     diagnostics: result.diagnostics,
   };
 }
