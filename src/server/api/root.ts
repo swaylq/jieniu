@@ -18,6 +18,7 @@ import { portfolioRouter } from "~/server/api/routers/portfolio";
 import { postRouter } from "~/server/api/routers/post";
 import { priceAlertRouter } from "~/server/api/routers/priceAlert";
 import { quoteRouter } from "~/server/api/routers/quote";
+import { radarRouter } from "~/server/api/routers/radar";
 import { rotationRouter } from "~/server/api/routers/rotation";
 import { userThesisRouter } from "~/server/api/routers/user-thesis";
 import { watchlistRouter } from "~/server/api/routers/watchlist";
@@ -49,6 +50,7 @@ export const appRouter = createTRPCRouter({
   post: postRouter,
   priceAlert: priceAlertRouter,
   quote: quoteRouter,
+  radar: radarRouter,
   rotation: rotationRouter,
   userThesis: userThesisRouter,
   watchlist: watchlistRouter,

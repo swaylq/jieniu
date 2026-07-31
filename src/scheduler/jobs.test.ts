@@ -4,9 +4,10 @@ import path from "node:path";
 import { JOBS } from "./jobs";
 
 describe("JOBS 声明自检", () => {
-  it("正好 9 条，key 唯一", () => {
-    expect(JOBS).toHaveLength(9);
-    expect(new Set(JOBS.map((j) => j.key)).size).toBe(9);
+  it("正好 10 条，key 唯一", () => {
+    // 第 10 条是机会雷达（2026-07-31 新增）：逐日行情回补 + 信号生成
+    expect(JOBS).toHaveLength(10);
+    expect(new Set(JOBS.map((j) => j.key)).size).toBe(10);
   });
 
   it("每一步引用的脚本文件都真实存在", () => {
@@ -54,6 +55,7 @@ describe("JOBS 声明自检", () => {
         "backfill-year",
         "daily-digest",
         "daily-maintenance",
+        "opportunity-radar",
       ].sort(),
     );
   });

@@ -312,4 +312,57 @@ export const JOBS: JobDef[] = [
       },
     ],
   },
+  {
+    /**
+     * 机会雷达（两步串行）：先把当天的逐日行情+主力资金补进 `MarketDaily`，再算信号。
+     * 顺序不能反——信号完全建立在 `MarketDaily` 上，先算等于用昨天的数据出今天的卡。
+     *
+     * 新任务默认 `enabled=false`（见 main.ts 的 ensureStates），要在 /admin/jobs
+     * 上显式开启；别指望「起完赶紧去关」（切换那轮已经证明抢不过第一个 tick）。
+     */
+    key: "opportunity-radar",
+    title: "机会雷达（逐日行情回补 + 信号生成）",
+    schedule: { kind: "daily", atCST: "15:50", jitterSec: 300 },
+    heavy: true,
+    steps: [
+      {
+        name: "逐日行情回补",
+        // days=8 只刷最近几天（历史日收盘后不变）；minDays 给大数=全市场都过一遍
+        script: "src/scripts/backfill-market-daily.ts",
+        args: ["--limit=6000", "--days=8", "--minDays=99999", "--concurrency=8"],
+        env: { SKIP_ENV_VALIDATION: "1", NODE_ENV: "development" },
+        timeoutMs: 30 * 60_000,
+        checks: [
+          {
+            id: "market-daily-failed",
+            metric: "failed",
+            op: "gt",
+            threshold: 400,
+            message:
+              "逐日行情有 400 只以上取不到——新浪限流或接口变更，当天的雷达信号会缺料",
+          },
+        ],
+      },
+      {
+        name: "生成机会信号",
+        script: "src/scripts/generate-radar.ts",
+        args: ["--ai"],
+        env: DEEPSEEK,
+        requires: ["OPENROUTER_API_KEY"],
+        timeoutMs: 30 * 60_000,
+        // 「今天没有信号」是**合法输出**，所以这里不设「sectors < 1 就告警」的判据；
+        // 只在 AI 全线失败时提醒——那是密钥/供应商问题，不是市场问题。
+        checks: [
+          {
+            id: "radar-ai-all-failed",
+            metric: "aiFailed",
+            op: "gte",
+            threshold: 8,
+            message:
+              "机会卡的 AI 润色全部失败（已退回确定性底稿，页面仍可用）——查 OPENROUTER_API_KEY 与供应商可用性",
+          },
+        ],
+      },
+    ],
+  },
 ];

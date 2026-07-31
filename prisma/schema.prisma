@@ -111,6 +111,7 @@ model Entity {
   userTheses    UserThesis[]
   priceAlerts   PriceAlert[]
   signals       EntitySignal[]
+  marketDaily   MarketDaily[]
 
   @@index([type])
 }
@@ -568,4 +569,75 @@ model JobRun {
   notifiedAt DateTime?
 
   @@index([jobKey, firedAt])
+}
+
+/// 逐日行情 + 主力资金（机会雷达的量化底座）。
+///
+/// 为什么要新表：原来的 `EntitySignal(kind="flow")` 是 `@@unique([entityId, kind])` 的
+/// **单行 upsert**——每天覆盖，历史一天都不留。而机会雷达的判据全是时序的
+/// （60 日分位、3/5 日持续性、20 日均成交额、5/20 日涨幅），没有历史就一条都算不了。
+/// 数据源见 `src/lib/radar/sina-flow.ts`（新浪一次回 60 个交易日）。
+model MarketDaily {
+  id           String   @id @default(cuid())
+  entityId     String
+  /// 冗余一份代码：回填按代码走，且唯一键用它比用 entityId 更稳（实体可能重建）
+  ticker       String
+  tradeDate    DateTime @db.Date
+  close        Float
+  changePct    Float
+  /// 成交额（元）
+  amount       Float?
+  /// 主力净额（元），正=净流入。东财/新浪口径：按成交单笔金额分档估算，非交易所披露
+  netAmount    Float?
+  /// 主力净额 ÷ 成交额
+  netRatio     Float?
+  /// 换手率 %
+  turnoverRate Float?
+  createdAt    DateTime @default(now())
+  entity       Entity   @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@unique([ticker, tradeDate])
+  @@index([entityId, tradeDate])
+  @@index([tradeDate])
+}
+
+/// 机会雷达信号（需求 §10）。
+///
+/// 铁律：**绝不只存大模型生成的自然语言**——`metrics` 存原始计算指标、
+/// `catalystNewsIds` 存证据 ID，任何一条结论都能回到底层行情与新闻原文复核。
+model OpportunitySignal {
+  id              String   @id @default(cuid())
+  /// EARLY | CONFIRMED | RELATIVE_STRENGTH
+  signalType      String
+  /// SECTOR | COMPANY
+  entityType      String
+  /// 链接目标实体（个股信号指向 STOCK 实体——行情/K线/估值都挂在它身上）
+  entityId        String
+  entityName      String
+  ticker          String?
+  /// 个股信号所属行业（板块名），行业信号为自身
+  sector          String?
+  /// 去重键：个股=ticker、行业=板块名。**唯一约束在库层挡住「同一家公司以
+  /// COMPANY + STOCK 两个实体重复入选」**（需求 §12.8），不靠调用方自觉。
+  dedupeKey       String
+  /// STRONG | MEDIUM
+  signalStrength  String
+  internalScore   Float
+  reasons         Json
+  risks           Json
+  metrics         Json
+  catalystNewsIds Json
+  /// 强模型生成的通俗解释（whyWatch / fundStory / stage / catalyst / verify / risk）
+  narrative       Json?
+  /// 信号基准交易日
+  tradeDate       DateTime @db.Date
+  generatedAt     DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  expiresAt       DateTime
+  /// ACTIVE | CONFIRMED | EXPIRED | RISK
+  status          String   @default("ACTIVE")
+
+  @@unique([dedupeKey, tradeDate])
+  @@index([status, tradeDate])
+  @@index([entityId])
 }

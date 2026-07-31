@@ -6,7 +6,8 @@ import { api } from "~/trpc/server";
 import { EntitySearch } from "../_components/entity-search";
 import { SectionHead, chipClass, displayCls } from "../_components/section-head";
 import { HotSectorGrid } from "../_components/hot-sector-grid";
-import { SectorRotation, StockDiscovery } from "../_components/sector-rotation";
+import { MarketStrengthMap } from "../_components/market-strength-map";
+import { OpportunityRadar } from "../_components/opportunity-radar";
 import { Pager } from "../_components/pager";
 import { entityTypeLabel } from "~/lib/format";
 import { abs, openGraph, twitter } from "~/lib/seo";
@@ -95,11 +96,12 @@ export default async function DiscoverPage({
     );
   }
 
-  const [hot, radar, rotation, sections] = await Promise.all([
+  const [hot, radar, strengthMap, opportunities, sections] = await Promise.all([
     api.entity.allSectors(),
     api.entity.radar(),
     // 加进同一个 Promise.all：多一道串行 await 就多一次全额延迟（个股页 278ms 的教训）
-    api.rotation.board({ sectors: 5, stocks: 5 }),
+    api.radar.strengthMap(),
+    api.radar.opportunities(),
     Promise.all(
       TYPES.map(async (type) => ({
         type,
@@ -118,7 +120,7 @@ export default async function DiscoverPage({
           </h1>
         </div>
         <p className="mt-2 text-sm text-muted">
-          全 A股按行业全覆盖，再看近期有新进展的标的
+          先看今天哪些行业强、哪些行业弱，再看哪些变化可能仍处于早期
         </p>
       </header>
 
@@ -126,14 +128,21 @@ export default async function DiscoverPage({
         <EntitySearch />
       </div>
 
-      {/* 板块轮动 / 个股发现：全部从库里算（EntitySignal kind=flow 由 ingest 定时采集），
-          请求路径上不碰东财——它对本节点间歇封锁，且全市场要翻 59 页。 */}
-      {rotation.sectors.length > 0 ? (
-        <div className="mt-8 space-y-4">
-          <SectorRotation sectors={rotation.sectors} asOf={rotation.asOf} />
-          <StockDiscovery items={rotation.discoveries} asOf={rotation.asOf} />
-        </div>
-      ) : null}
+      {/* 两个模块**刻意分开**（需求 §1）：
+          ① 市场强弱地图只回答「今天哪些行业强/弱」，不把强势或跌得多的行业称作机会；
+          ② 机会雷达只出过闸的信号，回答「哪些变化可能仍处于早期」。
+          都从 MarketDaily 算好落库，请求路径上不碰任何第三方接口。 */}
+      <div className="mt-8 space-y-6">
+        <OpportunityRadar
+          cards={opportunities.cards}
+          risks={opportunities.risks}
+          tradeDate={opportunities.tradeDate}
+        />
+        <MarketStrengthMap
+          sectors={strengthMap.sectors}
+          tradeDate={strengthMap.tradeDate}
+        />
+      </div>
 
       {hot.sectors.length > 0 ? (
         <div className="mt-8">
