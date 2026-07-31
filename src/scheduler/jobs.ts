@@ -363,6 +363,45 @@ export const JOBS: JobDef[] = [
           },
         ],
       },
+      {
+        /**
+         * 滚动回测（需求 §12「用滚动历史数据调整阈值」）。
+         *
+         * 逆势走强首轮只有 14 条样本，不足以下结论——这不是工程量问题、是样本量问题，
+         * 只能靠攒。攒在管道里而不是空等：每天回放最近 5 个交易日，把三类信号的
+         * 10 日超额 / 胜率 / 样本量 / 回撤 / 次日资金反转率写进 JobRun.metrics。
+         *
+         * 只读，不落库。判据用**基线式**（与上次成功运行比）而不是绝对阈值——
+         * 「超额低于 X」这种绝对线在不同市场状态下会天天响，等于没有告警。
+         */
+        name: "滚动回测",
+        script: "src/scripts/radar-backtest.ts",
+        args: ["--days=5", "--horizon=10"],
+        env: { SKIP_ENV_VALIDATION: "1", NODE_ENV: "development" },
+        timeoutMs: 20 * 60_000,
+        // 前一步失败也照跑：回测只读历史，不依赖今天的信号是否生成成功
+        runEvenIfPrevFailed: true,
+        baselineChecks: [
+          {
+            id: "radar-sector-confirmed-degrade",
+            metric: "sector_CONFIRMED_x10",
+            op: "dropGt",
+            // 首轮 +1.94pp；跌超 4pp 才算劣化——阈值要比正常波动高一个量级
+            delta: 4,
+            message:
+              "「趋势形成」的 10 日超额比上次回测掉了 4 个百分点以上——判据可能在当前市场状态下失效，看一眼再决定要不要调阈值",
+          },
+          {
+            id: "radar-flow-reversal-rise",
+            metric: "sector_EARLY_rev",
+            op: "riseGt",
+            // 首轮 54%；升超 20pp 说明资金信号的噪音水平变了
+            delta: 20,
+            message:
+              "「刚刚启动」的次日资金反转率比上次高 20 个百分点以上——主力资金估算口径可能变了或数据源出了问题",
+          },
+        ],
+      },
     ],
   },
 ];

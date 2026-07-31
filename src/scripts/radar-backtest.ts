@@ -318,6 +318,27 @@ async function main() {
     );
   }
 
+  /**
+   * 指标落进 `JobRun.metrics`（需求 §12：把效果攒在管道里，不是空等）。
+   * 只打**关键几项**：三类信号各自的 10 日超额与胜率、样本量、平均回撤。
+   * 逆势走强样本要靠时间积累，`n` 本身就是最该被盯住的指标。
+   */
+  const metrics: Record<string, number> = { signals: total, days: dates.length };
+  for (const [key, results] of byType.entries()) {
+    const b = summarize(key, results);
+    const slug = key.replace("行业·", "sector_").replace("个股·", "stock_");
+    metrics[`${slug}_n`] = b.n;
+    const m10 = b.meanVsMarket[10];
+    const h10 = b.hitRate[10];
+    if (m10 !== undefined) metrics[`${slug}_x10`] = Math.round(m10 * 100) / 100;
+    if (h10 !== undefined) metrics[`${slug}_hit10`] = Math.round(h10 * 100);
+    if (b.meanMaxDrawdown !== null)
+      metrics[`${slug}_dd`] = Math.round(b.meanMaxDrawdown * 100) / 100;
+    if (b.flowReversalRate !== null)
+      metrics[`${slug}_rev`] = Math.round(b.flowReversalRate * 100);
+  }
+  console.log(`JSON_RESULT ${JSON.stringify(metrics)}`);
+
   console.log(
     `\n口径说明：\n` +
       `· 超额 = 信号日之后 N 个交易日的累计收益 − 全 A 等权同期收益（百分点）。\n` +
