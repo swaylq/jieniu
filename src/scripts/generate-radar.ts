@@ -25,7 +25,7 @@ async function main() {
     `[radar] 生命周期：失效 ${r.expired} · 升级 ${r.upgraded}；AI 润色 ${r.aiPolished} 失败 ${r.aiFailed}；一字板剔除 ${r.oneWordFiltered.join(",") || "无"}`,
   );
   console.log(
-    `[radar] 商品价格：取到 ${r.commodityQuotes} 个品种，够催化门槛 ${r.commodityMaterial} 条`,
+    `[radar] 商品价格：取到 ${r.commodityQuotes} 个品种，够催化门槛 ${r.commodityMaterial} 条；清理当日陈旧信号 ${r.staleRemoved} 条`,
   );
   // 「今天没有信号」是合法输出，但必须能区分"确实没有"和"数据没到"——所以诊断照打
   console.log(

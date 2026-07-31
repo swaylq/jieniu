@@ -60,6 +60,21 @@ export function matchesRisk(
   );
 }
 
+/**
+ * 同一交易日重跑时，上一轮选中、这一轮没选中的 dedupeKey。
+ *
+ * 为什么必须删：落库走的是 `upsert`，只写不删——早上那轮选了科达制造/四方科技，
+ * 傍晚那轮选了另一批，两批都留在库里，前台按 tradeDate 取就变成 **10 张卡**，
+ * 把需求 §1「总数不超过 8 个」的硬上限撑破了。实测就是这么发现的（页头显示 10）。
+ */
+export function staleKeysToRemove(
+  currentKeys: string[],
+  existingKeys: string[],
+): string[] {
+  const keep = new Set(currentKeys);
+  return existingKeys.filter((k) => !keep.has(k));
+}
+
 export type GenerateResult = {
   tradeDate: string | null;
   sectors: number;
@@ -72,6 +87,7 @@ export type GenerateResult = {
   oneWordFiltered: string[];
   commodityQuotes: number;
   commodityMaterial: number;
+  staleRemoved: number;
   diagnostics: RadarResult["diagnostics"];
 };
 
@@ -190,6 +206,7 @@ export async function generateRadar(
       oneWordFiltered,
       commodityQuotes: commodity.quotes,
       commodityMaterial: commodity.material,
+      staleRemoved: 0,
       diagnostics: result.diagnostics,
     };
 
@@ -395,8 +412,31 @@ export async function generateRadar(
     });
   }
 
+  /**
+   * 清掉本交易日**这一轮没选中**的旧行。必须放在所有 upsert 之后：
+   * 先写后删，中间任何一步失败都不会出现「今天一条信号都没有」的空窗。
+   */
+  const currentKeys = [
+    ...result.sectors.map((s) => s.sector),
+    ...result.stocks.map((s) => s.ticker),
+    ...result.risks.slice(0, 6).map((r) => `risk:${r.ticker ?? r.name}`),
+  ];
+  const existing = await db.opportunitySignal.findMany({
+    where: { tradeDate: dateOf(tradeDate) },
+    select: { dedupeKey: true },
+  });
+  const stale = staleKeysToRemove(
+    currentKeys,
+    existing.map((e) => e.dedupeKey),
+  );
+  if (stale.length > 0)
+    await db.opportunitySignal.deleteMany({
+      where: { tradeDate: dateOf(tradeDate), dedupeKey: { in: stale } },
+    });
+
   return {
     tradeDate,
+    staleRemoved: stale.length,
     sectors: result.sectors.length,
     stocks: result.stocks.length,
     risks: Math.min(result.risks.length, 6),

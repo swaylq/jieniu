@@ -43,3 +43,28 @@ describe("matchesRisk（生命周期里「今天是不是变成追高风险了�
     expect(matchesRisk({ entityName: "x", ticker: "600733" }, [sectorRisk])).toBe(false);
   });
 });
+
+import { staleKeysToRemove } from "./generate";
+
+describe("staleKeysToRemove（同一交易日重跑不能让旧选择留在库里）", () => {
+  it("上一轮选中、这一轮没选中的，要删掉", () => {
+    const r = staleKeysToRemove(
+      ["银行", "乘用车", "603707"],
+      ["银行", "乘用车", "603707", "600499", "603339"],
+    );
+    expect(r.sort()).toEqual(["600499", "603339"]);
+  });
+
+  it("两轮完全一致 → 不删任何东西", () => {
+    expect(staleKeysToRemove(["A", "B"], ["A", "B"])).toEqual([]);
+  });
+
+  it("追高风险行（risk: 前缀）同样参与——它也是每轮重算的", () => {
+    const r = staleKeysToRemove(["risk:教育"], ["risk:教育", "risk:光伏设备"]);
+    expect(r).toEqual(["risk:光伏设备"]);
+  });
+
+  it("这一轮什么都没选中时，把当日旧行全清掉（今天没信号就是没信号）", () => {
+    expect(staleKeysToRemove([], ["A", "B"]).sort()).toEqual(["A", "B"]);
+  });
+});
