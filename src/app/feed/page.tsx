@@ -1,9 +1,11 @@
 import Link from "next/link";
+import { type ReactNode } from "react";
 import { type Metadata } from "next";
 
 import { api } from "~/trpc/server";
 import { auth } from "~/server/auth";
 import { NewsCard } from "../_components/news-card";
+import { AddWatchButton } from "../_components/add-watch-sheet";
 import { displayCls, primaryBtn } from "../_components/section-head";
 import { abs, openGraph, twitter } from "~/lib/seo";
 
@@ -22,7 +24,13 @@ export const metadata: Metadata = {
   twitter: twitter({ title: "资讯流 一手财经动态 · 解牛" }),
 };
 
-function Masthead({ subtitle }: { subtitle?: string }) {
+function Masthead({
+  subtitle,
+  action,
+}: {
+  subtitle?: string;
+  action?: ReactNode;
+}) {
   return (
     <header className="pt-1 pb-4">
       <div className="flex items-center gap-2.5">
@@ -30,6 +38,9 @@ function Masthead({ subtitle }: { subtitle?: string }) {
         <h1 className={`text-2xl ${displayCls}`}>
           我的自选
         </h1>
+        {/* 加自选的常驻入口就该在「我的自选」这个标题旁边——小哈 2026-07-31：
+            「入口不在顺手或者符合逻辑的地方」。手机上侧栏那个 `+` 根本不渲染。 */}
+        {action ? <div className="ml-auto shrink-0">{action}</div> : null}
       </div>
       {subtitle ? <p className="mt-2 text-sm text-muted">{subtitle}</p> : null}
     </header>
@@ -57,13 +68,19 @@ export default async function FeedPage() {
 
   return (
     <main className="mx-auto max-w-2xl p-4 lg:max-w-4xl">
-      <Masthead subtitle="你自选股的最新动态" />
+      <Masthead subtitle="你自选股的最新动态" action={<AddWatchButton />} />
       {items.length === 0 ? (
         <div className="rounded-xl border border-line bg-surface p-8 text-center shadow-sm">
           <p className="text-muted">还没有自选任何标的</p>
-          <Link href="/onboarding" className={`mt-3 ${primaryBtn}`}>
-            一键添加感兴趣的板块 →
-          </Link>
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
+            <AddWatchButton label="＋ 加一只自选" />
+            <Link
+              href="/onboarding"
+              className="text-sm text-muted transition-colors hover:text-brand"
+            >
+              走一遍引导 →
+            </Link>
+          </div>
         </div>
       ) : (
         <ul className="space-y-3">

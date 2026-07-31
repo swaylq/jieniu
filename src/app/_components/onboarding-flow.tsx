@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { api } from "~/trpc/react";
 import { dirLabel } from "~/lib/thesis-status";
 import { nameWithCode } from "~/lib/watch-label";
+import { WATCH_REASONS, composeWatchReason } from "~/lib/watch-reasons";
 
 type Picked = { id: string; name: string; type: string; ticker: string | null };
 
@@ -26,7 +27,13 @@ export function OnboardingFlow() {
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<Picked | null>(null);
   const [status, setStatus] = useState<"HOLDING" | "WATCH">("HOLDING");
-  const [reason, setReason] = useState("");
+  /**
+   * 理由从自由文本改成标签多选（小哈 2026-07-31：「你要我写理由，我基本上就劝退了」）。
+   * 自由文本降级成折叠的可选补充，标签一个不选也能激活。
+   */
+  const [tags, setTags] = useState<string[]>([]);
+  const [extra, setExtra] = useState("");
+  const [showExtra, setShowExtra] = useState(false);
 
   const results = api.entity.search.useQuery(
     { q },
@@ -48,7 +55,7 @@ export function OnboardingFlow() {
     try {
       await adopt.mutateAsync({
         entityId: picked.id,
-        reason: reason.trim() || null,
+        reason: composeWatchReason({ tags, status, extra }),
       });
     } catch {
       // 该标的暂无基础框架：仅加入组合，演示会给出相应文案。
@@ -170,18 +177,67 @@ export function OnboardingFlow() {
         </div>
 
         <div className="mt-4">
-          <label className="text-xs font-semibold text-muted">
-            一句话：你为什么{status === "HOLDING" ? "持有" : "关注"}它？
-          </label>
-          <textarea
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            rows={2}
-            maxLength={500}
-            placeholder="如：国产存储替代 + 车规放量，赌的是产品结构升级带动毛利。"
-            className="mt-1 w-full resize-none rounded-xl border border-line bg-surface px-4 py-2.5 text-sm text-ink placeholder:text-muted/60 focus:border-brand focus:outline-none"
-          />
-          <p className="mt-1 text-[11px] text-muted">
+          <p className="text-xs font-semibold text-muted">
+            你{status === "HOLDING" ? "看好" : "关注"}它什么？
+            <span className="ml-1 font-normal">可多选，也可以都不选</span>
+          </p>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {WATCH_REASONS.map((r) => {
+              const on = tags.includes(r.key);
+              return (
+                <button
+                  key={r.key}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() =>
+                    setTags((prev) =>
+                      prev.includes(r.key)
+                        ? prev.filter((k) => k !== r.key)
+                        : [...prev, r.key],
+                    )
+                  }
+                  className={`rounded-xl border px-3 py-2 text-left transition-colors ${
+                    on
+                      ? "border-brand bg-brand/10"
+                      : "border-line bg-surface hover:border-brand"
+                  }`}
+                >
+                  <span
+                    className={`block text-sm font-medium ${on ? "text-brand" : "text-ink"}`}
+                  >
+                    {r.label}
+                  </span>
+                  <span className="block text-[10.5px] leading-tight text-muted">
+                    {r.hint}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-3">
+            {showExtra ? (
+              <textarea
+                autoFocus
+                value={extra}
+                onChange={(e) => setExtra(e.target.value)}
+                rows={2}
+                maxLength={400}
+                placeholder="想多写两句就写，不写也行。"
+                className="w-full resize-none rounded-xl border border-line bg-surface px-4 py-2.5 text-sm text-ink placeholder:text-muted/60 focus:border-brand focus:outline-none"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowExtra(true)}
+                className="text-xs text-muted transition-colors hover:text-brand"
+              >
+                ＋ 想多写两句（可选）
+              </button>
+            )}
+          </div>
+
+          <p className="mt-2 text-[11px] text-muted">
             这会成为你自己的投资逻辑记录，日后逻辑有变时，对照当初的判断。
           </p>
         </div>
@@ -261,7 +317,9 @@ export function OnboardingFlow() {
             setStep(1);
             setPicked(null);
             setQ("");
-            setReason("");
+            setTags([]);
+            setExtra("");
+            setShowExtra(false);
           }}
           className="rounded-full border border-line px-4 py-2 text-sm text-muted hover:text-ink"
         >

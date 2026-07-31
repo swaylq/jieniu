@@ -2,6 +2,7 @@ import Link from "next/link";
 import { HoverPrefetchLink } from "./hover-prefetch-link";
 
 import { NewsTimeline, type StreamItem } from "./news-timeline";
+import { AddWatchButton } from "./add-watch-sheet";
 import { chipClass, displayCls, primaryBtn } from "./section-head";
 
 type Watched = { id: string; name: string; type: string };
@@ -74,12 +75,16 @@ export function MyWatchlist({
     <section className="mt-6">
       <div className="flex items-end justify-between gap-3">
         <HeroTitle title="我的自选股" count={watched.length} />
-        <Link
-          href="/onboarding"
-          className="shrink-0 text-sm text-brand hover:underline"
-        >
-          管理 →
-        </Link>
+        {/* 「管理 →」读不出「能加」——小哈找不到继续加自选的入口，这里给个明确的加按钮。 */}
+        <div className="flex shrink-0 items-center gap-3">
+          <AddWatchButton />
+          <Link
+            href="/profile"
+            className="text-sm text-brand hover:underline"
+          >
+            管理 →
+          </Link>
+        </div>
       </div>
 
       <ul className="mt-3 flex flex-wrap gap-2">
