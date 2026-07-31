@@ -9,6 +9,7 @@ import { DecisionList } from "../_components/decision-list";
 import { InvestorProfileCard } from "../_components/investor-profile-card";
 import { LogoMark } from "../_components/logo";
 import { UserAvatar } from "../_components/user-avatar";
+import { getViewerAvatar } from "~/server/viewer-avatar";
 import { NewsCard } from "../_components/news-card";
 import { SectionHead, primaryBtn } from "../_components/section-head";
 
@@ -50,7 +51,11 @@ export default async function ProfilePage() {
   return (
     <main className="mx-auto max-w-2xl p-4 lg:max-w-3xl">
       <div className="flex items-center gap-3">
-        <UserAvatar seed={session.user.email} className="h-12 w-12 text-lg" />
+        <UserAvatar
+          seed={session.user.email}
+          avatar={await getViewerAvatar()}
+          className="h-12 w-12 text-lg"
+        />
         <div className="min-w-0">
           <p className="truncate font-semibold text-ink">
             {session.user.email}

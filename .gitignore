@@ -58,3 +58,6 @@ yarn-error.log*
 
 # 本地验证 UI 用的隔离构建目录（NEXT_DIST_DIR），绝不能碰线上那份 .next
 /.next-dev/
+
+# 用户上传的头像（运行时数据，跟着机器走，不进仓库）
+/var/

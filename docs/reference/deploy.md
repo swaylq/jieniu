@@ -57,6 +57,10 @@ secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY -- \
 - **不抗重启**：没上 launchd，Mac 重启后需手动重启生产服务器 + 确认 rathole client 在跑（policy：持久守护进程要明确要求才做）。
 - 证书续期每 ~3 月会把 privkey 重置为 600 → 需重新 `sudo chmod 640 /etc/letsencrypt/archive/jieniu.swaylab.ai/privkey1.pem`（或写 renewal-hook）。
 - 数据库连接：`postgresql://mac@localhost:5432/jieniu`（本地 trust，无密码）。
+- **用户上传的头像是本机文件**：`var/avatars/<userId>.webp`（gitignore，也不在数据库里）。
+  库里只存 `User.image` 这个指向 `/api/avatar/<id>?v=<哈希>` 的相对 URL。
+  换机 / 重装 / 只恢复数据库 → 头像文件全丢，界面会退回默认渐变头像（不报错，`<img>`
+  拉 404 后有兜底）。要连头像一起备份就把 `var/` 一并打包。目录可用 `AVATAR_DIR` 挪走。
 
 ## 定时任务（服务内调度器）
 

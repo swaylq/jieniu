@@ -64,7 +64,14 @@ model User {
   /// 与 email 二选一即可登录；两者都可为空是不可能的（注册时必有其一）。
   phone               String?             @unique
   emailVerified       DateTime?
+  /// 上传头像的相对 URL：`/api/avatar/<id>?v=<内容哈希>`。null=没传过，走文字头像。
+  /// 图片本体在 `var/avatars/<id>.webp`，不入库（见 src/server/avatar-store.ts）。
   image               String?
+  /// 文字头像的渐变色号（`AVATAR_GRADIENTS` 下标 0–5）。null=按邮箱稳定散列取色。
+  avatarColor         Int?
+  /// 文字头像的显示字符（1–2 个字素）。null=邮箱首字母——对中文用户那基本是个随机大写字母，
+  /// 所以才让人能改成「张」。
+  avatarChar          String?
   password            String? // scrypt 哈希（U-3）；null=仅 OTP 登录。与邮箱验证码并存
   accounts            Account[]
   sessions            Session[]

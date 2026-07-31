@@ -1,6 +1,8 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { auth } from "~/server/auth";
+import { getViewerAvatar } from "~/server/viewer-avatar";
 import { PasswordCard } from "../_components/password-card";
 import { LogoutButton } from "../_components/logout-button";
 import { ThemeToggle } from "../_components/theme-toggle";
@@ -33,14 +35,21 @@ export default async function SettingsPage() {
           <div className="flex items-center gap-3 rounded-xl border border-line bg-surface p-4">
             <UserAvatar
               seed={session.user.email}
+              avatar={await getViewerAvatar()}
               className="h-10 w-10 text-sm"
             />
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-ink">
                 {session.user.email}
               </p>
               <p className="text-xs text-muted">解牛用户</p>
             </div>
+            <Link
+              href="/settings/avatar"
+              className="shrink-0 rounded-lg border border-line px-3 py-1.5 text-xs font-medium text-ink transition-colors hover:border-brand hover:text-brand"
+            >
+              更换头像
+            </Link>
           </div>
           <PasswordCard />
         </div>

@@ -7,6 +7,7 @@ import Link from "next/link";
 
 import { TRPCReactProvider } from "~/trpc/react";
 import { auth } from "~/server/auth";
+import { getViewerAvatar } from "~/server/viewer-avatar";
 import { TabBar } from "./_components/tab-bar";
 import { NotificationBell } from "./_components/notification-bell";
 import { ThemeToggle } from "./_components/theme-toggle";
@@ -111,6 +112,7 @@ export default async function RootLayout({
               <Sidebar
                 loggedIn={!!session?.user}
                 email={session?.user?.email ?? null}
+                avatar={await getViewerAvatar()}
               />
               <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
               <header className="z-30 flex min-h-14 shrink-0 items-center justify-between border-b border-line bg-surface/85 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-lg md:hidden">

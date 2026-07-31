@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 
 import { api } from "~/trpc/react";
+import { type ResolvedAvatar } from "~/lib/avatar";
 import { badgeText, orderWatchEntities } from "~/lib/format";
 import { watchEntityLabel } from "~/lib/watch-label";
 import {
@@ -79,9 +80,12 @@ function NavSpinner() {
 export function Sidebar({
   loggedIn,
   email,
+  avatar,
 }: {
   loggedIn: boolean;
   email: string | null;
+  /** 服务端判定好的头像（`getViewerAvatar`）；未登录为 null，走散列默认。 */
+  avatar?: ResolvedAvatar | null;
 }) {
   const pathname = usePathname();
   const { setOpen } = useCommandPalette();
@@ -263,7 +267,11 @@ export function Sidebar({
               aria-label="账号菜单"
               className="flex w-full items-center gap-2.5 rounded-xl px-1.5 py-1.5 text-left transition-colors hover:bg-sb-2"
             >
-              <UserAvatar seed={email} className="h-8 w-8 text-[13px]" />
+              <UserAvatar
+                seed={email}
+                avatar={avatar}
+                className="h-8 w-8 text-[13px]"
+              />
               <span className="min-w-0 flex-1 truncate text-[13px] text-sb-ink">
                 {email ?? "解牛用户"}
               </span>
