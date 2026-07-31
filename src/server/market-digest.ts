@@ -13,7 +13,9 @@ import {
   isDigestWorthyFiling,
   toDigestEvent,
   DIGEST_SYSTEM,
+  PREOPEN_SYSTEM,
   type DigestInputs,
+  type DigestSession,
   type DigestStockIn,
   type DigestSectorIn,
   type MarketDigestData,
@@ -27,7 +29,6 @@ import {
   scoreEvent,
   selectEvents,
   coverageReport,
-  CATEGORY_LABEL,
   type CoverageRow,
   type RankContext,
   type RawEvent,
@@ -376,10 +377,23 @@ export function runEventPipeline(
   return { events: picked, coverage, poolSize: pool.length, mergedSize: merged.length };
 }
 
+/**
+ * 盘前的候选池起点＝**昨天 A 股收盘那一刻**（15:00 CST）。用固定 30 小时窗口会把昨天盘中
+ * 的事又捞一遍——那些昨天的收盘复盘已经讲过了，重复讲等于盘前简报没有增量。
+ */
+function lastCloseBefore(now: Date): Date {
+  const d = new Date(now);
+  d.setHours(15, 0, 0, 0);
+  if (d.getTime() >= now.getTime()) d.setDate(d.getDate() - 1);
+  return d;
+}
+
 export async function gatherDigestInputs(
   db: DigestDb,
   now = new Date(),
+  session: DigestSession = "close",
 ): Promise<DigestInputs> {
+  if (session === "preopen") return gatherPreopenInputs(db, now);
   const [indices, sectors, pool] = await Promise.all([
     fetchIndexQuotes(),
     gatherSectors(db),
@@ -395,6 +409,7 @@ export async function gatherDigestInputs(
   return {
     tradeDate: tradeDateOf(now),
     market: "CN",
+    session: "close",
     indices: indices.map((i) => ({
       label: i.label,
       price: i.price,
@@ -407,6 +422,52 @@ export async function gatherDigestInputs(
     sectors: { strong: sectors.strong, weak: sectors.weak },
     stocks,
     // 催化节点是**全市场统一的法定披露截止日**（非个股预约日），所以 name 填报告期而非公司名。
+    catalysts: upcomingDisclosureNodes(now, 4).map((n) => ({
+      name: n.period,
+      label: `${n.label}（法定披露截止，还有 ${n.daysUntil} 天）`,
+      date: tradeDateOf(n.deadline),
+    })),
+  };
+}
+
+/**
+ * 盘前取数。与收盘那份的差别是**数据面本身**，不是措辞：
+ * 没有当日 A 股行情/板块资金/市场宽度（还没开盘），所以 sectors/stocks/breadth 一律为空，
+ * 只留隔夜指数（`fetchIndexQuotes` 里本来就含道指/纳指/恒生）+ 昨收以来的事件池 + 今日日程。
+ */
+async function gatherPreopenInputs(
+  db: DigestDb,
+  now: Date,
+): Promise<DigestInputs> {
+  const since = lastCloseBefore(now);
+  const hours = Math.max(1, (now.getTime() - since.getTime()) / 3_600_000);
+  const [indices, pool] = await Promise.all([
+    fetchIndexQuotes(),
+    gatherEventPool(db, hours),
+  ]);
+  // 盘前没有「今日强弱板块」也没有持仓涨跌可比 —— hotSubjects 留空，
+  // 其余两条判据（持仓相关度 / 是否改变投资逻辑）照常起作用。
+  const ctx = await gatherRankContext(
+    db,
+    { strong: [], weak: [] },
+    [],
+    now,
+  );
+  const pipeline = runEventPipeline(pool, ctx);
+  return {
+    tradeDate: tradeDateOf(now),
+    market: "CN",
+    session: "preopen",
+    indices: indices.map((i) => ({
+      label: i.label,
+      price: i.price,
+      changePct: i.changePct,
+    })),
+    breadth: null,
+    events: pipeline.events.map(toDigestEvent),
+    coverage: pipeline.coverage,
+    sectors: { strong: [], weak: [] },
+    stocks: [],
     catalysts: upcomingDisclosureNodes(now, 4).map((n) => ({
       name: n.period,
       label: `${n.label}（法定披露截止，还有 ${n.daysUntil} 天）`,
@@ -430,10 +491,11 @@ export type DigestResult = {
  */
 export async function generateMarketDigest(
   db: DigestDb,
-  opts: { now?: Date; force?: boolean } = {},
+  opts: { now?: Date; force?: boolean; session?: DigestSession } = {},
 ): Promise<DigestResult> {
   const now = opts.now ?? new Date();
-  const inputs = await gatherDigestInputs(db, now);
+  const session = opts.session ?? "close";
+  const inputs = await gatherDigestInputs(db, now, session);
   const tradeDate = inputs.tradeDate;
 
   if (inputs.indices.length === 0 && inputs.events.length === 0) {
@@ -442,7 +504,9 @@ export async function generateMarketDigest(
 
   const hash = digestInputHash(inputs);
   const existing = await db.marketDigest.findUnique({
-    where: { tradeDate_market: { tradeDate, market: inputs.market } },
+    where: {
+      tradeDate_market_session: { tradeDate, market: inputs.market, session },
+    },
     select: { inputHash: true },
   });
   if (existing?.inputHash === hash && !opts.force) {
@@ -451,10 +515,14 @@ export async function generateMarketDigest(
 
   // 第 6 步：**只有这一次调用**用强模型档——前五步全是纯规则。
   // 事件从 ~10 条涨到 15–25 条，token 只涨在这一次 prompt 上，不涨调用次数（张楚寒的成本要求）。
-  const raw = await llmChat(DIGEST_SYSTEM, buildDigestPrompt(inputs), {
-    maxTokens: 3200,
-    tier: "strong",
-  });
+  const raw = await llmChat(
+    session === "preopen" ? PREOPEN_SYSTEM : DIGEST_SYSTEM,
+    buildDigestPrompt(inputs),
+    {
+      maxTokens: 3200,
+      tier: "strong",
+    },
+  );
   const data = parseDigestResponse(raw, inputs.breadth, inputs.stocks, [
     ...inputs.sectors.strong,
     ...inputs.sectors.weak,
@@ -480,8 +548,10 @@ export async function generateMarketDigest(
     model: llmModel("strong"),
   };
   await db.marketDigest.upsert({
-    where: { tradeDate_market: { tradeDate, market: inputs.market } },
-    create: { tradeDate, market: inputs.market, ...payload },
+    where: {
+      tradeDate_market_session: { tradeDate, market: inputs.market, session },
+    },
+    create: { tradeDate, market: inputs.market, session, ...payload },
     update: payload,
   });
   // 管线选了 N 条事件、模型只写了 M 条 driver —— M 远小于 N 说明它把筛选又做了一遍，

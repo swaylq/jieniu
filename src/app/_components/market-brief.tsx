@@ -7,6 +7,8 @@ import {
 
 export type MarketBriefProps = {
   tradeDate: string;
+  /** close=收盘复盘 | preopen=盘前简报（覆盖昨收以来的隔夜）。决定标题与副标。 */
+  session?: string;
   data: MarketDigestData;
   /** 紧凑版：概况 + 宽度 + 三层核心驱动 + 判断，省掉板块/个股/关注点（个人复盘在场时用） */
   compact?: boolean;
@@ -109,7 +111,8 @@ function BreadthStrip({ b }: { b: NonNullable<MarketDigestData["breadth"]> }) {
  * 2026-07-30 再改：分层从三层扩到**六类**（全球市场 / 国内宏观 / 行业 / 公司 / 资金 / 日历），
  * 与复盘生成侧的六步事件管线对齐。老数据里的 overseas/domestic 由 `normalizeScope` 映射过来。
  */
-export function MarketBrief({ tradeDate, data, compact }: MarketBriefProps) {
+export function MarketBrief({ tradeDate, session, data, compact }: MarketBriefProps) {
+  const preopen = session === "preopen";
   const hasSectors = data.sectors.strong.length + data.sectors.weak.length > 0;
   const byScope = (s: EventCategory) => data.drivers.filter((d) => d.scope === s);
   /**
@@ -126,8 +129,17 @@ export function MarketBrief({ tradeDate, data, compact }: MarketBriefProps) {
     <section className="rounded-2xl border border-line bg-surface p-5 shadow-sm">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="h-5 w-1.5 rounded-full bg-brand" aria-hidden />
-        <h2 className="text-base font-bold text-ink">今日复盘</h2>
+        {/* 盘前那份讲的是「昨收之后到现在外面发生了什么」，跟收盘复盘不是一件事——
+            标题必须说清楚，否则用户会以为这是今天收盘的总结（张楚寒 7-31 反馈的反面）。 */}
+        <h2 className="text-base font-bold text-ink">
+          {preopen ? "盘前简报" : "今日复盘"}
+        </h2>
         <span className="tabular text-xs text-muted">{tradeDate}</span>
+        {preopen ? (
+          <span className="rounded bg-brand/15 px-1.5 py-0.5 text-[10px] font-semibold text-brand">
+            开盘前 · 覆盖隔夜
+          </span>
+        ) : null}
         <span className="rounded border border-line px-1.5 py-0.5 text-[10px] font-medium text-muted">
           AI 生成 · 仅归纳已发生事实
         </span>
@@ -220,9 +232,12 @@ export function MarketBrief({ tradeDate, data, compact }: MarketBriefProps) {
         </div>
       )}
 
+      {/* 声明必须**跟着场次说实话**：盘前根本没有当日涨跌家数与板块资金（还没开盘），
+          照抄收盘那句就是在替一份不存在的数据背书。 */}
       <p className="mt-4 border-t border-line pt-3 text-[11px] leading-relaxed text-faint">
-        依据当日指数、涨跌家数、板块资金、公开公告与已知披露日程由 AI 归纳生成；
-        数字由系统统计，不构成投资建议，不含买卖指令或目标价。
+        {preopen
+          ? "依据昨日收盘以来的隔夜指数、公开公告与已知披露日程由 AI 归纳生成；开盘前无当日 A 股行情，本篇不含今日涨跌判断，不构成投资建议。"
+          : "依据当日指数、涨跌家数、板块资金、公开公告与已知披露日程由 AI 归纳生成；数字由系统统计，不构成投资建议，不含买卖指令或目标价。"}
       </p>
     </section>
   );

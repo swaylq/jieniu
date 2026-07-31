@@ -115,7 +115,8 @@ type MailerDb = Pick<PrismaClient, "user" | "alertEvent" | "marketDigest" | "use
 async function todaysBrief(db: MailerDb, now: Date): Promise<MailBrief | null> {
   const tradeDate = tradeDateOf(now);
   const d = await db.marketDigest.findUnique({
-    where: { tradeDate_market: { tradeDate, market: "CN" } },
+    // 邮件/个人复盘引用的是**收盘复盘**那一份（盘前简报是另一个场次）。
+      where: { tradeDate_market_session: { tradeDate, market: "CN", session: "close" } },
   });
   if (!d) return null;
   const sectors = (d.sectors ?? { strong: [], weak: [] }) as MarketDigestData["sectors"];

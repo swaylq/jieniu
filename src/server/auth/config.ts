@@ -3,7 +3,7 @@ import { type DefaultSession, type NextAuthConfig } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 
 import { db } from "~/server/db";
-import { verifyOtpCode } from "~/server/otp-verify";
+import { verifyOtpCode, verifyPhoneOtpCode } from "~/server/otp-verify";
 import { verifyPassword } from "~/lib/password";
 
 /**
@@ -41,6 +41,26 @@ export const authConfig = {
         const result = await verifyOtpCode(db, email, code);
         if (!result.ok || !result.userId) return null;
         return { id: result.userId, email: email.toLowerCase() };
+      },
+    }),
+    CredentialsProvider({
+      // 手机号验证码（张楚寒转述她爹 2026-07-31：「手机号登陆不好吗」）。
+      // 与邮箱那条同构：这里只**校验**已发出的码并签发 JWT，发码在 tRPC auth.requestSmsOtp。
+      id: "phone",
+      name: "Phone OTP",
+      credentials: {
+        phone: { label: "手机号", type: "tel" },
+        code: { label: "验证码", type: "text" },
+      },
+      authorize: async (credentials) => {
+        const phone =
+          typeof credentials?.phone === "string" ? credentials.phone : "";
+        const code =
+          typeof credentials?.code === "string" ? credentials.code : "";
+        if (!phone || !code) return null;
+        const result = await verifyPhoneOtpCode(db, phone, code);
+        if (!result.ok || !result.userId) return null;
+        return { id: result.userId };
       },
     }),
     CredentialsProvider({

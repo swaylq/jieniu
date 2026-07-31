@@ -281,7 +281,8 @@ export async function generateUserDigests(
   const [{ flows, membership, sectors }, market] = await Promise.all([
     loadMarketContext(db),
     db.marketDigest.findUnique({
-      where: { tradeDate_market: { tradeDate, market: "CN" } },
+      // 邮件/个人复盘引用的是**收盘复盘**那一份（盘前简报是另一个场次）。
+      where: { tradeDate_market_session: { tradeDate, market: "CN", session: "close" } },
       select: { overview: true },
     }),
   ]);

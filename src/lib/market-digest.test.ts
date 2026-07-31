@@ -15,6 +15,7 @@ import {
 const inputs: DigestInputs = {
   tradeDate: "2026-07-28",
   market: "CN",
+  session: "close",
   indices: [
     { label: "上证指数", price: 3421.5, changePct: 0.62 },
     { label: "创业板指", price: 2210.3, changePct: -1.15 },
@@ -291,5 +292,36 @@ describe("buildDigestPrompt — 事件清单要把「已经筛过了」讲清楚
     const p = buildDigestPrompt(inputs);
     expect(p).toContain("一手");
     expect(p).toContain("2源同报");
+  });
+});
+
+// 张楚寒 2026-07-31：「昨晚美股的信息没 update 上去」——复盘 15:40 才生成，
+// 早上看到的永远是昨天那份。盘前简报是**另一个场次**，可用数据完全不同。
+describe("buildDigestPrompt — 盘前场次", () => {
+  const pre: DigestInputs = { ...inputs, session: "preopen", breadth: null, sectors: { strong: [], weak: [] }, stocks: [] };
+
+  it("讲的是「开盘前」，并明确禁止预测今天怎么走", () => {
+    const p = buildDigestPrompt(pre);
+    expect(p).toContain("开盘前");
+    expect(p).toContain("今天还没开盘");
+  });
+
+  it("不要板块/个股字段——盘前没有当日行情，硬给会逼模型编", () => {
+    const p = buildDigestPrompt(pre);
+    expect(p).not.toContain("今日强势板块");
+    expect(p).not.toContain("重点个股");
+    expect(p).toContain('"sectors":{"strong":[],"weak":[]}');
+  });
+
+  it("事件清单与条数要求照旧（否则模型又把筛选做两遍）", () => {
+    const p = buildDigestPrompt(pre);
+    expect(p).toContain("全球市场");
+    expect(p).toContain("你就要写 5 条 driver");
+  });
+
+  it("收盘场次不受影响，仍然给板块与个股", () => {
+    const p = buildDigestPrompt(inputs);
+    expect(p).toContain("今日强势板块");
+    expect(p).toContain("重点个股");
   });
 });

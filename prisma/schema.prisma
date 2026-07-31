@@ -59,6 +59,10 @@ model User {
   id                  String              @id @default(cuid())
   name                String?
   email               String?             @unique
+  /// 手机号（中国大陆 11 位，已归一去掉 +86）。张楚寒转述她爹 2026-07-31：
+  /// 「登陆怎么还要邮箱啊」「手机号登陆不好吗」——对不常用邮箱的用户，邮箱验证码就是劝退。
+  /// 与 email 二选一即可登录；两者都可为空是不可能的（注册时必有其一）。
+  phone               String?             @unique
   emailVerified       DateTime?
   image               String?
   password            String? // scrypt 哈希（U-3）；null=仅 OTP 登录。与邮箱验证码并存
@@ -480,6 +484,10 @@ model MarketDigest {
   id          String   @id @default(cuid())
   tradeDate   String // 日历日 YYYY-MM-DD（本地时区，不走 UTC toISOString）
   market      String   @default("CN") // CN | US
+  /// 场次：close=收盘复盘（15:40 生成）| preopen=盘前简报（08:15 生成，覆盖隔夜海外）。
+  /// 张楚寒 2026-07-31：「昨晚美股的信息没 update 上去」——复盘一天只生成一次且在收盘后，
+  /// 早上看到的永远是昨天那份，隔夜美股按定义赶不上。两个场次是两件事，不能互相覆盖。
+  session     String   @default("close")
   overview    String // 1. 大盘概况与情绪
   drivers     Json // 2. { scope:"overseas"|"domestic"|"industry", text }[] 核心驱动（旧数据为 string[]，读取端兼容）
   sectors     Json // 3. { strong: {name,note}[], weak: {name,note}[] }
@@ -491,7 +499,7 @@ model MarketDigest {
   model       String?
   createdAt   DateTime @default(now())
 
-  @@unique([tradeDate, market])
+  @@unique([tradeDate, market, session])
   @@index([market, tradeDate])
 }
 

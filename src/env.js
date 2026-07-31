@@ -18,6 +18,13 @@ export const env = createEnv({
     ALI_KEY: z.string().optional(),
     ALI_SECRET: z.string().optional(),
     ALI_REGION: z.string().default("cn-hangzhou"),
+    /**
+     * 短信签名与模板（手机号登录）。签名**必须是阿里云已过审的那几个之一**，
+     * 否则 SendSms 会返回 Code=isv.SMS_SIGNATURE_ILLEGAL。没配签名就等于关闭手机号登录
+     * （`smsConfigured()` 返回 false，登录页只显示邮箱那一档）——不会静默发失败。
+     */
+    ALI_SMS_SIGN_NAME: z.string().optional(),
+    ALI_SMS_TEMPLATE_CODE: z.string().default("SMS_185822459"),
     MAIL_FROM: z.string().default("解牛 <noreply@mail.auramate.net>"),
     OPENROUTER_API_KEY: z.string().optional(),
     // 生产机在中国大陆网络：OpenRouter 的 anthropic/openai provider 会 403（provider ToS/地域封锁）。
@@ -45,6 +52,8 @@ export const env = createEnv({
     ALI_KEY: process.env.ALI_KEY,
     ALI_SECRET: process.env.ALI_SECRET,
     ALI_REGION: process.env.ALI_REGION,
+    ALI_SMS_SIGN_NAME: process.env.ALI_SMS_SIGN_NAME,
+    ALI_SMS_TEMPLATE_CODE: process.env.ALI_SMS_TEMPLATE_CODE,
     MAIL_FROM: process.env.MAIL_FROM,
     OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
     OPENROUTER_MODEL: process.env.OPENROUTER_MODEL,

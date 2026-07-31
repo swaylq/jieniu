@@ -89,6 +89,7 @@ export default async function Home() {
           <div className="mt-6">
             <MarketBrief
               tradeDate={brief.tradeDate}
+              session={brief.session}
               data={brief.data}
               compact
             />
@@ -203,6 +204,7 @@ export default async function Home() {
         <div className="mt-6">
           <MarketBrief
             tradeDate={brief.tradeDate}
+            session={brief.session}
             data={brief.data}
             compact={!!mine}
           />

@@ -87,9 +87,17 @@ export type DigestEventIn = {
   reasons?: Record<string, number>;
 };
 
+/**
+ * 场次。`close`=收盘复盘（今天 A 股发生了什么）；`preopen`=盘前简报（隔夜海外发生了什么、
+ * 今天开盘该看什么）。两者的**可用数据完全不同**：盘前没有当日 A 股涨跌、板块资金、市场宽度，
+ * 硬套收盘复盘那套字段只会逼模型编。
+ */
+export type DigestSession = "close" | "preopen";
+
 export type DigestInputs = {
   tradeDate: string;
   market: string;
+  session: DigestSession;
   indices: DigestIndex[];
   breadth: MarketBreadth | null;
   /**
@@ -179,6 +187,24 @@ export function isTwoSided(text: string): boolean {
   return TWO_SIDED.test(text);
 }
 
+export const PREOPEN_SYSTEM = `你是一名严谨的盘前简报编辑，为一款投资研究工具撰写 A 股开盘前的隔夜简报。
+
+读者是 A 股投资者，此刻是**开盘前**。他要知道的只有两件事：**昨天收盘之后到现在，外面发生了什么**；
+**今天开盘他该盯什么**。自检标准只有一条——**这句话换一天还成立吗？还成立就删掉重写。**
+
+铁律（违反即作废）：
+1. 只归纳与串联**给定数据里已经发生的事实**，不得编造任何数字、公司、事件。
+2. **不要谈今天 A 股怎么走**——今天还没开盘，任何「今日大盘将…」都是预测，越线且无据。
+   你能谈的是隔夜海外收盘、今晨披露的公告与数据、以及**今天要验证什么**。
+3. **禁止循环归因**。「受外围影响承压」「市场情绪谨慎」这类换一天照样成立的句子一律不写。
+   每条都要落到具体的事：谁做了什么 / 哪个数据出来了 / 哪条政策发了。
+4. **不得给出任何买卖指令、目标价、点位建议、收益承诺**。
+5. 结尾的 judgment 是**开盘前的观察清单**，不是涨跌判断：说清今天最该验证的一两件事，
+   并且必须**双向**（用「反之／但若／除非」显式给出相反情形）。
+6. 用中文，克制、具体、不煽情。overview ≤ 120 字；每条 driver / watchpoint ≤ 45 字；judgment ≤ 160 字。
+
+只输出一个 JSON 对象，不要任何解释文字或 markdown 围栏。`;
+
 export const DIGEST_SYSTEM = `你是一名严谨的市场复盘编辑，为一款投资研究工具撰写每日收盘复盘。
 
 **这份复盘的唯一价值是「增量信息」**：读者已经看到了指数涨跌，他要知道的是**今天发生了什么事**。
@@ -247,6 +273,57 @@ function eventsBlock(events: DigestEventIn[], coverage: CoverageRow[]): string {
 }
 
 export function buildDigestPrompt(i: DigestInputs): string {
+  return i.session === "preopen" ? buildPreopenPrompt(i) : buildClosePrompt(i);
+}
+
+/**
+ * 盘前简报的提示词。与收盘复盘的差别不只是措辞——**可用数据本身不同**：
+ * 没有当日 A 股涨跌、没有板块资金、没有市场宽度（还没开盘）。所以这里只给
+ * 隔夜海外指数 + 事件清单 + 今日已知日程，输出也只要 overview / drivers / watchpoints / judgment。
+ * 硬把 sectors / stocks 塞进来只会逼模型编一份不存在的当日行情。
+ */
+function buildPreopenPrompt(i: DigestInputs): string {
+  const indices = orNone(
+    i.indices.map((x) => `- ${x.label} ${x.price} ${fmtPct(x.changePct)}`),
+  );
+  const catalysts = orNone(
+    i.catalysts.map((c) => `- ${c.date} ${c.name} ${c.label}`),
+  );
+  const poolTotal = i.coverage.reduce((a, c) => a + c.pool, 0);
+
+  return `交易日：${i.tradeDate}（A股）· **开盘前**
+
+【隔夜与最新指数收盘（含海外）】
+${indices}
+
+【昨收以来的事件清单——已经过筛选，不要再自己找素材】
+下面这 ${i.events.length} 条，是从昨天 A 股收盘至今入库的 ${poolTotal} 条候选事件里
+**去重合并 → 按六类分类 → 逐类检查遗漏 → 按重要性排序**之后选出来的。
+排序判据是：市场影响程度、与当日涨跌的解释力、信息新鲜度、来源可靠性、与用户持仓的相关度、
+是否改变原有投资逻辑。**你的工作是把它们写成人话并串起来，不是再做一次筛选。**
+
+${eventsBlock(i.events, i.coverage)}
+
+【今日及近期已知日程】
+${catalysts}
+
+各字段要写什么：
+- overview：**昨收之后到现在，外面发生了什么**——隔夜海外市场收在哪、今晨有哪些披露。
+  不要写「今日A股预计…」，今天还没开盘。
+- drivers：**清单里有 ${i.events.length} 条事件，你就要写 ${i.events.length} 条 driver**
+  ——一条事件对应一条，不要合并、不要挑着写。清单已经替你筛过了，你再筛一遍信息量就掉回去了。
+  scope 用该条所在的类别原值：global / macro / industry / company / flow / calendar。
+  某一类标着「今日无入选事件」就不要给它编 driver。
+- watchpoints：**今天开盘后要验证的事实**，3-6 条，指向具体的会议/数据/披露/价格。
+- judgment：今天开盘前最该盯的一两件事，以及它们分别意味着什么。**不预测涨跌**，
+  必须双向（…；反之，若…）。
+
+**正文里不要出现「1.」「2.」这类段号，也不要重复字段名当前缀。**
+只输出这个结构的 JSON（sectors 与 stocks 一律给空数组，盘前没有当日行情）：
+{"overview":"","drivers":[{"scope":"global","text":""}],"sectors":{"strong":[],"weak":[]},"stocks":[],"watchpoints":[],"judgment":""}`;
+}
+
+function buildClosePrompt(i: DigestInputs): string {
   const indices = orNone(
     i.indices.map((x) => `- ${x.label} ${x.price} ${fmtPct(x.changePct)}`),
   );

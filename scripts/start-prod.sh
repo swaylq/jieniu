@@ -36,11 +36,17 @@ sleep 1
 # 熵太低不该拿来签会话；store 里是标准的 `openssl rand -base64 32`。进程 env 优先级高于
 # `.env`，注入即生效。`.env` 的弱值保留只为让 `next build` / 本地 dev 的 env 校验能过——
 # 真要绕过本脚本裸起，下面的 [boot] 自检会把「用的是弱密钥」喊出来。
+# 手机号登录（2026-07-31）：签名**留空即关闭**——登录页只显示邮箱/密码两档，不会出现
+# 一个点了发不出的 tab。要开启就带着签名起：
+#   ALI_SMS_SIGN_NAME=执楠科技 scripts/start-prod.sh
+# 签名必须是阿里云已过审的那几个之一（执楠科技 / 上海执楠信息科技 / live这一刻）；
+# 模板默认 SMS_185822459，需要换用 ALI_SMS_TEMPLATE_CODE 覆盖。
 echo "→ 启动（secret exec 注入 ALI_KEY / ALI_SECRET / OPENROUTER_API_KEY / AUTH_SECRET）"
 secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY AUTH_SECRET -- \
   env NODE_ENV=production PORT="$PORT" \
   MAIL_FROM="解牛 <noreply@mail.auramate.net>" \
   ALI_REGION=cn-hangzhou \
+  ALI_SMS_SIGN_NAME="${ALI_SMS_SIGN_NAME:-}" \
   nohup npm run start >"$LOG" 2>&1 &
 disown
 

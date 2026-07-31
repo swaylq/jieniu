@@ -15,6 +15,9 @@ import { buildDigestPrompt } from "../lib/market-digest";
  *   --force    同日输入指纹未变也重新生成（默认跳过，省 token）
  *   --dry      只打印喂给模型的提示词，不调 AI、不写库
  *   --market-only  只生成市场复盘，跳过个人复盘
+ *   --preopen  生成**盘前简报**（覆盖昨收以来的隔夜行情与公告）而不是收盘复盘。
+ *              张楚寒 2026-07-31：「昨晚美股的信息没 update 上去」——收盘复盘 15:40 才生成，
+ *              早上打开看到的永远是昨天那份，隔夜海外按定义赶不上。
  *
  * 顺序有意义：先市场后个人——个人复盘会把当日市场概况当背景喂进去。
  */
@@ -23,9 +26,10 @@ const db = new PrismaClient();
 async function main() {
   const force = process.argv.includes("--force");
   const dry = process.argv.includes("--dry");
+  const session = process.argv.includes("--preopen") ? "preopen" : "close";
 
   if (dry) {
-    const inputs = await gatherDigestInputs(db);
+    const inputs = await gatherDigestInputs(db, new Date(), session);
     const withFacts = inputs.stocks.filter((s) => s.facts.length > 0).length;
     console.log(
       `[digest] (dry) ${inputs.tradeDate}｜指数 ${inputs.indices.length}｜强势板块 ${inputs.sectors.strong.length}｜弱势 ${inputs.sectors.weak.length}｜个股 ${inputs.stocks.length}(有自有事实 ${withFacts})｜日程 ${inputs.catalysts.length}｜宽度 ${
@@ -48,10 +52,10 @@ async function main() {
     return;
   }
 
-  const r = await generateMarketDigest(db, { force });
+  const r = await generateMarketDigest(db, { force, session });
   switch (r.status) {
     case "created":
-      console.log(`[digest] ✓ ${r.tradeDate} 已生成`);
+      console.log(`[digest] ✓ ${r.tradeDate} ${session === "preopen" ? "盘前简报" : "收盘复盘"} 已生成`);
       console.log(`  概况：${r.data!.overview}`);
       console.log(
         `  驱动 ${r.data!.drivers.length} 条｜强势板块 ${r.data!.sectors.strong.length}｜弱势 ${r.data!.sectors.weak.length}｜个股 ${r.data!.stocks.length}｜关注点 ${r.data!.watchpoints.length}`,
@@ -69,7 +73,8 @@ async function main() {
       throw new Error(`[digest] ${r.tradeDate} 模型输出被判废：${r.reason}`);
   }
 
-  if (process.argv.includes("--market-only")) return;
+  // 盘前不跑个人复盘：那份贴的是**当日持仓涨跌**，开盘前根本没有
+  if (session === "preopen" || process.argv.includes("--market-only")) return;
 
   // 个人复盘：每个有自选的用户一份，贴着他自己的持仓写
   const { stats, results } = await generateUserDigests(db, { force });

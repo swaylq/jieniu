@@ -286,6 +286,28 @@ export const JOBS: JobDef[] = [
     ],
   },
   {
+    /**
+     * 盘前简报（张楚寒 2026-07-31：「昨晚美股的信息没 update 上去」）。
+     * 收盘复盘 15:40 才生成，所以整个上午首屏挂的都是昨天那份——隔夜海外按定义赶不上。
+     * 08:15 跑一次，覆盖「昨天 15:00 收盘 → 现在」这段：隔夜美股、今晨公告与数据。
+     * 抖动只给 5 分钟：它必须落在 9:30 开盘前，抖太大会跑到开盘后去。
+     */
+    key: "preopen-brief",
+    title: "盘前简报（覆盖隔夜海外）",
+    schedule: { kind: "daily", atCST: "08:15", jitterSec: 300 },
+    heavy: true,
+    steps: [
+      {
+        name: "生成盘前简报",
+        script: "src/scripts/generate-market-digest.ts",
+        args: ["--preopen"],
+        env: { SKIP_ENV_VALIDATION: "1" },
+        requires: ["OPENROUTER_API_KEY"],
+        timeoutMs: 30 * 60_000,
+      },
+    ],
+  },
+  {
     key: "daily-digest",
     title: "每日复盘 + 推送（A股盘后）",
     schedule: { kind: "daily", atCST: "15:40", jitterSec: 300 },
@@ -340,6 +362,31 @@ export const JOBS: JobDef[] = [
             threshold: 400,
             message:
               "逐日行情有 400 只以上取不到——新浪限流或接口变更，当天的雷达信号会缺料",
+          },
+        ],
+      },
+      {
+        /**
+         * 前复权四价回补。**必须有这一步**：一字板判定与机械异动判定都建立在四价上，
+         * 只回补资金流不回补四价，新交易日就会没有四价——一字板退回到对最终候选现拉
+         * K 线（仍正确，但多几个外网请求），异动判定则会逐日退回未复权的宽口径。
+         * days=8 只补最近几天（历史日收盘后不变），minFilled 给大数让全市场都过一遍。
+         */
+        name: "前复权四价回补",
+        script: "src/scripts/backfill-ohlc.ts",
+        args: ["--limit=6000", "--days=12", "--minFilled=99999", "--concurrency=8"],
+        env: { SKIP_ENV_VALIDATION: "1", NODE_ENV: "development" },
+        timeoutMs: 30 * 60_000,
+        // 腾讯限流时这一步会大面积失败，但不该挡住信号生成（有降级路径）
+        runEvenIfPrevFailed: true,
+        checks: [
+          {
+            id: "ohlc-failed",
+            metric: "failed",
+            op: "gt",
+            threshold: 800,
+            message:
+              "前复权四价有 800 只以上取不到（腾讯限流或接口变更）——一字板与异动判定会退回旧口径",
           },
         ],
       },
