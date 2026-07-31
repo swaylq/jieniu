@@ -3,6 +3,8 @@
 //
 // --ai   用强模型润色六段人话（缺 OPENROUTER_API_KEY 时自动退回确定性底稿，不中断）
 // --asOf 回到某个交易日重新生成（回测/复核用）
+// --with-commodity 强制取商品行情（**只用于验证渲染链路**：历史日会拿到今天的价格，
+//                  不能用于回测或效果统计）
 
 import { PrismaClient } from "../../generated/prisma";
 import { generateRadar } from "../server/radar/generate";
@@ -15,7 +17,14 @@ async function main() {
   const asOf = asOfArg ? asOfArg.split("=")[1] : undefined;
 
   const t0 = Date.now();
-  const r = await generateRadar(db, { withAI, asOf });
+  const withCommodity = process.argv.includes("--with-commodity")
+    ? true
+    : undefined;
+  if (withCommodity && asOf)
+    console.warn(
+      "[radar] ⚠ --with-commodity + --asOf：商品价格是当下快照，这批信号带的是今天的价格，只可用于渲染验证",
+    );
+  const r = await generateRadar(db, { withAI, asOf, withCommodity });
   const d = r.diagnostics;
 
   console.log(

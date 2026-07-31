@@ -1,4 +1,4 @@
-import type { PrismaClient } from "../../../generated/prisma";
+import { Prisma, type PrismaClient } from "../../../generated/prisma";
 import { loadMarket } from "./load";
 import { fetchShape } from "./limit-shape";
 import { runRadar, type RadarResult } from "../../lib/radar/engine";
@@ -67,6 +67,18 @@ export function matchesRisk(
  * 傍晚那轮选了另一批，两批都留在库里，前台按 tradeDate 取就变成 **10 张卡**，
  * 把需求 §1「总数不超过 8 个」的硬上限撑破了。实测就是这么发现的（页头显示 10）。
  */
+/**
+ * 站外证据写库时的取值。**空数组必须写成 `Prisma.DbNull`**——
+ * Prisma 里 `undefined` 的语义是「这个字段别动」，于是价格回落到门槛以下、
+ * 证据本该消失之后，上一轮的旧证据会永远留在行上（实测 7/27 重跑后仍挂着
+ * 一条已经不成立的碳酸锂证据）。与「重跑累积旧选择」同族：**只写不删**。
+ */
+export function evidenceWriteValue(
+  extra: ExtraEvidence[],
+): ExtraEvidence[] | typeof Prisma.DbNull {
+  return extra.length > 0 ? extra : Prisma.DbNull;
+}
+
 export function staleKeysToRemove(
   currentKeys: string[],
   existingKeys: string[],
@@ -133,7 +145,7 @@ async function polish(
 
 export async function generateRadar(
   db: PrismaClient,
-  opts: { withAI?: boolean; asOf?: string } = {},
+  opts: { withAI?: boolean; asOf?: string; withCommodity?: boolean } = {},
 ): Promise<GenerateResult> {
   const market = await loadMarket(db, { asOf: opts.asOf });
 
@@ -145,10 +157,15 @@ export async function generateRadar(
    * 给价格**留一个位**——三条公告 + 零条价格，信息量不如两条公告 + 一条价格。
    */
   /**
-   * `--asOf` 回放**不取**商品行情：接口给的是当下快照、没有历史，
+   * 商品行情默认只在**实时**路径上取：接口给的是当下快照、没有历史，
    * 拿今天的碳酸锂价格去解释一个月前的信号就是前视偏差。
+   *
+   * `withCommodity` 让调用方显式覆盖这个默认值——**只用于渲染链路的验证**
+   * （需要一个"当天恰好有价格催化"的样本，而实时那天不一定有）。
+   * 用它生成的历史信号带的是**今天**的价格，不能用于回测或效果统计。
    */
-  const commodity: CommodityResult = opts.asOf
+  const useCommodity = opts.withCommodity ?? !opts.asOf;
+  const commodity: CommodityResult = !useCommodity
     ? { bySector: new Map<string, ExtraEvidence[]>(), quotes: 0, material: 0 }
     : await fetchCommodityCatalysts(
         market.latestTradeDate ?? new Date().toISOString().slice(0, 10),
@@ -316,7 +333,7 @@ export async function generateRadar(
         risks: s.risks,
         metrics: s.metrics,
         catalystNewsIds: newsIds,
-        extraEvidence: extra.length > 0 ? extra : undefined,
+        extraEvidence: evidenceWriteValue(extra),
         narrative,
         tradeDate: dateOf(tradeDate),
         expiresAt: expiryFor(s.signalType, dateOf(tradeDate)),
@@ -330,7 +347,13 @@ export async function generateRadar(
         risks: s.risks,
         metrics: s.metrics,
         catalystNewsIds: newsIds,
-        extraEvidence: extra.length > 0 ? extra : undefined,
+        /**
+         * **必须是 `Prisma.DbNull` 不是 `undefined`**：Prisma 里 `undefined` 的语义是
+         * 「这个字段别动」，于是商品价格回落到门槛以下、证据消失之后，上一轮的旧证据
+         * 会永远留在行上（实测 7/27 重跑后仍挂着一条已经不成立的碳酸锂证据）。
+         * 与「同一交易日重跑累积旧选择」是同一族：**只写不删**。
+         */
+        extraEvidence: evidenceWriteValue(extra),
         narrative,
         expiresAt: expiryFor(s.signalType, dateOf(tradeDate)),
         status: s.signalType === "CONFIRMED" ? "CONFIRMED" : "ACTIVE",

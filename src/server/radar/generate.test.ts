@@ -68,3 +68,18 @@ describe("staleKeysToRemove（同一交易日重跑不能让旧选择留在库�
     expect(staleKeysToRemove([], ["A", "B"]).sort()).toEqual(["A", "B"]);
   });
 });
+
+import { evidenceWriteValue } from "./generate";
+import { Prisma } from "../../../generated/prisma";
+
+describe("evidenceWriteValue（Prisma 里 undefined ≠ 置空）", () => {
+  it("有证据 → 原样写入", () => {
+    const ev = [{ id: "commodity:nf_LC0:2026-07-31", title: "t", url: "u", sourceName: "s", publishedAt: "2026-07-31", grade: "HIGH" as const }];
+    expect(evidenceWriteValue(ev)).toBe(ev);
+  });
+
+  it("没有证据 → DbNull（不是 undefined）——否则上一轮的旧证据会永远留在行上", () => {
+    expect(evidenceWriteValue([])).toBe(Prisma.DbNull);
+    expect(evidenceWriteValue([])).not.toBe(undefined);
+  });
+});
