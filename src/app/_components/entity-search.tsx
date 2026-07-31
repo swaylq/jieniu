@@ -8,11 +8,13 @@ import { api } from "~/trpc/react";
 import { entityTypeLabel } from "~/lib/format";
 import { brandBtn, fieldCls } from "./section-head";
 import { splitNameCode } from "~/lib/watch-label";
+import { useWatchlistRefresh } from "./use-watchlist-refresh";
 
 export function EntitySearch() {
   const [q, setQ] = useState("");
   const trimmed = q.trim();
   const router = useRouter();
+  const refreshWatchViews = useWatchlistRefresh();
   const query = api.entity.search.useQuery(
     { q: trimmed },
     { enabled: trimmed.length > 0 },
@@ -23,6 +25,8 @@ export function EntitySearch() {
   const addStock = api.entity.addStock.useMutation({
     onSuccess: (data) => {
       setQ("");
+      // addStock 自己就把实体写进了 watchlist，所以侧栏与自选流都得跟着失效。
+      refreshWatchViews();
       router.push(`/entity/${data.companyId}`);
     },
   });

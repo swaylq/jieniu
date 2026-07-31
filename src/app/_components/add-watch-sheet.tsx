@@ -9,6 +9,7 @@ import { ENTITY_TYPE_LABEL } from "~/lib/format";
 import { nameWithCode } from "~/lib/watch-label";
 import { brandBtn, fieldCls } from "./section-head";
 import { WATCH_REASONS, composeWatchReason } from "~/lib/watch-reasons";
+import { useWatchlistRefresh } from "./use-watchlist-refresh";
 
 /**
  * 加自选浮层（2026-07-31 小哈 Sean 直报两条）。
@@ -66,7 +67,7 @@ export function AddWatchSheet({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const utils = api.useUtils();
+  const refreshWatchViews = useWatchlistRefresh();
 
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<Picked | null>(null);
@@ -169,11 +170,7 @@ export function AddWatchSheet({
         // 该标的暂无 AI 基础框架，无法采纳逻辑；自选本身已经加成功，不算失败。
       }
       track.mutate({ type: "follow", entityId: picked.id });
-      void utils.watchlist.list.invalidate();
-      void utils.watchlist.isFollowing.invalidate();
-      void utils.portfolio.list.invalidate();
-      void utils.feed.myFeed.invalidate();
-      router.refresh();
+      refreshWatchViews();
       setDone(picked);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "加入失败，稍后再试。");

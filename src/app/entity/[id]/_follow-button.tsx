@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 
 import { api } from "~/trpc/react";
+import { useWatchlistRefresh } from "../../_components/use-watchlist-refresh";
 
 export function FollowButton({
   entityId,
@@ -16,16 +17,10 @@ export function FollowButton({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const utils = api.useUtils();
   const [following, setFollowing] = useState(initialFollowing);
 
-  // 关注状态变化后刷新所有依赖它的视图：侧栏「我的关注」、实体关注数、关注流。
-  function refreshFollowViews() {
-    void utils.watchlist.list.invalidate();
-    void utils.watchlist.isFollowing.invalidate();
-    void utils.entity.followerCount.invalidate();
-    void utils.feed.myFeed.invalidate();
-  }
+  // 关注状态变化后刷新所有依赖它的视图：侧栏「持仓与观察」、实体关注数、自选流、组合。
+  const refreshFollowViews = useWatchlistRefresh();
 
   const track = api.analytics.track.useMutation();
   const follow = api.watchlist.follow.useMutation({

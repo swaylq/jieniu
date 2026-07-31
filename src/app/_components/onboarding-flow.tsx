@@ -7,6 +7,7 @@ import { api } from "~/trpc/react";
 import { dirLabel } from "~/lib/thesis-status";
 import { nameWithCode } from "~/lib/watch-label";
 import { WATCH_REASONS, composeWatchReason } from "~/lib/watch-reasons";
+import { useWatchlistRefresh } from "./use-watchlist-refresh";
 
 type Picked = { id: string; name: string; type: string; ticker: string | null };
 
@@ -39,6 +40,7 @@ export function OnboardingFlow() {
     { q },
     { enabled: q.trim().length > 0, staleTime: 10_000 },
   );
+  const refreshWatchViews = useWatchlistRefresh();
   const upsert = api.portfolio.upsert.useMutation();
   const adopt = api.userThesis.adopt.useMutation();
   const track = api.analytics.track.useMutation();
@@ -61,6 +63,10 @@ export function OnboardingFlow() {
       // 该标的暂无基础框架：仅加入组合，演示会给出相应文案。
     }
     track.mutate({ type: "onboarding_follow" });
+    // 侧栏「持仓与观察」是独立的 useQuery，不失效就不会重查——激活完当场还是空的。
+    // 传 false：本页对已有自选的用户会 redirect 回首页，刷新 server 数据会把用户
+    // 从下面这屏回填演示里踢走。
+    refreshWatchViews(false);
     setStep(3);
   }
 
