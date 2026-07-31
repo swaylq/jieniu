@@ -593,6 +593,12 @@ model MarketDaily {
   netRatio     Float?
   /// 换手率 %
   turnoverRate Float?
+  /// 前复权四价（腾讯 fqkline）。未复权的 `close` 保留不动——它是新浪原始口径，
+  /// 两者并存才能算出「复权前后判定不一致」这类校验。
+  open         Float?
+  high         Float?
+  low          Float?
+  adjClose     Float?
   createdAt    DateTime @default(now())
   entity       Entity   @relation(fields: [entityId], references: [id], onDelete: Cascade)
 

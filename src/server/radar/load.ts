@@ -33,6 +33,8 @@ export type LoadedMarket = {
   latestTradeDate: string | null;
   /** 个股 ticker → 它的孪生 COMPANY 实体 id（去重用） */
   companyIdByTicker: Map<string, string>;
+  /** 最新交易日缺前复权四价的股——一字板判不了，交给生成层兜底拉 K 线 */
+  ohlcMissing: Set<string>;
 };
 
 type DailyRow = {
@@ -46,6 +48,10 @@ type DailyRow = {
   netAmount: number | null;
   netRatio: number | null;
   turnoverRate: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  adjClose: number | null;
 };
 
 /** DATE 列以 UTC 零点存取，取日历日一律走 UTC，别用本地时区（会差一天）。 */
@@ -85,11 +91,13 @@ export async function loadMarket(
       catalystsBySector: new Map(),
       latestTradeDate: null,
       companyIdByTicker: new Map(),
+      ohlcMissing: new Set(),
     };
 
   const rows = await db.$queryRawUnsafe<DailyRow[]>(
     `SELECT m.ticker, m."entityId", e.name, m."tradeDate", m.close, m."changePct",
-            m.amount, m."netAmount", m."netRatio", m."turnoverRate"
+            m.amount, m."netAmount", m."netRatio", m."turnoverRate",
+            m.open, m.high, m.low, m."adjClose"
        FROM "MarketDaily" m
        JOIN "Entity" e ON e.id = m."entityId"
       WHERE m."tradeDate" = ANY($1::date[])
@@ -132,6 +140,7 @@ export async function loadMarket(
   const stocks: StockSeries[] = [];
   const stockBasics = new Map<string, StockBasics>();
   const floatCapByTicker = new Map<string, number>();
+  const ohlcMissing = new Set<string>();
 
   for (const [ticker, rs] of byTicker) {
     const bars: RadarBar[] = rs.map((r) => ({
@@ -142,6 +151,10 @@ export async function loadMarket(
       netAmount: r.netAmount,
       netRatio: r.netRatio,
       turnoverRate: r.turnoverRate,
+      open: r.open,
+      high: r.high,
+      low: r.low,
+      adjClose: r.adjClose,
     }));
     const last = bars[bars.length - 1]!;
     if (!latestTradeDate || last.day > latestTradeDate) latestTradeDate = last.day;
@@ -160,30 +173,52 @@ export async function loadMarket(
       .map((b) => b.amount)
       .filter((v): v is number => v !== null && v > 0);
     /**
-     * 机械性异动（除权/复牌）判定要**窄**：A 股 6~7 月是分红季，60 日窗口里
-     * 21% 的股都有除息缺口——按「对不上就排除」会把五分之一的市场删掉，而分红
-     * 本身完全不影响这只股值不值得看（收益已经改用官方涨跌幅连乘，除息不再污染）。
-     * 只挡真正会让**短窗口比较失真**的那种：最近 5 个交易日内，收盘价跳变
-     * 超过任何板块的日内涨跌幅上限（>11%）却没有对应的涨跌幅——那是复牌或缩股。
+     * 机械性异动（复牌/缩股）判定。
+     *
+     * **优先用前复权价**：未复权序列在除权日会算出巨大偏差（10 送 10 = -50%），
+     * 那不是异动、是分红送转，把它当异动会把整批高分红股误杀。前复权序列与官方
+     * 涨跌幅本应自洽，仍然对不上才是真断裂（复牌、缩股、数据错）。
+     * 没有复权价时退回未复权 + 宽阈值（>11%，超过任何板块的日内上限）。
      */
+    const hasAdj = rs.some((r) => r.adjClose !== null);
     let gap = false;
-    for (let i = Math.max(1, bars.length - 5); i < bars.length; i++) {
-      const prev = bars[i - 1]!.close;
-      const cur = bars[i]!;
-      if (prev > 0) {
-        const implied = (cur.close / prev - 1) * 100;
-        if (Math.abs(implied - cur.changePct) > 11) gap = true;
+    for (let i = Math.max(1, rs.length - 5); i < rs.length; i++) {
+      const prevRow = rs[i - 1]!;
+      const cur = rs[i]!;
+      const prev = hasAdj ? prevRow.adjClose : prevRow.close;
+      const now = hasAdj ? cur.adjClose : cur.close;
+      if (prev !== null && now !== null && prev > 0) {
+        const implied = (now / prev - 1) * 100;
+        if (Math.abs(implied - cur.changePct) > (hasAdj ? 3 : 11)) gap = true;
       }
     }
+
+    /**
+     * 一字涨停：开=收=高=低 且当日上涨。需求 §5 要求排除——它买不到。
+     * 只有拿到四价才判得了；没有四价时留 false，由 `generate.ts` 对最终候选
+     * 单独拉一次 K 线兜底（宁可多打几个请求，也不要漏掉一字板）。
+     */
+    const lastRow = rs[rs.length - 1]!;
+    const oneWord =
+      lastRow.open !== null &&
+      lastRow.high !== null &&
+      lastRow.low !== null &&
+      lastRow.adjClose !== null &&
+      lastRow.open === lastRow.adjClose &&
+      lastRow.adjClose === lastRow.high &&
+      lastRow.high === lastRow.low &&
+      lastRow.changePct > 0;
     stockBasics.set(ticker, {
       name: rs[0]!.name,
       barCount: bars.length,
       avgAmount20:
         amt20.length >= 10 ? amt20.reduce((a, b) => a + b, 0) / amt20.length : null,
       suspended: false, // 下面按最新交易日统一判
-      oneWordLimitUp: false, // 由 limit-shape.ts 对最终候选逐个核
+      oneWordLimitUp: oneWord,
       priceGapAnomaly: gap,
     });
+
+    if (lastRow.adjClose === null) ohlcMissing.add(ticker);
 
     // 流通市值 = 成交额 ÷ 换手率。不用再去打一趟第三方——这两个字段本来就在库里。
     // （实测 000812：1.43 亿 ÷ 5.39% = 26.5 亿，腾讯快照 26.39 亿）
@@ -256,6 +291,7 @@ export async function loadMarket(
     catalystsBySector,
     latestTradeDate,
     companyIdByTicker,
+    ohlcMissing,
   };
 }
 

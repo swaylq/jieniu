@@ -149,10 +149,17 @@ export async function generateRadar(
 
   let result = runRadar(market);
 
-  // ---- 一字板核验（只核最终入选的那几只）---------------------------------
+  /**
+   * 一字板核验。四价已经在 `MarketDaily` 里（`load.ts` 直接判 `oneWordLimitUp`），
+   * 所以这里**只对四价缺失的那几只**兜底拉一次 K 线——回填有滞后时不至于漏掉一字板，
+   * 正常情况下一个外网请求都不发。
+   */
   const oneWordFiltered: string[] = [];
+  const needShape = result.stocks.filter(
+    (s) => (market.ohlcMissing.has(s.ticker)),
+  );
   const shapes = await Promise.all(
-    result.stocks.map(async (s) => ({ ticker: s.ticker, shape: await fetchShape(s.ticker) })),
+    needShape.map(async (s) => ({ ticker: s.ticker, shape: await fetchShape(s.ticker) })),
   );
   const limitUps = new Map<string, number>();
   let needRerun = false;

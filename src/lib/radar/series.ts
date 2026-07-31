@@ -16,6 +16,11 @@ export type RadarBar = {
   netAmount: number | null; // 主力净额（元）
   netRatio: number | null; // 主力净额 / 成交额
   turnoverRate: number | null; // 换手率 %
+  /** 前复权四价（腾讯 fqkline）。回填未到位时为空——判据要能容忍缺失 */
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  adjClose?: number | null;
 };
 
 /**
