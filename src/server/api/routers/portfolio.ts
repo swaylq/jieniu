@@ -5,6 +5,8 @@ import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { sanitizeHoldingNumbers } from "~/lib/portfolio";
 import { rollUpHoldingChange } from "~/lib/portfolio-change";
 import { propagateImpact } from "~/lib/impact";
+import { parseAppointmentView } from "~/lib/disclosure";
+import { upcomingCatalysts, type CatalystRow } from "~/lib/catalyst-window";
 
 const num = z.number().finite().nullable().optional();
 
@@ -50,16 +52,24 @@ export const portfolioRouter = createTRPCRouter({
     }));
   }),
 
-  /** 「今天你的组合变了什么」（P4-4）：仅持仓，按近期 thesisSignals 汇总每票逻辑增强/削弱/未变。纯 DB+rule，无 AI。 */
+  /**
+   * 「今天你的组合变了什么」（P4-4）：按近期 thesisSignals 汇总每票逻辑增强/削弱/未变。纯 DB+rule，无 AI。
+   *
+   * 2026-07-31：原来只查 `status: "HOLDING"`。而首页四张状态卡就是数这个结果，
+   * 于是「只加了自选、没标持仓」的用户三张卡恒为 0（三个数之和恒等于持仓数），
+   * 文案还照说「你关注的投资逻辑今天都很平静」——线上 6 个账号里 3 个是这个状态，
+   * 张楚寒 7 只自选从 7-05 起一次都没见过非零。观察态同样是「你在乎的逻辑」，一并算。
+   */
   changed: protectedProcedure
     .input(z.object({ days: z.number().min(1).max(30).default(7) }).optional())
     .query(async ({ ctx, input }) => {
       const days = input?.days ?? 7;
       const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
       const holdings = await ctx.db.watchlist.findMany({
-        where: { userId: ctx.session.user.id, status: "HOLDING" },
+        where: { userId: ctx.session.user.id, status: { not: "CLOSED" } },
         select: {
           entityId: true,
+          status: true,
           entity: {
             select: {
               name: true,
@@ -103,18 +113,82 @@ export const portfolioRouter = createTRPCRouter({
             h.entity.relFrom?.[0]?.to.ticker ?? null,
           ),
           byEntity.get(h.entityId) ?? [],
+          h.status === "HOLDING" ? "HOLDING" : "WATCH",
         ),
       );
     }),
 
-  /** Event 传播链（P4-9）：有异动的持仓，经关系图（同板块/竞品）扩散到用户其它持仓——「值得留意」的关联提示，非因果、非荐股。 */
+  /**
+   * 「催化临近」（2026-07-31）：你的自选里，未来 N 天内有**交易所预约披露日**的标的。
+   *
+   * 这张卡原来数的是 `upcomingDisclosureNodes(now, 2)`——写死取两个法定披露截止日，
+   * 所以永远显示 2，跟用户无关、跟远近无关。改成数你自己的节点：数据来自
+   * `EntitySignal(kind="disclosure")`（公司报备的确定性日程，全库 5256/5500 只有值）。
+   * 自选存的常是 COMPANY 实体，而披露日挂在 STOCK 上，要顺着 ISSUES 关系找过去。
+   */
+  catalysts: protectedProcedure
+    .input(z.object({ windowDays: z.number().min(1).max(120).optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db.watchlist.findMany({
+        where: { userId: ctx.session.user.id, status: { not: "CLOSED" } },
+        select: {
+          entityId: true,
+          entity: {
+            select: {
+              name: true,
+              ticker: true,
+              relFrom: {
+                where: { type: "ISSUES" as const },
+                select: { toId: true, to: { select: { ticker: true } } },
+                take: 1,
+              },
+            },
+          },
+        },
+      });
+      if (rows.length === 0) return [];
+      // 自己 + 它发行的股票，两个 id 都去找披露信号（COMPANY / STOCK 孪生实体）
+      const lookupIds = rows.flatMap((r) => [
+        r.entityId,
+        ...r.entity.relFrom.map((rel) => rel.toId),
+      ]);
+      const signals = await ctx.db.entitySignal.findMany({
+        where: { entityId: { in: lookupIds }, kind: "disclosure" },
+        select: { entityId: true, detail: true },
+      });
+      const byId = new Map(signals.map((s) => [s.entityId, s.detail]));
+      const cands: CatalystRow[] = [];
+      for (const r of rows) {
+        const ids = [r.entityId, ...r.entity.relFrom.map((rel) => rel.toId)];
+        const detail = ids.map((id) => byId.get(id)).find((d) => d !== undefined);
+        const view = parseAppointmentView(detail);
+        if (!view) continue;
+        cands.push({
+          // 点开去的是自选里那个实体，不是股票那份——保持站内导航一致
+          entityId: r.entityId,
+          name: nameWithCode(
+            r.entity.name,
+            r.entity.ticker,
+            r.entity.relFrom?.[0]?.to.ticker ?? null,
+          ),
+          periodLabel: view.periodLabel,
+          date: view.date,
+        });
+      }
+      return upcomingCatalysts(cands, new Date(), input?.windowDays);
+    }),
+
+  /**
+   * Event 传播链（P4-9）：有异动的自选，经关系图（同板块/竞品）扩散到用户其它自选——
+   * 「值得留意」的关联提示，非因果、非荐股。与 `changed` 同口径覆盖观察态（2026-07-31）。
+   */
   impact: protectedProcedure
     .input(z.object({ days: z.number().min(1).max(30).default(7) }).optional())
     .query(async ({ ctx, input }) => {
       const days = input?.days ?? 7;
       const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
       const holdings = await ctx.db.watchlist.findMany({
-        where: { userId: ctx.session.user.id, status: "HOLDING" },
+        where: { userId: ctx.session.user.id, status: { not: "CLOSED" } },
         select: {
           entityId: true,
           entity: {

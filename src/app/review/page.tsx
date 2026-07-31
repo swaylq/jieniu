@@ -25,7 +25,7 @@ function Masthead() {
         </h1>
       </div>
       <p className="mt-2 text-sm text-muted">
-        你的持仓这一个月，投资逻辑发生了什么变化。纯依据触及逻辑的资讯，非涨跌复盘。
+        你的自选这一个月，投资逻辑发生了什么变化。纯依据触及逻辑的资讯，非涨跌复盘。
       </p>
     </header>
   );
@@ -42,7 +42,7 @@ export default async function ReviewPage() {
       <main className="mx-auto max-w-2xl p-4 lg:max-w-4xl">
         <Masthead />
         <div className="mt-2 rounded-xl border border-line bg-surface p-8 text-center shadow-sm">
-          <p className="text-muted">登录后查看你持仓过去 30 天的逻辑变化回顾</p>
+          <p className="text-muted">登录后查看你自选标的过去 30 天的逻辑变化回顾</p>
           <Link href="/login?returnTo=/review" className={`mt-4 ${primaryBtn}`}>
             邮箱登录
           </Link>
@@ -85,15 +85,15 @@ export default async function ReviewPage() {
           </div>
         ) : (
           <Link href="/discover" className={`mt-4 ${primaryBtn}`}>
-            去发现并标记持仓 →
+            去发现并加自选 →
           </Link>
         )}
       </section>
 
-      {/* 有变化的持仓 */}
+      {/* 有变化的自选 */}
       {changed.length > 0 ? (
         <section className="mt-6">
-          <h2 className="mb-3 text-base font-bold text-ink">有变化的持仓</h2>
+          <h2 className="mb-3 text-base font-bold text-ink">有变化的自选</h2>
           <ul className="space-y-3">
             {changed.map((c) => {
               const accent = changeTone(c.direction) === "accent";
@@ -142,7 +142,7 @@ export default async function ReviewPage() {
         </section>
       ) : null}
 
-      {/* 无实质变化的持仓（静音） */}
+      {/* 无实质变化的自选（静音） */}
       {muted.length > 0 ? (
         <section className="mt-6">
           <h2 className="mb-2 text-sm font-semibold text-muted">

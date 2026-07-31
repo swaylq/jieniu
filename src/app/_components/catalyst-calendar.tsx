@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { NEAR_DAYS, type DisclosureNode } from "~/lib/earnings-calendar";
 import { parseLocalDay, type AppointmentView } from "~/lib/disclosure";
+import type { CatalystItem } from "~/lib/catalyst-window";
 
 function fmtDeadline(d: Date): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
@@ -26,6 +27,7 @@ export function CatalystCalendar({
   nodes,
   catalysts,
   appointment,
+  mine,
   now = new Date(),
   previewHref,
   title = "催化日历 · 接下来的节点",
@@ -33,6 +35,11 @@ export function CatalystCalendar({
   nodes: DisclosureNode[];
   catalysts?: string[];
   appointment?: AppointmentView;
+  /**
+   * 你自己的自选里、窗口内的预约披露日（首页用）。首页那张「催化临近」卡数的就是它，
+   * 点开必须能看到是哪几家——否则卡上写着 N、点进来只有全市场法定截止日（2026-07-31）。
+   */
+  mine?: CatalystItem[];
   now?: Date;
   /** 有预约披露日时，通往该股财报前瞻页的入口。不传就不出链接（别给死链）。 */
   previewHref?: string;
@@ -52,7 +59,13 @@ export function CatalystCalendar({
       ? { ...appointment, at: apptDate, daysUntil: apptDays }
       : null;
 
-  if (!appt && nodes.length === 0 && (!catalysts || catalysts.length === 0))
+  const mineList = mine ?? [];
+  if (
+    !appt &&
+    mineList.length === 0 &&
+    nodes.length === 0 &&
+    (!catalysts || catalysts.length === 0)
+  )
     return null;
 
   return (
@@ -105,6 +118,48 @@ export function CatalystCalendar({
           财报前瞻 · 这次要看什么
           <span aria-hidden>→</span>
         </Link>
+      ) : null}
+
+      {mineList.length > 0 ? (
+        <>
+          <h3 className="mt-3 text-xs font-semibold text-muted">
+            你的自选 · 已预约披露（{mineList.length}）
+          </h3>
+          <ul className="mt-1.5 space-y-2">
+            {mineList.map((m) => (
+              <li
+                key={m.entityId}
+                className="flex items-center gap-3 rounded-xl border border-line/70 bg-canvas px-3 py-2.5"
+              >
+                <div className="flex w-12 shrink-0 flex-col items-center justify-center rounded-lg bg-brand/15 py-1 text-brand">
+                  <span className="tabular text-sm font-bold">
+                    {m.date.slice(5).replace("-", "/")}
+                  </span>
+                  <span className="text-[10px]">预约</span>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link
+                      href={`/entity/${m.entityId}`}
+                      className="text-sm font-semibold text-ink hover:text-brand"
+                    >
+                      {m.name}
+                    </Link>
+                    {m.daysUntil <= NEAR_DAYS ? (
+                      <span className="rounded bg-brand/15 px-1.5 py-0.5 text-[10px] font-semibold text-brand">
+                        临近
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="text-[11px] text-muted">{m.periodLabel}</p>
+                </div>
+                <span className="tabular shrink-0 text-xs text-muted">
+                  还有 {m.daysUntil} 天
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
       ) : null}
 
       {nodes.length > 0 ? (
@@ -168,7 +223,7 @@ export function CatalystCalendar({
       ) : null}
 
       <p className="mt-3 text-[11px] leading-relaxed text-muted">
-        {appt
+        {appt || mineList.length > 0
           ? "预约披露日来自交易所预约披露时间表（公司报备，可改期）；「最晚」行为 A 股法定披露截止日。均为确定性日程，不预测披露时点。"
           : "以上为 A 股法定披露截止日（确定性节点，个股常提前披露）；个股确切财报日 / 解禁到期日需结构化日程源，暂未接入，不臆测。"}
       </p>

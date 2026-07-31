@@ -103,7 +103,7 @@ export function WorkbenchRail({
               与统计卡都已说明今天很平静），收敛成一行。 */}
           {changedOnly.length === 0 ? (
             <p className="mt-2 text-[11px] leading-relaxed text-muted">
-              {changes.length} 支持仓逻辑均未变——无需复核。
+              {changes.length} 支自选逻辑均未变——无需复核。
             </p>
           ) : (
           <ul className="mt-2.5 space-y-2.5">

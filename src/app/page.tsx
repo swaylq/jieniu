@@ -3,6 +3,7 @@ import Link from "next/link";
 import { api } from "~/trpc/server";
 import { auth } from "~/server/auth";
 import { upcomingDisclosureNodes } from "~/lib/earnings-calendar";
+import { catalystCaption } from "~/lib/catalyst-window";
 import {
   greetingByHour,
   briefingStats,
@@ -147,22 +148,31 @@ export default async function Home() {
   }
 
   // ---------- 登录态：个人投研工作台（投资晨报） ----------
-  const [portfolioList, changed, portfolioImpact, personalDigest, marketDigest, brief, mine] =
-    await Promise.all([
-      api.portfolio.list(),
-      api.portfolio.changed(),
-      api.portfolio.impact(),
-      api.news.personalDigest(),
-      api.news.digest(),
-      api.brief.today(),
-      api.brief.mine(),
-    ]);
+  const [
+    portfolioList,
+    changed,
+    portfolioImpact,
+    myCatalysts,
+    personalDigest,
+    marketDigest,
+    brief,
+    mine,
+  ] = await Promise.all([
+    api.portfolio.list(),
+    api.portfolio.changed(),
+    api.portfolio.impact(),
+    api.portfolio.catalysts(),
+    api.news.personalDigest(),
+    api.news.digest(),
+    api.brief.today(),
+    api.brief.mine(),
+  ]);
 
   const watched = portfolioList.map((p) => p.entity);
   const nameById = new Map(watched.map((e) => [e.id, e.name]));
   const stats = briefingStats(changed);
   const relatedCount = changed.reduce((n, c) => n + c.materialCount, 0);
-  const headline = briefingHeadline(stats.noticeable);
+  const headline = briefingHeadline(stats.noticeable, watched.length);
   const subline = briefingSubline(watched.length, relatedCount);
   const name = session.user?.name?.trim() ? session.user.name.trim() : null;
 
@@ -189,7 +199,8 @@ export default async function Home() {
           headline={headline}
           subline={subline}
           stats={stats}
-          upcomingCount={upcoming.length}
+          upcomingCount={myCatalysts.length}
+          upcomingCaption={catalystCaption(myCatalysts)}
         />
       </div>
 
@@ -232,7 +243,8 @@ export default async function Home() {
         <aside className="space-y-6 lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:self-start lg:overflow-x-hidden lg:overflow-y-auto lg:pr-1">
           <WorkbenchRail current={current} changes={changed} />
           <div id="catalyst-calendar" className="scroll-mt-4">
-            <CatalystCalendar nodes={upcoming} />
+            {/* 「催化临近」卡数的是 mine，点开就得看到是哪几家；法定截止日留作背景 */}
+            <CatalystCalendar nodes={upcoming} mine={myCatalysts} />
           </div>
         </aside>
       </div>

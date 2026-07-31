@@ -20,13 +20,13 @@ export function PortfolioChanged({ items }: { items: PortfolioChangeItem[] }) {
           <h2 className="text-base font-bold text-ink">今天你的组合变了什么</h2>
         </div>
         <p className="mt-2 text-sm leading-relaxed text-muted">
-          记下你的持仓，解牛每天只回答一件事：今天的消息有没有改变你当初买入的逻辑。
+          加上你在意的股票，解牛每天只回答一件事：今天的消息有没有改变你当初的判断。
         </p>
         <Link
           href="/discover"
           className="mt-3 inline-block rounded-lg border border-brand/40 bg-brand/10 px-3 py-1.5 text-xs font-semibold text-brand transition-colors hover:bg-brand/20"
         >
-          去发现并标记持仓 →
+          去发现并加自选 →
         </Link>
       </section>
     );
@@ -85,6 +85,17 @@ export function PortfolioChanged({ items }: { items: PortfolioChangeItem[] }) {
                   >
                     {CHANGE_LABEL[c.direction]}
                   </span>
+                  {c.status === "WATCH" ? (
+                    <span className="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
+                      观察
+                    </span>
+                  ) : null}
+                  {/* 净增强 ≠ 没有风险：多数票埋掉的 bear 条数在这里明着说 */}
+                  {c.direction === "strengthened" && c.bearCount > 0 ? (
+                    <span className="rounded-full border border-line px-2 py-0.5 text-[11px] font-medium text-ink">
+                      含 {c.bearCount} 条偏风险
+                    </span>
+                  ) : null}
                   {c.topDimension ? (
                     <span className="text-[11px] text-muted">· {c.topDimension}</span>
                   ) : null}
@@ -95,6 +106,11 @@ export function PortfolioChanged({ items }: { items: PortfolioChangeItem[] }) {
                 {c.topNote ? (
                   <p className="mt-1.5 text-xs leading-relaxed text-ink/85">
                     {c.topNote}
+                  </p>
+                ) : null}
+                {c.direction === "strengthened" && c.topBearNote ? (
+                  <p className="mt-1 text-xs leading-relaxed text-muted">
+                    偏风险 · {c.topBearNote}
                   </p>
                 ) : null}
                 <p className="mt-1 text-[11px] leading-relaxed text-muted">
@@ -130,7 +146,7 @@ export function PortfolioChanged({ items }: { items: PortfolioChangeItem[] }) {
       <p className="mt-2 text-[11px] leading-relaxed text-muted">
         {quiet
           ? "非投资建议、不预测涨跌。"
-          : "仅汇总触及你持仓监控维度的动态，供你判断今天要不要重看逻辑；非投资建议、不预测涨跌。"}
+          : "仅汇总触及你自选标的监控维度的动态，供你判断今天要不要重看逻辑；非投资建议、不预测涨跌。"}
       </p>
     </section>
   );

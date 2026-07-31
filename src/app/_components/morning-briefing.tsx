@@ -68,6 +68,7 @@ export function MorningBriefing({
   subline,
   stats,
   upcomingCount,
+  upcomingCaption,
 }: {
   greeting: string;
   name: string | null;
@@ -76,6 +77,8 @@ export function MorningBriefing({
   subline: string;
   stats: BriefingStats;
   upcomingCount: number;
+  /** 「催化临近」的副文案——由页面按你自己的披露日程算，不是固定句。 */
+  upcomingCaption: string;
 }) {
   return (
     <section>
@@ -98,7 +101,7 @@ export function MorningBriefing({
           label="需要复核"
           mark="↗"
           value={stats.review}
-          caption="偏风险方向的逻辑变化，建议回看证伪条件"
+          caption="出现偏风险动态的标的，建议回看证伪条件"
           accent
           href="#portfolio-changed"
         />
@@ -106,7 +109,7 @@ export function MorningBriefing({
           label="逻辑增强"
           mark="+"
           value={stats.strengthened}
-          caption="偏兑现方向的动态在增多，对照持仓复核"
+          caption="出现偏兑现动态的标的，对照逻辑复核"
           accent
           href="#portfolio-changed"
         />
@@ -121,7 +124,7 @@ export function MorningBriefing({
           label="催化临近"
           mark="◎"
           value={upcomingCount}
-          caption="下两个财报披露截止节点，点开看还有几天"
+          caption={upcomingCaption}
           accent={false}
           href="#catalyst-calendar"
         />
