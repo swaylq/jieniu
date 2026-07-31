@@ -133,6 +133,22 @@ export function taiwanRevenueToSignal(
 // ── 填充（integration）────────────────────────────────────────────────────
 
 async function fetchReport<T>(reportName: string, extra = "", page = 1): Promise<T[]> {
+  return (await fetchReportPage<T>(reportName, extra, page)).rows;
+}
+
+/**
+ * 同上，但**把接口回传的总页数一起带出来**。
+ *
+ * 为什么需要它：一致预期原来写死「最多翻 4 页」，而接口自报 `pages=6`——
+ * 库里正好卡在 2006 条（4×500 的天花板），看起来像「A 股只有 36.5% 有机构覆盖」，
+ * 实际是循环撞到了自己的上限。页数一律用接口回传的算，不靠猜、也不靠"翻到空为止"
+ * （被限流的空页和真的翻到底长得一模一样，这是踩过的坑）。
+ */
+async function fetchReportPage<T>(
+  reportName: string,
+  extra = "",
+  page = 1,
+): Promise<{ rows: T[]; pages: number }> {
   const url = `${API}?reportName=${reportName}&columns=ALL&pageNumber=${page}&pageSize=500${extra}`;
   const res = await fetch(url, {
     headers: { "User-Agent": UA, Referer: "https://data.eastmoney.com/" },
@@ -140,8 +156,8 @@ async function fetchReport<T>(reportName: string, extra = "", page = 1): Promise
     signal: AbortSignal.timeout(12000),
   });
   if (!res.ok) throw new Error(`${reportName} ${res.status}`);
-  const j = (await res.json()) as { result?: { data?: T[] } };
-  return j.result?.data ?? [];
+  const j = (await res.json()) as { result?: { data?: T[]; pages?: number } };
+  return { rows: j.result?.data ?? [], pages: Number(j.result?.pages ?? 1) };
 }
 
 /**
@@ -190,15 +206,21 @@ export async function populateSignals(
 
   // consensus：一致预期（每股一行）
   try {
-    for (let p = 1; p <= 4; p++) {
-      const rows = await fetchReport<ConsensusRow>("RPT_WEB_RESPREDICT", "", p);
+    // 页数由接口回传的 pages 决定；20 只是保险丝，不是业务上限
+    let totalPages = 1;
+    for (let p = 1; p <= Math.min(totalPages, 20); p++) {
+      const { rows, pages } = await fetchReportPage<ConsensusRow>(
+        "RPT_WEB_RESPREDICT",
+        "",
+        p,
+      );
+      if (p === 1) totalPages = Math.max(1, pages);
       if (rows.length === 0) break;
       for (const r of rows) {
         const id = idByCode.get((r.SECURITY_CODE ?? "").trim());
         const s = id ? consensusSignal(r) : null;
         if (id && s) { await upsert(id, s); result.consensus++; }
       }
-      if (rows.length < 500) break;
     }
   } catch (e) {
     console.error("[signals] consensus skipped:", e instanceof Error ? e.message : e);

@@ -8,6 +8,7 @@ import { eastmoneyAnnouncements } from "../server/ingest/sources/eastmoney-ann";
 import { eastmoneyFastNews } from "../server/ingest/sources/eastmoney";
 import { jiweiSemi } from "../server/ingest/sources/jiwei";
 import { eastmoneyReportsForCodes } from "../server/ingest/sources/eastmoney-report";
+import { eastmoneyReportSweep } from "../server/ingest/sources/eastmoney-report-sweep";
 import { eastmoneyBillboard } from "../server/ingest/sources/eastmoney-billboard";
 import { eastmoneyBlockTrade } from "../server/ingest/sources/eastmoney-blocktrade";
 import {
@@ -33,6 +34,9 @@ const SOURCES = [
   eastmoneyExecHold, // 董监高增减持（内部人信号）
   eastmoneyShareholderChange, // 股东增减持（大股东层面）
   eastmoneyForecast, // 业绩预告（预增/预减/扭亏，硬 thesis 事件）
+  // 全市场研报扫描：按个股定向的那份要 5500 次请求才能覆盖全市场，
+  // 实际只在轮转回填里跑，导致近 7 天全库只有 8 篇。这份一次请求 100 条按日期扫。
+  eastmoneyReportSweep(7),
 ];
 
 async function main() {
