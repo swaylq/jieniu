@@ -103,8 +103,21 @@ export const portfolioRouter = createTRPCRouter({
         arr.push(s);
         byEntity.set(s.entityId, arr);
       }
-      return holdings.map((h) =>
-        rollUpHoldingChange(
+      // 每只最近一条资讯的时间——「静音」时要能分清是真没事还是我们几天没抓到它了
+      // （2026-08-02 复盘：万向钱潮 10 天、大普微/国盾量子 9 天没有新资讯）。
+      // 这里只取 max，不在 SQL 里跟 now() 比——裸 timestamp 存的是 UTC，比出来差 8 小时。
+      const lastNewsRows =
+        entityIds.length > 0
+          ? await ctx.db.$queryRaw<{ entityId: string; last: Date | null }[]>`
+              SELECT ne."entityId", MAX(n."publishedAt") AS last
+              FROM "NewsEntity" ne
+              JOIN "NewsItem" n ON n.id = ne."newsId"
+              WHERE ne."entityId" = ANY(${entityIds})
+              GROUP BY ne."entityId"`
+          : [];
+      const lastNewsBy = new Map(lastNewsRows.map((r) => [r.entityId, r.last]));
+      return holdings.map((h) => ({
+        ...rollUpHoldingChange(
           h.entityId,
           // 这条链路的 name 只进展示（首页「今日你的组合变了什么」），所以直接带上代码
           nameWithCode(
@@ -115,7 +128,8 @@ export const portfolioRouter = createTRPCRouter({
           byEntity.get(h.entityId) ?? [],
           h.status === "HOLDING" ? "HOLDING" : "WATCH",
         ),
-      );
+        lastNewsAt: lastNewsBy.get(h.entityId) ?? null,
+      }));
     }),
 
   /**
@@ -177,6 +191,70 @@ export const portfolioRouter = createTRPCRouter({
       }
       return upcomingCatalysts(cands, new Date(), input?.windowDays);
     }),
+
+  /**
+   * 「静默日」的客观事实（2026-08-02 复盘）。7 个用户里 4 个只有 1 只自选，
+   * 它们整周都没有逻辑信号，于是首页只剩一句「今天都很平静」——空得像坏了。
+   *
+   * 但「没有新闻」不等于「没有信息」：机构一致预期、两融余额、限售解禁、资金流强弱
+   * 这些结构化数据它们都有（行情卡覆盖齐全），只是散在个股页里。这里把它们捞到首页兜底。
+   * 纯客观数据、零 AI、非评级非建议。
+   */
+  quietFacts: protectedProcedure.query(async ({ ctx }) => {
+    const rows = await ctx.db.watchlist.findMany({
+      where: { userId: ctx.session.user.id, status: { not: "CLOSED" } },
+      orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+      take: 8,
+      select: {
+        entityId: true,
+        entity: {
+          select: {
+            name: true,
+            ticker: true,
+            relFrom: {
+              where: { type: "ISSUES" as const },
+              select: { toId: true, to: { select: { ticker: true } } },
+              take: 1,
+            },
+          },
+        },
+      },
+    });
+    if (rows.length === 0) return [];
+    const lookupIds = rows.flatMap((r) => [
+      r.entityId,
+      ...r.entity.relFrom.map((rel) => rel.toId),
+    ]);
+    // disclosure 不在这里——它已经由催化日历专门渲染，重复一遍是噪音
+    const sigs = await ctx.db.entitySignal.findMany({
+      where: {
+        entityId: { in: lookupIds },
+        kind: { in: ["consensus", "margin", "unlock", "flow"] },
+      },
+      select: { entityId: true, kind: true, label: true, asOf: true },
+    });
+    const byId = new Map<string, typeof sigs>();
+    for (const s of sigs) {
+      const a = byId.get(s.entityId) ?? [];
+      a.push(s);
+      byId.set(s.entityId, a);
+    }
+    return rows
+      .map((r) => {
+        const ids = [r.entityId, ...r.entity.relFrom.map((rel) => rel.toId)];
+        const facts = ids.flatMap((id) => byId.get(id) ?? []);
+        return {
+          entityId: r.entityId,
+          name: nameWithCode(
+            r.entity.name,
+            r.entity.ticker,
+            r.entity.relFrom?.[0]?.to.ticker ?? null,
+          ),
+          facts: facts.map((f) => ({ kind: f.kind, label: f.label })),
+        };
+      })
+      .filter((r) => r.facts.length > 0);
+  }),
 
   /**
    * Event 传播链（P4-9）：有异动的自选，经关系图（同板块/竞品）扩散到用户其它自选——

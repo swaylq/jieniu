@@ -15,7 +15,11 @@ describe("targetsByNeed · 退市死壳不许锁死队头", () => {
    * - sC 无资金流、只有陈年绑定（中国北车那类吸并退市股）→ **死，必须剔除**
    * - sD 非 A 股六位代码（美股 NVDA，压根不在 A 股资金流快照里）→ 活，保留
    */
-  function makeDb(opts: { flowFor: string[]; filingFor?: string[] }) {
+  function makeDb(opts: {
+    flowFor: string[];
+    filingFor?: string[];
+    watchedFor?: string[];
+  }) {
     const ALL = [
       { entityId: "sA", _count: { entityId: 7 } },
       { entityId: "cA", _count: { entityId: 3 } },
@@ -23,6 +27,11 @@ describe("targetsByNeed · 退市死壳不许锁死队头", () => {
       // sB / sD 零绑定
     ];
     return {
+      watchlist: {
+        findMany: vi
+          .fn()
+          .mockResolvedValue((opts.watchedFor ?? []).map((entityId) => ({ entityId }))),
+      },
       entity: {
         findMany: vi.fn().mockResolvedValue([
           { id: "sA", name: "甲公司(600001)", ticker: "600001" },
@@ -90,6 +99,32 @@ describe("targetsByNeed · 退市死壳不许锁死队头", () => {
     // sC 有 4 条陈年媒体绑定但没有公告 → 仍判死；这正是被否决的那条判据与本条的分界
     const res = await targetsByNeed(makeDb({ flowFor: [], filingFor: [] }));
     expect(res.map((t) => t.code)).toEqual(["NVDA"]);
+  });
+
+  // 2026-08-02 复盘：20 只被自选的股跟 5500 只陌生股平等排队，轮一圈 8–10 天
+  // （万向钱潮 10 天、大普微/国盾量子 9 天没有新资讯），而用户看到的就是「今日静音」。
+  // 信号层（backfill-signals）早就按 Watchlist 排序了，资讯层没有——两条管线口径不一致。
+  it("被自选的股排在队头——哪怕它一点都不缺料", async () => {
+    // sA 有 10 条绑定（最不缺料），但有人盯着；sB 零绑定
+    const res = await targetsByNeed(
+      makeDb({ flowFor: ["sA", "sB"], watchedFor: ["sA"] }),
+    );
+    expect(res[0]!.code).toBe("600001");
+    expect(res[0]!.watched).toBe(true);
+    expect(res[1]!.code).toBe("600002"); // 其余仍按缺料程度排
+  });
+
+  it("自选认公司那份实体——自选存 COMPANY、抓取按 STOCK 走", async () => {
+    const res = await targetsByNeed(
+      makeDb({ flowFor: ["sA", "sB"], watchedFor: ["cA"] }), // cA 发行 sA
+    );
+    expect(res[0]!.code).toBe("600001");
+  });
+
+  it("没人自选时，排序退回原来的「最缺料优先」", async () => {
+    const res = await targetsByNeed(makeDb({ flowFor: ["sA", "sB"] }));
+    expect(res[0]!.code).toBe("600002");
+    expect(res.every((t) => !t.watched)).toBe(true);
   });
 
   it("报告被跳过的数量，别让降级静默发生", async () => {

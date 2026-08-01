@@ -182,6 +182,11 @@ export default async function EntityPage({
     session?.user
       ? api.userThesis.get({ entityId: id })
       : (null as Awaited<ReturnType<typeof api.userThesis.get>>),
+    // 埋点（2026-08-02 复盘）：此前只有 view_news / view_notifications 两种，
+    // 于是「用户到底在看哪只股、哪个模块」这个问题根本没有数据可答。匿名的会被 router 丢掉。
+    session?.user
+      ? api.analytics.track({ type: "view_entity", entityId: id })
+      : Promise.resolve({ ok: false as const }),
   ]);
   if (!data) notFound();
   // 折叠同日一手公告轰炸（定增/重组当天甩十几份程序性文档）——两个 tab 都受益，避免单事件刷屏。

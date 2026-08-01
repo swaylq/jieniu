@@ -72,6 +72,8 @@ export type NewsInput = {
   summary: string | null;
   entityId: string | null;
   entityName: string;
+  /** 主体代码——媒体稿点名判据的备选（标题写代码不写名的情况）。 */
+  ticker?: string | null;
   sourceName: string;
   publishedAt: Date;
   /** PRIMARY（一手公告）| MEDIA | DERIVED */
@@ -98,10 +100,34 @@ export function isPushWorthyNews(n: {
   tier: string;
   importance: number;
   boundCount: number;
+  entityName?: string;
+  ticker?: string | null;
 }): boolean {
   if (n.boundCount > PUSH_MAX_BOUND_ENTITIES) return false;
   if (isRoundupNews(n.title, n.boundCount)) return false;
-  return n.tier === "PRIMARY" || n.importance >= PUSH_MIN_IMPORTANCE;
+  // 一手公告：主体由源权威给出，标题措辞不必再验（「东山精密:关于…的公告」）。
+  if (n.tier === "PRIMARY") return true;
+  // 媒体稿必须**点名这家公司**（2026-08-02 复盘）。原来只靠 ROUNDUP_TITLE 词表拦综述，
+  // 而「A股，小"奇迹日"！韩国，紧急道歉」绑 2 家、75 分，一个综述词都不含 —— 就这么推给了张楚寒。
+  // 词表一定有洞（这条教训在别处也吃过），所以推送这一侧改用**结构判据**：
+  // 标题里出现公司名或代码才算「关于它」；市场级综述天然不点名任何一家，自动出局。
+  // 代价是「长鑫与韩厂竞争走向何方」这种简称标题也被拦下——pull 宽 push 严，它仍在站内资讯流里。
+  if (!mentionsSubject(n.title, n.entityName, n.ticker)) return false;
+  return n.importance >= PUSH_MIN_IMPORTANCE;
+}
+
+/** 标题是否点名了这个主体。实体名里的代码后缀（「大普微-UW(301666)」）先剥掉再比。 */
+export function mentionsSubject(
+  title: string,
+  entityName?: string,
+  ticker?: string | null,
+): boolean {
+  const name = (entityName ?? "")
+    .replace(/[（(]\d{4,6}[)）]/g, "")
+    .replace(/-U[A-Z]?$/, "")
+    .trim();
+  if (name.length >= 2 && title.includes(name)) return true;
+  return !!ticker && ticker.length >= 4 && title.includes(ticker);
 }
 
 export type PriceInput = {

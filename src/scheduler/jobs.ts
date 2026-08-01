@@ -60,7 +60,7 @@ export const JOBS: JobDef[] = [
   },
   {
     key: "backfill-signals",
-    title: "逻辑信号补齐（敏感度的原料）",
+    title: "逻辑信号补齐（敏感度的原料）→ 维度跨越检测",
     schedule: { kind: "interval", everySec: 7200, jitterSec: 720 },
     heavy: true,
     steps: [
@@ -71,6 +71,18 @@ export const JOBS: JobDef[] = [
         env: DEEPSEEK,
         requires: ["OPENROUTER_API_KEY"],
         timeoutMs: 30 * 60_000,
+      },
+      // 2026-08-02 复盘发现的断链：脚本一直在仓库里，却从没挂进调度器——
+      // `ThesisDimensionState` 全库只有 1 行、停在 7-05，于是「逻辑异动」提醒（p40/p30）
+      // 一条都没产生过，30 天里全库 6 条提醒清一色是 p10 重磅资讯。而产品的核心承诺
+      // 恰恰是「你的投资逻辑被动摇时告诉你」。跨越依赖刚写完的信号，所以紧跟在同一条任务里，
+      // 而不是单开一条（新 JobState 行默认 enabled，单开还要多一次显式启停）。纯 rule、无 AI。
+      {
+        name: "crossings",
+        script: "src/scripts/detect-crossings.ts",
+        args: ["--days=14"],
+        env: { SKIP_ENV_VALIDATION: "1" },
+        timeoutMs: 5 * 60_000,
       },
     ],
   },

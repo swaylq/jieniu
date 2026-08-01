@@ -5,6 +5,7 @@ import {
   CHANGE_LABEL,
   changeTone,
   changeObservation,
+  newsFreshnessLabel,
   partitionPortfolioChange,
   type PortfolioChangeItem,
 } from "~/lib/portfolio-change";
@@ -129,17 +130,22 @@ export function PortfolioChanged({ items }: { items: PortfolioChangeItem[] }) {
           }`}
         >
           今日无异动 · {muted.length} 支已静音：
-          {muted.map((m, i) => (
-            <span key={m.entityId}>
-              {i > 0 ? "、" : ""}
-              <HoverPrefetchLink
-                href={`/entity/${m.entityId}`}
-                className="underline-offset-2 hover:text-brand hover:underline"
-              >
-                {m.name}
-              </HoverPrefetchLink>
-            </span>
-          ))}
+          {muted.map((m, i) => {
+            // 静音有两种：真的没事，和我们几天没抓到它了。后者必须说出来（2026-08-02 复盘）。
+            const stale = newsFreshnessLabel(m.lastNewsAt);
+            return (
+              <span key={m.entityId}>
+                {i > 0 ? "、" : ""}
+                <HoverPrefetchLink
+                  href={`/entity/${m.entityId}`}
+                  className="underline-offset-2 hover:text-brand hover:underline"
+                >
+                  {m.name}
+                </HoverPrefetchLink>
+                {stale ? <span className="text-faint">（{stale}）</span> : null}
+              </span>
+            );
+          })}
         </p>
       ) : null}
 

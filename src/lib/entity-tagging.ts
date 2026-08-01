@@ -71,11 +71,57 @@ export function stripBoilerplate(text: string): string {
  */
 const AMBIGUOUS_BARE = new Set(["银行", "证券"]);
 
+/** 实体名去掉尾部的代码括注：「机器人(300024)」→「机器人」。 */
+function bareName(name: string): string {
+  return name.replace(/[（(][^（()）]*[)）]\s*$/, "").trim();
+}
+
+/**
+ * 公司名恰好就是一个板块/概念词时的消歧（2026-08-02 复盘）。
+ *
+ * 沈阳新松的证券简称就叫「机器人」，于是**每一条讲机器人行业的稿子**都绑到了它：
+ * 近 7 天 532 条绑定里，标题提到它作为一家公司的是 **0 条**（「北京正全力打造机器人应用服务商模式」
+ * 「机器狗量产大爆发」…）。它自己的页面因此被行业新闻淹没，而板块实体本来就已经收着这些稿子了。
+ *
+ * 判据不写死名单——**拿词典里的 SECTOR 名字当碰撞表**：公司/股票的名字撞上任何板块名，
+ * 就不认裸名，必须有更强的线索：股票代码，或 A 股公告体裁的「简称:」「简称：」前缀
+ * （「机器人:关于对外投资的公告」是它自己的公告，必须留住）。别名不受影响（「新松」照常命中）。
+ */
+export function needsDisambiguation(
+  e: EntityDictEntry,
+  sectorNames: Set<string>,
+): boolean {
+  return (
+    (e.type === "COMPANY" || e.type === "STOCK") &&
+    sectorNames.has(bareName(e.name))
+  );
+}
+
+/** 撞名公司的强线索：代码命中，或标题**以**「简称:」开头（A 股公告体裁）。 */
+function hasStrongCue(text: string, e: EntityDictEntry): boolean {
+  const bare = bareName(e.name);
+  if (e.ticker && containsToken(text, e.ticker)) return true;
+  // 必须锚在开头：只写 includes 会让「珞石机器人：预计上半年收入…」也算数——
+  // 那是另一家公司，「机器人：」只是它名字的尾巴（实测 3 条保留里 2 条是这个）。
+  if (new RegExp(`^${escapeRegExp(bare)}[：:]`).test(text.trim())) return true;
+  const extra = [e.shortName ?? "", ...(e.aliases ?? [])].filter(
+    (t) => t && t !== bare && !AMBIGUOUS_BARE.has(t),
+  );
+  return extra.some((t) => containsToken(text, t));
+}
+
 /** 返回文本中提及到的实体 id（去重，按词典顺序）。匹配前先去样板词；宽泛裸词只走限定别名。 */
 export function matchEntities(rawText: string, dict: EntityDictEntry[]): string[] {
   const text = stripBoilerplate(rawText);
+  const sectorNames = new Set(
+    dict.filter((e) => e.type === "SECTOR").map((e) => bareName(e.name)),
+  );
   const matched: string[] = [];
   for (const e of dict) {
+    if (needsDisambiguation(e, sectorNames)) {
+      if (hasStrongCue(text, e)) matched.push(e.id);
+      continue;
+    }
     const tokens = [
       e.name,
       e.shortName ?? "",

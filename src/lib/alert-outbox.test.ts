@@ -230,6 +230,7 @@ describe("isPushWorthyNews — 推送门槛高于浏览门槛", () => {
       tier: "PRIMARY",
       importance: 70,
       boundCount: 2,
+      entityName: "东山精密",
       ...o,
     });
 
@@ -240,6 +241,47 @@ describe("isPushWorthyNews — 推送门槛高于浏览门槛", () => {
   it("媒体稿要够重磅才放行（55 分的媒体快讯只留站内）", () => {
     expect(n({ tier: "MEDIA", importance: 55 })).toBe(false);
     expect(n({ tier: "MEDIA", importance: 70 })).toBe(true);
+  });
+
+  // 2026-08-02 复盘的实测漏网：这条绑 2 家、75 分、一个综述词都不含，被推给了张楚寒。
+  // 词表永远有洞，所以推送侧改用结构判据：媒体稿必须点名这家公司。
+  it("媒体稿不点名这家公司就不推——市场级综述天然不点名", () => {
+    expect(
+      n({
+        title: 'A股，小“奇迹日”！韩国，紧急道歉',
+        tier: "MEDIA",
+        importance: 75,
+        boundCount: 2,
+        entityName: "长鑫科技",
+      }),
+    ).toBe(false);
+    expect(
+      n({
+        title: "长鑫科技上市首日大涨，存储周期成焦点",
+        tier: "MEDIA",
+        importance: 75,
+        boundCount: 2,
+        entityName: "长鑫科技",
+      }),
+    ).toBe(true);
+  });
+
+  it("实体名带代码后缀时先剥再比（大普微-UW(301666)）", () => {
+    expect(
+      n({
+        title: "大普微披露半年报，营收同比增长",
+        tier: "MEDIA",
+        importance: 75,
+        boundCount: 2,
+        entityName: "大普微-UW(301666)",
+      }),
+    ).toBe(true);
+  });
+
+  it("一手公告不受点名判据约束——主体由源权威给出", () => {
+    expect(
+      n({ title: "关于首次回购公司股份的公告", tier: "PRIMARY", importance: 55, entityName: "东山精密" }),
+    ).toBe(true);
   });
 
   it("绑定 3 家以上公司的一律不推——这种「顺带罗列」的必是综述", () => {

@@ -16,6 +16,7 @@ import { MarketBrief } from "./_components/market-brief";
 import { UserBrief } from "./_components/user-brief";
 import { MarketStrip } from "./_components/market-strip";
 import { PortfolioChanged } from "./_components/portfolio-changed";
+import { QuietDayCard } from "./_components/quiet-day-card";
 import { PortfolioImpact } from "./_components/portfolio-impact";
 import { DailyDigest } from "./_components/daily-digest";
 import { CatalystCalendar } from "./_components/catalyst-calendar";
@@ -153,6 +154,7 @@ export default async function Home() {
     changed,
     portfolioImpact,
     myCatalysts,
+    quietFacts,
     personalDigest,
     marketDigest,
     brief,
@@ -162,10 +164,13 @@ export default async function Home() {
     api.portfolio.changed(),
     api.portfolio.impact(),
     api.portfolio.catalysts(),
+    api.portfolio.quietFacts(),
     api.news.personalDigest(),
     api.news.digest(),
     api.brief.today(),
     api.brief.mine(),
+    // 首页也埋一个点：没有它就不知道用户到底来没来过工作台（2026-08-02 复盘）
+    api.analytics.track({ type: "view_home" }),
   ]);
 
   const watched = portfolioList.map((p) => p.entity);
@@ -227,6 +232,8 @@ export default async function Home() {
           <div id="portfolio-changed" className="scroll-mt-4">
             <PortfolioChanged items={changed} />
           </div>
+          {/* 全静的日子首页会空得像坏了——用不依赖资讯的客观事实兜底（2026-08-02 复盘） */}
+          {stats.noticeable === 0 ? <QuietDayCard rows={quietFacts} /> : null}
           <PortfolioImpact items={portfolioImpact} />
           <DailyDigest personal={personalDigest} market={marketDigest} />
           <div className="flex justify-end">

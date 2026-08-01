@@ -104,7 +104,7 @@ async function draftsForUser(
         entities: {
           where: { entityId: { in: ids } },
           take: 1,
-          select: { entity: { select: { id: true, name: true } } },
+          select: { entity: { select: { id: true, name: true, ticker: true } } },
         },
         // 综述判别用：**全部**绑定数，不能用上面过滤后的条数
         _count: { select: { entities: true } },
@@ -195,6 +195,7 @@ async function draftsForUser(
     summary: n.summary,
     entityId: n.entities[0]?.entity.id ?? null,
     entityName: n.entities[0]?.entity.name ?? "",
+    ticker: n.entities[0]?.entity.ticker ?? null,
     sourceName: n.source.name,
     publishedAt: n.publishedAt,
     tier: n.tier,

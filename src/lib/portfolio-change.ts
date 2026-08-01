@@ -48,7 +48,27 @@ export type PortfolioChangeItem = {
   bullCount: number;
   bearCount: number;
   status?: WatchStatus;
+  /** 这只股最近一条资讯的时间。null = 从来没有。用于「静音」时说清是真没事还是没抓到。 */
+  lastNewsAt?: Date | null;
 };
+
+/** 「陈旧」的门槛：3 天。A 股一周五个交易日，超过 3 天没有任何资讯就该明说，而不是显示成「今日静音」。 */
+export const STALE_NEWS_DAYS = 3;
+
+/**
+ * 资讯新鲜度短语（2026-08-02 复盘）。用户看到「今日静音」时无从分辨两件事：
+ * 这只股真的没消息，还是我们已经 9 天没抓到它了。后者当前真实存在——被自选的股
+ * 跟全市场 5500 只平等排队，轮一圈 8–10 天。诚实标注优于假装覆盖。
+ * 新鲜（≤3 天）返回 null——不给正常状态加噪音。
+ */
+export function newsFreshnessLabel(
+  lastNewsAt: Date | null | undefined,
+  now: Date = new Date(),
+): string | null {
+  if (!lastNewsAt) return "暂无资讯";
+  const days = Math.floor((now.getTime() - lastNewsAt.getTime()) / 86400000);
+  return days > STALE_NEWS_DAYS ? `${days} 天无新资讯` : null;
+}
 
 /** 一支自选近期信号 → 逻辑增强/削弱/未变。仅材料级(≥阈值)信号才算「变」——宁少毋滥。 */
 export function rollUpHoldingChange(

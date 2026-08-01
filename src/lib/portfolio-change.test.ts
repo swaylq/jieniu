@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  newsFreshnessLabel,
   rollUpHoldingChange,
   partitionPortfolioChange,
   summarizeReview,
@@ -102,6 +103,21 @@ describe("partitionPortfolioChange", () => {
       mk("h", "strengthened", 1, { status: "HOLDING" }),
     ]);
     expect(changed.map((c) => c.entityId)).toEqual(["h", "w"]);
+  });
+});
+
+describe("newsFreshnessLabel · 静音要分清「真没事」和「没抓到」", () => {
+  const now = new Date(2026, 7, 2, 10, 0, 0);
+  it("新鲜的不加噪音", () => {
+    expect(newsFreshnessLabel(new Date(2026, 7, 1), now)).toBeNull();
+    expect(newsFreshnessLabel(new Date(2026, 6, 30), now)).toBeNull();
+  });
+  it("超过 3 天如实说几天没料", () => {
+    expect(newsFreshnessLabel(new Date(2026, 6, 23), now)).toBe("10 天无新资讯");
+  });
+  it("从来没有资讯也要说，别装作正常", () => {
+    expect(newsFreshnessLabel(null, now)).toBe("暂无资讯");
+    expect(newsFreshnessLabel(undefined, now)).toBe("暂无资讯");
   });
 });
 

@@ -11,6 +11,8 @@ import { rateLimit, clientIp } from "~/lib/rate-limit";
 // interpret_* 对应 5 个大师视角（见 interpretation-panel）。新增埋点类型时在此登记。
 const ANALYTICS_EVENT_TYPES = [
   "view_news",
+  "view_entity",
+  "view_home",
   "view_notifications",
   "follow",
   "onboarding_follow",
@@ -32,6 +34,13 @@ export const analyticsRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      // 浏览类埋点只记登录态（2026-08-02 复盘）。`view_news` 是**服务端渲染时**打的，
+      // 于是每个爬虫抓一次新闻页就写一行：近 30 天 246061 条里有 userId 的只有 577 条（0.2%），
+      // 7-30 起每天 8–10 万条。限流按 IP 拦不住分布式爬取，而这些行对「用户在看什么」
+      // 零信息量，却把表撑爆、把「最近浏览」之类的派生功能污染掉。匿名的浏览事件直接丢。
+      if (!ctx.session?.user && input.type.startsWith("view_")) {
+        return { ok: false as const };
+      }
       // 匿名可写 → 按 用户/IP 限流，防脚本无限灌埋点撑库。超限静默丢弃，不打断用户操作。
       const bucket = ctx.session?.user?.id ?? `ip:${clientIp(ctx.headers)}`;
       if (!rateLimit(`track:${bucket}`, 120, 60_000)) {

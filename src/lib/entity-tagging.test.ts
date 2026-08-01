@@ -147,3 +147,45 @@ describe("机构名裹住公司名的误配（2026-07-23 质量审计）", () =>
     expect(matchEntities("601988 回购进展", dict)).toEqual(["boc"]);
   });
 });
+
+// 2026-08-02 复盘：沈阳新松的证券简称就叫「机器人」，近 7 天 532 条绑定里
+// 标题提到它作为公司的是 0 条——每条讲机器人行业的稿子都绑到了它。
+// 板块实体本来就在收这些稿子，公司那份不该跟着收。
+describe("撞板块名的公司不认裸名（机器人 = 沈阳新松）", () => {
+  const dict = [
+    { id: "sec-robot", type: "SECTOR" as const, name: "机器人" },
+    { id: "co-robot", type: "COMPANY" as const, name: "机器人", aliases: ["新松"] },
+    { id: "stk-robot", type: "STOCK" as const, name: "机器人(300024)", ticker: "300024" },
+    { id: "co-normal", type: "COMPANY" as const, name: "兆易创新" },
+  ];
+
+  it("行业稿只绑板块，不绑那家公司", () => {
+    const ids = matchEntities("北京正全力打造机器人应用服务商模式", dict);
+    expect(ids).toContain("sec-robot");
+    expect(ids).not.toContain("co-robot");
+    expect(ids).not.toContain("stk-robot");
+  });
+
+  it("它自己的公告（「机器人:…」前缀）照常绑上", () => {
+    const ids = matchEntities("机器人:关于对外投资设立子公司的公告", dict);
+    expect(ids).toContain("co-robot");
+  });
+
+  it("带股票代码的照常绑上", () => {
+    expect(matchEntities("机器人(300024)半年报点评", dict)).toContain("stk-robot");
+  });
+
+  it("「简称:」必须锚在标题开头——「珞石机器人：…」是另一家公司", () => {
+    const ids = matchEntities("珞石机器人：预计上半年收入同比增加不少于127.4%", dict);
+    expect(ids).not.toContain("co-robot");
+    expect(ids).not.toContain("stk-robot");
+  });
+
+  it("别名不受影响——「新松」是无歧义的", () => {
+    expect(matchEntities("新松签下汽车产线大单", dict)).toContain("co-robot");
+  });
+
+  it("名字不撞板块的公司完全不受影响", () => {
+    expect(matchEntities("兆易创新公布半年报", dict)).toContain("co-normal");
+  });
+});

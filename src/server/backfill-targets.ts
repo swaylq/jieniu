@@ -8,6 +8,8 @@ export type BackfillTarget = {
   bound: number;
   /** 还在交易（有资金流信号）或历史上有过资讯——退市死壳两者皆无，见 `targetsByNeed`。 */
   alive?: boolean;
+  /** 有用户把它加进了自选——排序上永远优先于「最缺料」。 */
+  watched?: boolean;
 };
 
 export type TargetsOpts = {
@@ -106,6 +108,16 @@ export async function targetsByNeed(
   });
   const filing = new Set(filings.map((f) => f.entityId));
 
+  // 被自选的股永远排队头（2026-08-02 复盘）。「最缺料优先」是给全市场铺覆盖用的自愈排序，
+  // 但它把用户真正盯着的 20 只股跟 5500 只陌生股平等对待——轮一圈就是 8–10 天没有新资讯，
+  // 用户看到的是「今日静音」。信号层 backfill-signals 早就按 Watchlist 排序了，这里补上同一口径。
+  // 自选存的常是 COMPANY 实体，而抓取按 STOCK 走，所以两个 id 都要认。
+  const watchRows = await db.watchlist.findMany({
+    where: { status: { not: "CLOSED" } },
+    select: { entityId: true },
+  });
+  const watchedIds = new Set(watchRows.map((w) => w.entityId));
+
   const byCode = new Map<string, BackfillTarget>();
   for (const s of stocks) {
     const code = s.ticker!;
@@ -119,6 +131,7 @@ export async function targetsByNeed(
         name: s.name.replace(/\(.*\)$/, ""),
         entityIds,
         bound,
+        watched: entityIds.some((id) => watchedIds.has(id)),
         alive:
           !A_SHARE_CODE.test(code) ||
           entityIds.some((id) => trading.has(id) || filing.has(id)),
@@ -130,7 +143,9 @@ export async function targetsByNeed(
     (t) => t.alive && (market !== "A" || A_SHARE_CODE.test(t.code)),
   );
   onSkip?.(all.length - keep.length);
-  return keep.sort((a, b) => a.bound - b.bound);
+  return keep.sort(
+    (a, b) => Number(!!b.watched) - Number(!!a.watched) || a.bound - b.bound,
+  );
 }
 
 /**
