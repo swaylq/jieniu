@@ -229,6 +229,15 @@ async function main() {
       await sleep(2000);
     }
 
+    // --wait=毫秒：截图前多停一会儿。验证「停留 N 秒后才发生的事」（自动标已读、
+    // 延迟加载）必须停够，否则浏览器在定时器触发前就关了，测出来的「没发生」是假的。
+    const waitArg = argv.find((a) => a.startsWith("--wait="));
+    if (waitArg) {
+      const ms = Math.min(30000, Number(waitArg.slice("--wait=".length)) || 0);
+      console.log(`  wait(${ms}ms)`);
+      await sleep(ms);
+    }
+
     let clip;
     if (full) {
       const lm = await S("Page.getLayoutMetrics");
