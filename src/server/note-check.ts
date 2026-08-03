@@ -43,7 +43,14 @@ export type NoteSlot = { item: GroundingItem; clear: () => void };
  * 收集 → 核对 → 清空，并打一行可观测的账。
  * 降级/兜底必须能被看见，否则它会把上游 bug 伪装成「今天没料」（lessons 反复吃过的亏）。
  */
-export async function groundNotes(slots: NoteSlot[], tag: string): Promise<number> {
+export async function groundNotes(all: NoteSlot[], tag: string): Promise<number> {
+  // 没有事实可比的条目**不进核查**：这道尺子量的是「归因有没有超出它的事实」，
+  // 手上没有事实时它只会一律回「事实里没有这家公司的信息」——那是在替上游的取数 bug 背锅。
+  // （实测就踩过：市场复盘按公司名查事实漏了「剥掉代码后缀」那种写法，10 条判否 6 条，全是这个。）
+  // 「没有事实就不该有归因」这件事由 isValidAttribution / substantive 在上游管。
+  const slots = all.filter((s) => s.item.facts.length > 0);
+  const skipped = all.length - slots.length;
+  if (skipped > 0) console.log(`[grounding] ${tag} 跳过 ${skipped} 条无事实可比的归因`);
   if (slots.length === 0) return 0;
   const verdicts = await checkNoteGrounding(slots.map((s) => s.item));
   let dropped = 0;

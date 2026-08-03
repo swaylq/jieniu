@@ -559,7 +559,16 @@ export async function generateMarketDigest(
     };
   }
   // 归因逐条核对（见 server/note-check）：个股与板块的 note 都要能在它自己的当日事实里找到依据。
-  const factsOfStock = new Map(inputs.stocks.map((s) => [s.name, s.facts]));
+  // 模型写公司名时会剥掉代码后缀，两种写法都建索引再两种写法都查——
+  // 只按一种查会取到空事实，核查器就会以「事实里没有这家公司的信息」判掉一批**正确**的归因
+  // （实测 10 条判否 6 条，全是这个原因；`parseDigestResponse` 早就是这么建索引的，我没照做）。
+  const factsOfStock = new Map<string, string[]>();
+  for (const s of inputs.stocks) {
+    factsOfStock.set(s.name, s.facts);
+    factsOfStock.set(cleanEntityName(s.name), s.facts);
+  }
+  const stockFacts = (name: string) =>
+    factsOfStock.get(name) ?? factsOfStock.get(cleanEntityName(name)) ?? [];
   const factsOfSector = new Map(
     [...inputs.sectors.strong, ...inputs.sectors.weak].map((s) => [s.name, s.facts]),
   );
@@ -568,7 +577,7 @@ export async function generateMarketDigest(
       ...data.stocks
         .filter((s) => s.note)
         .map((s) => ({
-          item: { subject: s.name, facts: factsOfStock.get(s.name) ?? [], note: s.note },
+          item: { subject: s.name, facts: stockFacts(s.name), note: s.note },
           clear: () => {
             s.note = "";
           },
