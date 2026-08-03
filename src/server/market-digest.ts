@@ -23,6 +23,7 @@ import {
 import { aggregateSectors, rankSectors, type StockFlow } from "../lib/rotation";
 import { isInauspicious } from "../lib/digest-filter";
 import { summarizeBreadth, isMarketLevelWorthy } from "../lib/digest-substance";
+import { isOwnFact } from "../lib/news-subject";
 import {
   categorize,
   mergeEvents,
@@ -154,13 +155,26 @@ async function gatherStockFacts(
   const names = stocks.map((s) => cleanEntityName(s.name));
 
   const rows = await db.$queryRawUnsafe<
-    { ticker: string | null; name: string; title: string; importance: number }[]
+    {
+      ticker: string | null;
+      name: string;
+      shortName: string | null;
+      aliases: string[];
+      title: string;
+      importance: number;
+      kind: string;
+      boundEntityCount: number;
+    }[]
   >(
     `
-    SELECT e.ticker, e.name, n.title, n.importance
+    SELECT e.ticker, e.name, e."shortName", e.aliases, n.title, n.importance, s.kind,
+           (SELECT COUNT(*)::int FROM "NewsEntity" ne2
+              JOIN "Entity" e2 ON e2.id = ne2."entityId"
+             WHERE ne2."newsId" = n.id AND e2.type IN ('STOCK','COMPANY')) AS "boundEntityCount"
     FROM "NewsItem" n
     JOIN "NewsEntity" ne ON ne."newsId" = n.id
     JOIN "Entity" e ON e.id = ne."entityId"
+    JOIN "Source" s ON s.id = n."sourceId"
     WHERE n."publishedAt" >= $1
       AND e.type IN ('STOCK','COMPANY')
       AND (e.ticker = ANY($2::text[]) OR e.name = ANY($3::text[]))
@@ -175,6 +189,15 @@ async function gatherStockFacts(
     // 除了事务性公告，还要挡「7月29日早间新闻精选」这类导航体裁——它绑到个股上，
     // 但对「这只股今天为什么这样走」一个字的信息都没有
     if (!isDigestWorthyFiling(r.title) || !isMarketLevelWorthy(r.title)) continue;
+    // 再挡一层「绑到它但不是关于它」：这只股只是文章里被顺带提到的一家（见 lib/news-subject）。
+    // 归因用的事实必须是它自己的，否则模型会拿别家公司的事编出一条因果。
+    if (
+      !isOwnFact(
+        { title: r.title, sourceKind: r.kind, boundEntityCount: r.boundEntityCount },
+        [{ name: r.name, shortName: r.shortName, aliases: r.aliases, ticker: r.ticker }],
+      )
+    )
+      continue;
     // 一条资讯常同时绑 COMPANY + STOCK 两个实体，归一到「股票代码或干净公司名」这一个键
     const key = r.ticker ?? cleanEntityName(r.name);
     const arr = out.get(key) ?? [];

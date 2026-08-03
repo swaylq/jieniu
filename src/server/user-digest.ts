@@ -20,6 +20,7 @@ import {
 } from "../lib/user-digest";
 import { tradeDateOf, isDigestWorthyFiling } from "../lib/market-digest";
 import { isMarketLevelWorthy } from "../lib/digest-substance";
+import { isOwnFact } from "../lib/news-subject";
 import { aggregateSectors, rankSectors, type StockFlow } from "../lib/rotation";
 import { upcomingDisclosureNodes } from "../lib/earnings-calendar";
 import { llmChat, llmModel } from "./llm";
@@ -219,9 +220,23 @@ async function loadNews(
       title: true,
       brief: true,
       summary: true,
+      // 主体判定要用：源体裁（公告/结构化事件的主体由源权威给出）
+      source: { select: { kind: true } },
+      // 这里**不能**按 allIds 过滤：扇出闸要数这条资讯一共绑了几家公司，
+      // 只看自选那几个实体会把「顺带提到别家」看成「只绑了它」。
       entities: {
-        where: { entityId: { in: allIds } },
-        select: { entityId: true },
+        select: {
+          entityId: true,
+          entity: {
+            select: {
+              type: true,
+              name: true,
+              shortName: true,
+              aliases: true,
+              ticker: true,
+            },
+          },
+        },
       },
     },
   });
@@ -230,23 +245,48 @@ async function loadNews(
   const worthy = rows.filter(
     (r) => isDigestWorthyFiling(r.title) && isMarketLevelWorthy(r.title),
   );
+  // 「绑定到它」≠「关于它」。绑定是**召回导向**的（个股资讯源按名字全文搜索、摘要里的顺带提及
+  // 也算），拿它当「自有事实」会把「没有事实就留空」那道护栏顶开，模型随即编出因果——
+  // 潞 2026-08-03 报的国盾量子那条就是这么来的（依据两条全是频准激光 IPO 的报道，
+  // 它只是被列举的客户）。这里换上精度导向的判据，见 lib/news-subject。
+  const own: { title: string; brief: string; posIds: string[] }[] = [];
   for (const r of worthy) {
-    // 一条资讯常同时绑 COMPANY + STOCK 两个实体，归一到自选那一条上再计数
-    const posIds = new Set(
-      r.entities.map((e) => lookup.get(e.entityId)).filter((x): x is string => !!x),
-    );
-    for (const posId of posIds) {
+    const boundEntityCount = r.entities.filter(
+      (e) => e.entity.type === "COMPANY" || e.entity.type === "STOCK",
+    ).length;
+    // 一条资讯常同时绑 COMPANY + STOCK 两个实体，归一到自选那一条上再判主体
+    const byPos = new Map<string, (typeof r.entities)[number]["entity"][]>();
+    for (const link of r.entities) {
+      const posId = lookup.get(link.entityId);
+      if (!posId) continue;
+      const arr = byPos.get(posId) ?? [];
+      arr.push(link.entity);
+      byPos.set(posId, arr);
+    }
+    const posIds = [...byPos]
+      .filter(([, ents]) =>
+        isOwnFact({ title: r.title, sourceKind: r.source.kind, boundEntityCount }, ents),
+      )
+      .map(([posId]) => posId);
+    if (posIds.length === 0) continue;
+    own.push({
+      title: r.title,
+      brief: (r.brief ?? r.summary ?? "").slice(0, 60),
+      posIds,
+    });
+  }
+  for (const r of own) {
+    for (const posId of r.posIds) {
       const arr = byEntity.get(posId) ?? [];
       if (arr.length >= FACTS_PER_POSITION || arr.includes(r.title)) continue;
       arr.push(r.title);
       byEntity.set(posId, arr);
     }
   }
-  const flat = worthy.slice(0, NEWS_TAKE).map((r) => ({
-    entityName:
-      nameById.get(lookup.get(r.entities[0]?.entityId ?? "") ?? "") ?? "",
+  const flat = own.slice(0, NEWS_TAKE).map((r) => ({
+    entityName: nameById.get(r.posIds[0] ?? "") ?? "",
     title: r.title,
-    brief: (r.brief ?? r.summary ?? "").slice(0, 60),
+    brief: r.brief,
   }));
   return { flat, byEntity };
 }

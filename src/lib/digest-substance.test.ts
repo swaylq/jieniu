@@ -51,6 +51,19 @@ describe("循环归因判废", () => {
     expect(hasFactAnchor("半导体板块领跌，股价跌停。")).toBe(true); // 有「跌停」事件锚点
     expect(isSubstantive("半导体板块领跌，股价跌停。")).toBe(false); // 但仍是循环
   });
+
+  // 2026-08-03 复核线上 note 时发现的同族漏网：主语换成「概念 / 题材 / 赛道」，
+  // 中间不带逗号、用「带动」直接连到股价，原来六条一条都拦不住。
+  it("概念 / 题材 / 赛道「回升带动股价」同样是循环归因", () => {
+    expect(isCircularAttribution("存储芯片概念震荡回升带动股价冲高")).toBe(true);
+    expect(isCircularAttribution("光模块题材走强推动股价上涨")).toBe(true);
+    expect(isCircularAttribution("量子赛道升温提振股价表现")).toBe(true);
+  });
+
+  it("但「行业景气回升带动订单增长」是真解释——落点不是股价就不判", () => {
+    expect(isCircularAttribution("行业景气回升带动订单增长")).toBe(false);
+    expect(isCircularAttribution("存储涨价带动毛利率改善")).toBe(false);
+  });
 });
 
 describe("事实锚点", () => {

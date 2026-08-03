@@ -239,11 +239,29 @@ const STATE_CN: Record<string, string> = {
   neutral: "中性",
 };
 
+/**
+ * 涨跌幅的措辞。模型被禁止输出数字（数字由系统填），所以**这几个词是它判断幅度的唯一依据**——
+ * 词给错了，它写出来的判断就会跟卡片上明晃晃的数字打架。
+ *
+ * 2026-08-03 的现场：原来只有「幅明显(≥5%) / 幅有限」两档，国盾量子 +4.76% 落进「涨幅有限」，
+ * 模型据此写出 headline「你的组合今日表现平淡，无明显波动」——而卡片右边写着 +4.76%。
+ * A 股 4~5% 的单日波动不是「平淡」，两档太粗，改成五档。
+ */
+export function describeMove(changePct: number): string {
+  const a = Math.abs(changePct);
+  const dir = changePct >= 0 ? "涨" : "跌";
+  if (a === 0) return "收平";
+  if (a < 1) return `微${dir}`;
+  if (a < 3) return `小幅${changePct >= 0 ? "上涨" : "下跌"}`;
+  if (a < 7) return `明显${changePct >= 0 ? "上涨" : "下跌"}`;
+  return `大幅${changePct >= 0 ? "上涨" : "下跌"}`;
+}
+
 export function buildUserDigestPrompt(f: UserDigestFacts): string {
   const holdLine = (m: Mover) =>
-    `- ${m.name}｜${m.held ? "持仓" : "观察"}${m.weight ? `｜仓位${m.weight}%` : ""}｜今日${
-      m.changePct >= 0 ? "涨" : "跌"
-    }${Math.abs(m.changePct) >= 5 ? "幅明显" : "幅有限"}${m.note ? `｜你记的理由：${m.note}` : ""}\n` +
+    `- ${m.name}｜${m.held ? "持仓" : "观察"}${m.weight ? `｜仓位${m.weight}%` : ""}｜今日${describeMove(
+      m.changePct,
+    )}${m.note ? `｜你记的理由：${m.note}` : ""}\n` +
     (m.facts.length > 0
       ? m.facts.map((x) => `    · 今日相关：${x}`).join("\n")
       : "    · 今日相关：（无）→ 这只的 note 必须留空");
@@ -270,8 +288,18 @@ export function buildUserDigestPrompt(f: UserDigestFacts): string {
     .filter(Boolean)
     .join("，");
 
+  // 一条自有事实都没有时要**明说**。不说的话模型会拿「表现平淡 / 走势分化」这类笼统结论
+  // 把「今天没有料」盖过去——那又是一句换一天照样成立的话，而且会跟卡片上的涨跌幅打架。
+  // 兜底状态必须可观测，这条对模型和对我们是同一个道理。
+  const noFacts =
+    f.portfolio.movers.length > 0 && f.portfolio.movers.every((m) => m.facts.length === 0)
+      ? "\n**注意：今天你的标的一条自有消息面事实都没有。** headline 要如实说明这件事" +
+        "（例如「今天你的标的没有各自的消息，涨跌来自市场层面」），不要用「表现平淡 / 走势分化」" +
+        "这类笼统结论盖过去，也不要拿板块或大盘去解释；所有 note 一律留空。\n"
+      : "";
+
   return `交易日：${f.tradeDate}
-${profile ? `这位用户的投资画像：${profile}\n` : ""}
+${profile ? `这位用户的投资画像：${profile}\n` : ""}${noFacts}
 【市场背景】
 ${f.marketOverview || "（无）"}
 

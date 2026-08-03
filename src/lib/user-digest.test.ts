@@ -5,6 +5,7 @@ import {
   buildUserDigestPrompt,
   parseUserDigestResponse,
   userDigestInputHash,
+  describeMove,
   type PositionIn,
   type FlowIn,
   type UserDigestFacts,
@@ -174,6 +175,30 @@ describe("buildUserDigestPrompt", () => {
   });
   it("明确禁止模型输出数字", () => {
     expect(p).toContain("不要输出任何数字");
+  });
+
+  // 2026-08-03：模型不许写数字，所以这些词是它判断幅度的**唯一**依据。
+  // 原来只有「幅明显(≥5%) / 幅有限」两档，国盾量子 +4.76% 被说成「涨幅有限」，
+  // 模型顺势写出 headline「表现平淡，无明显波动」——卡片右边明晃晃写着 +4.76%。
+  it("涨跌幅的措辞不能和旁边的数字打架", () => {
+    expect(describeMove(4.76)).toBe("明显上涨");
+    expect(describeMove(-4.76)).toBe("明显下跌");
+    expect(describeMove(9.98)).toBe("大幅上涨");
+    expect(describeMove(2.16)).toBe("小幅上涨");
+    expect(describeMove(0.09)).toBe("微涨");
+    expect(describeMove(0)).toBe("收平");
+  });
+
+  it("全组合都没有自有事实时，提示词要明说——否则模型会拿笼统结论盖过去", () => {
+    const dry = buildUserDigestPrompt({
+      ...facts,
+      portfolio: {
+        ...facts.portfolio,
+        movers: facts.portfolio.movers.map((m) => ({ ...m, facts: [] })),
+      },
+    });
+    expect(dry).toContain("一条自有消息面事实都没有");
+    expect(p).not.toContain("一条自有消息面事实都没有"); // 有事实时不出现
   });
 });
 
