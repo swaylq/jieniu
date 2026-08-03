@@ -189,6 +189,18 @@ describe("buildUserDigestPrompt", () => {
     expect(describeMove(0)).toBe("收平");
   });
 
+  // 2026-08-03：潞「国创国盾应该都受益于量子吧」——「你的板块暴露」原来只有涨跌幅和一个信号词，
+  // 说不出这个板块今天到底出了什么事。同板块别家公司的事只能进板块段，不能进个股归因位。
+  it("同板块别家公司的当日事实进板块段，并标明是「同板块今天」", () => {
+    const withSector = buildUserDigestPrompt({
+      ...facts,
+      exposure: [{ ...facts.exposure[0]!, facts: ["国仪公司：网上发行初步中签率为0.01771279%"] }],
+    });
+    expect(withSector).toContain("· 同板块今天：国仪公司");
+    // 没有同板块事实时那一行不出现（「同板块今天」四个字在输出格式说明里也有，所以要连标记一起断言）
+    expect(p).not.toContain("· 同板块今天：");
+  });
+
   it("全组合都没有自有事实时，提示词要明说——否则模型会拿笼统结论盖过去", () => {
     const dry = buildUserDigestPrompt({
       ...facts,

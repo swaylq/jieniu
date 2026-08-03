@@ -45,10 +45,28 @@ export function cleanEntityName(name: string): string {
 const ADMIN_FILING =
   /募集资金.{0,12}(专户|专项账户|结算账户|监管协议|现金管理)|开立.{0,12}账户|签订.{0,12}监管协议|变更保荐(代表人|机构)/;
 
+/**
+ * 申报材料的**文件名**，不是消息：「2-1重大资产重组报告书(申报稿)(天水华天科技股份有限公司)」
+ * 「1关于…审核问询函的回复(修订稿)」。开头那个「2-1」「1」是交易所申报材料的册号。
+ * 2026-08-03 加：同板块事实里冒出来两条这样的东西，占着位置却什么都没说。
+ *
+ * **两个条件都要满足**才判——只看「以数字开头」会把「3家公司披露半年报」「5G基站建设加速」
+ * 这类真标题一起杀掉（第一版就是这么写的，纸上看着挺像那么回事）。
+ */
+const FILING_DOC_INDEX = /^\d{1,2}(-\d{1,2})?[一-鿿]/;
+const FILING_DOC_MARK =
+  /申报稿|修订稿|草案|报告书|反馈意见|问询函的回复|募集说明书|之法律意见书/;
+
+export function isFilingDocName(title: string): boolean {
+  const t = title.trim();
+  return FILING_DOC_INDEX.test(t) && FILING_DOC_MARK.test(t);
+}
+
 export function isDigestWorthyFiling(title: string): boolean {
   if (isBoilerplateFiling(title)) return false;
   if (isIntermediaryRole(title)) return false;
   if (ADMIN_FILING.test(title)) return false;
+  if (isFilingDocName(title)) return false;
   return true;
 }
 

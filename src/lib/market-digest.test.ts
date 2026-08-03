@@ -228,6 +228,22 @@ describe("isDigestWorthyFiling — 复盘里不要程序性公告", () => {
   it("剔除中介机构出具的核查意见（主体公告本身已进来了）", () => {
     expect(isDigestWorthyFiling("东方证券:浙商证券关于东方证券本次交易不构成重组上市的核查意见")).toBe(false);
   });
+  // 2026-08-03：同板块事实里冒出两条申报材料的**文件名**，占着位置却什么都没说。
+  it("剔除交易所申报材料的文件名（开头是册号 + 申报稿/修订稿这类标记）", () => {
+    expect(
+      isDigestWorthyFiling("2-1重大资产重组报告书(申报稿)(天水华天科技股份有限公司)"),
+    ).toBe(false);
+    expect(
+      isDigestWorthyFiling(
+        "1关于天水华天科技股份有限公司发行股份及支付现金购买资产并募集配套资金申请的审核问询函的回复(修订稿)",
+      ),
+    ).toBe(false);
+  });
+  it("但「以数字开头」本身不算——只看这一条会把真标题一起杀掉", () => {
+    expect(isDigestWorthyFiling("3家公司披露半年报，两家净利翻倍")).toBe(true);
+    expect(isDigestWorthyFiling("5G基站建设加速，产业链订单回暖")).toBe(true);
+    expect(isDigestWorthyFiling("2026年半年度业绩预告：净利润同比增长60%")).toBe(true);
+  });
   it("保留真正的市场级事件", () => {
     expect(isDigestWorthyFiling("国泰海通:关于与关联方共同参与东方证券相关重组交易暨关联交易的公告")).toBe(true);
     expect(isDigestWorthyFiling("仁度生物:关于控股股东、实际控制人协议转让股份暨控制权拟发生变更的进展公告")).toBe(true);

@@ -292,6 +292,92 @@ async function loadNews(
   return { flat, byEntity };
 }
 
+/** 每个板块最多带几条同板块事实进提示词。 */
+const SECTOR_FACTS = 2;
+
+/**
+ * 你暴露的板块**今天发生了什么**——取同板块**别家**公司的当日事实（2026-08-03）。
+ *
+ * 缺这条链路的现场：潞问「国创国盾应该都受益于量子吧」。那天量子赛道确实有真事件
+ * （幺正量子完成数亿元融资、国仪量子公布中签率、本源量子拿到订单），但一条都没连到国盾量子，
+ * 系统手上什么都没有，只好拿一条错的凑数。
+ *
+ * 判据沿用 `isOwnFact`：同板块那条新闻也必须是**那家公司自己的事**，否则就是拿二手噪声
+ * 去填另一个位置。排除用户自己的持仓——那些已经在个股段说过了。
+ */
+async function loadSectorFacts(
+  db: UserDigestDb,
+  sectors: string[],
+  excludeEntityIds: Set<string>,
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (sectors.length === 0) return out;
+
+  const members = await db.$queryRawUnsafe<
+    {
+      sector: string;
+      id: string;
+      name: string;
+      shortName: string | null;
+      aliases: string[];
+      ticker: string | null;
+    }[]
+  >(
+    `
+    SELECT sec.name AS sector, m.id, m.name, m."shortName", m.aliases, m.ticker
+    FROM "EntityRelation" r
+    JOIN "Entity" st  ON st.id  = r."fromId" AND st.type = 'STOCK'
+    JOIN "Entity" sec ON sec.id = r."toId"   AND sec.type = 'SECTOR'
+    -- 资讯可能绑在孪生的任一侧，成分股与它的发行公司都要收
+    LEFT JOIN "EntityRelation" r2 ON r2."toId" = st.id AND r2.type = 'ISSUES'
+    JOIN "Entity" m ON m.id = st.id OR m.id = r2."fromId"
+    WHERE r.type = 'BELONGS_TO' AND sec.name = ANY($1::text[])
+  `,
+    sectors,
+  );
+  const sectorOf = new Map<string, string>();
+  const entById = new Map<string, (typeof members)[number]>();
+  for (const m of members) {
+    if (excludeEntityIds.has(m.id)) continue;
+    if (!sectorOf.has(m.id)) sectorOf.set(m.id, m.sector);
+    entById.set(m.id, m);
+  }
+  const ids = [...sectorOf.keys()];
+  if (ids.length === 0) return out;
+
+  const since = new Date(Date.now() - NEWS_WINDOW_HOURS * 60 * 60 * 1000);
+  const rows = await db.newsItem.findMany({
+    where: { publishedAt: { gte: since }, entities: { some: { entityId: { in: ids } } } },
+    orderBy: [{ importance: "desc" }, { publishedAt: "desc" }],
+    take: 200,
+    select: {
+      title: true,
+      source: { select: { kind: true } },
+      entities: {
+        select: { entityId: true, entity: { select: { type: true } } },
+      },
+    },
+  });
+  for (const r of rows) {
+    if (!isDigestWorthyFiling(r.title) || !isMarketLevelWorthy(r.title)) continue;
+    const boundEntityCount = r.entities.filter(
+      (e) => e.entity.type === "COMPANY" || e.entity.type === "STOCK",
+    ).length;
+    for (const link of r.entities) {
+      const sector = sectorOf.get(link.entityId);
+      const ent = entById.get(link.entityId);
+      if (!sector || !ent) continue;
+      if (!isOwnFact({ title: r.title, sourceKind: r.source.kind, boundEntityCount }, [ent]))
+        continue;
+      const arr = out.get(sector) ?? [];
+      if (arr.length >= SECTOR_FACTS || arr.includes(r.title)) continue;
+      arr.push(r.title);
+      out.set(sector, arr);
+    }
+  }
+  return out;
+}
+
 export type UserDigestResult = {
   userId: string;
   status: "created" | "unchanged" | "rejected" | "no-positions";
@@ -379,12 +465,22 @@ export async function generateUserDigests(
       facts: news.byEntity.get(p.entityId) ?? [],
     }));
 
+    const exposure = summarizeExposure(withFacts, sectors);
+    // 同板块别家公司今天发生了什么——「你的板块暴露」原来只有涨跌幅和一个信号词，
+    // 说不出「这个板块今天到底出了什么事」（潞：「国创国盾应该都受益于量子吧」）。
+    const mine = new Set([...aliasByPosition.values()].flat());
+    const sectorFacts = await loadSectorFacts(
+      db,
+      exposure.map((e) => e.sector),
+      mine,
+    );
+
     const facts: UserDigestFacts = {
       tradeDate,
       market: "CN",
       profile: { style: profile?.style ?? null, horizon: profile?.holdPeriod ?? null },
       portfolio: summarizePortfolio(withFacts, flowIn),
-      exposure: summarizeExposure(withFacts, sectors),
+      exposure: exposure.map((e) => ({ ...e, facts: sectorFacts.get(e.sector) ?? [] })),
       touched,
       news: news.flat,
       marketOverview: market?.overview ?? "",
@@ -412,14 +508,30 @@ export async function generateUserDigests(
     // 料没错，是写的时候跨条合成了一件没发生的事。出错一律放行，见 note-check。
     if (data) {
       await groundNotes(
-        data.portfolio.movers
-          .filter((m) => m.note)
-          .map((m) => ({
-            item: { subject: m.name, facts: m.facts, note: m.note ?? "" },
-            clear: () => {
-              m.note = "";
-            },
-          })),
+        [
+          ...data.portfolio.movers
+            .filter((m) => m.note)
+            .map((m) => ({
+              item: { subject: m.name, facts: m.facts, note: m.note ?? "" },
+              clear: () => {
+                m.note = "";
+              },
+            })),
+          // 板块段现在也有自己的事实（同板块别家公司的当日事），一并核
+          ...data.exposure
+            .filter((e) => e.note)
+            .map((e) => ({
+              item: {
+                subject: e.sector,
+                kind: "sector" as const,
+                facts: e.facts ?? [],
+                note: e.note,
+              },
+              clear: () => {
+                e.note = "";
+              },
+            })),
+        ],
         `个人复盘 ${u.id.slice(0, 8)}`,
       );
     }

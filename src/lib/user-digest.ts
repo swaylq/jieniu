@@ -69,6 +69,15 @@ export type ExposureFacts = {
   stocks: string[];
   sectorChangePct: number;
   signal: string;
+  /**
+   * 这个板块**今天发生了什么**——取自同板块**别家**公司的当日事实（2026-08-03）。
+   *
+   * 为什么放在板块这一段而不是个股归因位：潞问「国创国盾应该都受益于量子吧」，
+   * 他想知道的是赛道层面今天发生了什么。但同赛道别家公司的事**不是**你这只股自己的事，
+   * 塞进个股归因位就等于把刚堵上的洞重新打开（那正是「频准激光的事写成国盾量子的归因」）。
+   * 板块段天然是在说板块，读者不会误解，模型也没有把主语搞错的空间。
+   */
+  facts?: string[];
 };
 
 export type TouchedFacts = {
@@ -269,7 +278,10 @@ export function buildUserDigestPrompt(f: UserDigestFacts): string {
   const exposure = orNone(
     f.exposure.map(
       (e) =>
-        `- ${e.sector}（今日${e.sectorChangePct >= 0 ? "走强" : "走弱"}，${e.signal}）你在其中有：${e.stocks.join("、")}`,
+        `- ${e.sector}（今日${e.sectorChangePct >= 0 ? "走强" : "走弱"}，${e.signal}）你在其中有：${e.stocks.join("、")}` +
+        ((e.facts ?? []).length > 0
+          ? `\n${e.facts!.map((x) => `    · 同板块今天：${x}`).join("\n")}`
+          : ""),
     ),
   );
   const touched = orNone(
@@ -323,7 +335,7 @@ ${orNone(f.catalysts)}
 {
   "headline": "一句话：今天你的组合发生了什么（要落到具体的事，不是「随大盘下跌」）",
   "movers": [{"name":"必须是上面出现过的公司名","note":"必须引用它「今日相关」里的事实；没有事实就填 \\"\\""}],
-  "exposure": [{"sector":"必须是上面出现过的板块名","note":"这个暴露对你意味着什么；只想得出「板块走弱」就填 \\"\\""}],
+  "exposure": [{"sector":"必须是上面出现过的板块名","note":"这个暴露对你意味着什么；有「同板块今天」就引用它，但要说清那是同板块**别家**公司的事，不能写成你持仓那几只自己的事；只想得出「板块走弱」就填 \\"\\""}],
   "watchpoints": ["明天你要看什么，3-5 条，只围绕你的持仓，且指向具体的披露/数据/事件"],
   "judgment": "针对你这个组合的判断，必须双向（…；反之，若…）"
 }`;

@@ -576,7 +576,12 @@ export async function generateMarketDigest(
       ...[...data.sectors.strong, ...data.sectors.weak]
         .filter((s) => s.note)
         .map((s) => ({
-          item: { subject: s.name, facts: factsOfSector.get(s.name) ?? [], note: s.note },
+          item: {
+            subject: s.name,
+            kind: "sector" as const,
+            facts: factsOfSector.get(s.name) ?? [],
+            note: s.note,
+          },
           clear: () => {
             s.note = "";
           },
