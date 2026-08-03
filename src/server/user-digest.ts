@@ -21,6 +21,7 @@ import {
 import { tradeDateOf, isDigestWorthyFiling } from "../lib/market-digest";
 import { isMarketLevelWorthy } from "../lib/digest-substance";
 import { isOwnFact } from "../lib/news-subject";
+import { groundNotes } from "./note-check";
 import { aggregateSectors, rankSectors, type StockFlow } from "../lib/rotation";
 import { upcomingDisclosureNodes } from "../lib/earnings-calendar";
 import { llmChat, llmModel } from "./llm";
@@ -405,6 +406,23 @@ export async function generateUserDigests(
       maxTokens: 900,
     });
     const data = parseUserDigestResponse(raw, facts);
+    // 归因逐条核对：这句话里的说法，在它自己的事实里找不找得到依据。
+    // 主体判定管的是「喂进去的料对不对」，这道管的是「写出来的有没有超出料」——
+    // 潞报的那条正是两篇文章各取一半缝出来的（「光」＋「量子」→「光量子赛道」），
+    // 料没错，是写的时候跨条合成了一件没发生的事。出错一律放行，见 note-check。
+    if (data) {
+      await groundNotes(
+        data.portfolio.movers
+          .filter((m) => m.note)
+          .map((m) => ({
+            item: { subject: m.name, facts: m.facts, note: m.note ?? "" },
+            clear: () => {
+              m.note = "";
+            },
+          })),
+        `个人复盘 ${u.id.slice(0, 8)}`,
+      );
+    }
     if (!data) {
       stats.rejected++;
       results.push({

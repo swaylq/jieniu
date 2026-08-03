@@ -40,12 +40,22 @@ export type SubjectEntity = {
 };
 
 /**
+ * 全角字母/数字转半角。库里存的是「粤高速Ａ」「深桑达Ａ」（全角 Ａ），而文章里写的是
+ * 半角 A——不归一就永远匹配不上，会把这些股自己的资讯当成误绑剪掉。两边都过一遍才对称。
+ */
+function toHalfWidth(s: string): string {
+  return s.replace(/[Ａ-Ｚａ-ｚ０-９]/g, (c) =>
+    String.fromCharCode(c.charCodeAt(0) - 0xfee0),
+  );
+}
+
+/**
  * 剥掉证券简称的装饰：尾部「(688027)」、`-U`/`-UW`（未盈利 / 同股不同权），
  * 头部 `N`/`C`（新股上市首日与次 5 日）、`XD`/`XR`/`DR`（除权除息）、`ST`/`*ST`。
  * 这些是**交易状态**，不是名字的一部分——标题里写的永远是干净名字。
  */
 export function cleanSecurityName(name: string): string {
-  return name
+  return toHalfWidth(name)
     .replace(/[（(]\d{4,6}[)）]\s*$/, "")
     .replace(/-(?:U|W|D){1,3}$/i, "")
     .replace(/^(?:\*?ST|XD|XR|DR|N|C)(?=[一-鿿])/, "")
@@ -62,7 +72,7 @@ export function subjectTokens(e: SubjectEntity): string[] {
     e.shortName ?? "",
     ...(e.aliases ?? []),
     e.ticker ?? "",
-  ];
+  ].map(toHalfWidth);
   const out: string[] = [];
   for (const t of raw) {
     const s = t.trim();
@@ -74,7 +84,7 @@ export function subjectTokens(e: SubjectEntity): string[] {
 
 /** 标题里有没有点到这家公司（名字 / 简称 / 别名 / 代码任一）。 */
 export function titleNamesSubject(title: string, e: SubjectEntity): boolean {
-  const t = title.trim();
+  const t = toHalfWidth(title.trim());
   if (!t) return false;
   return subjectTokens(e).some((tok) => containsToken(t, tok));
 }

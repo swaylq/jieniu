@@ -24,6 +24,7 @@ import { aggregateSectors, rankSectors, type StockFlow } from "../lib/rotation";
 import { isInauspicious } from "../lib/digest-filter";
 import { summarizeBreadth, isMarketLevelWorthy } from "../lib/digest-substance";
 import { isOwnFact } from "../lib/news-subject";
+import { groundNotes } from "./note-check";
 import {
   categorize,
   mergeEvents,
@@ -557,6 +558,32 @@ export async function generateMarketDigest(
       reason: `模型输出未通过校验（非 JSON / 缺段 / 含买卖指令 / 判断非双向 / 核心驱动全是废话）：${raw.slice(0, 160)}`,
     };
   }
+  // 归因逐条核对（见 server/note-check）：个股与板块的 note 都要能在它自己的当日事实里找到依据。
+  const factsOfStock = new Map(inputs.stocks.map((s) => [s.name, s.facts]));
+  const factsOfSector = new Map(
+    [...inputs.sectors.strong, ...inputs.sectors.weak].map((s) => [s.name, s.facts]),
+  );
+  await groundNotes(
+    [
+      ...data.stocks
+        .filter((s) => s.note)
+        .map((s) => ({
+          item: { subject: s.name, facts: factsOfStock.get(s.name) ?? [], note: s.note },
+          clear: () => {
+            s.note = "";
+          },
+        })),
+      ...[...data.sectors.strong, ...data.sectors.weak]
+        .filter((s) => s.note)
+        .map((s) => ({
+          item: { subject: s.name, facts: factsOfSector.get(s.name) ?? [], note: s.note },
+          clear: () => {
+            s.note = "";
+          },
+        })),
+    ],
+    `市场复盘 ${tradeDate}`,
+  );
 
   const payload = {
     overview: data.overview,

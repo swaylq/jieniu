@@ -42,6 +42,23 @@ describe("cleanSecurityName — 剥掉证券简称的装饰", () => {
   it("不动正常名字", () => {
     expect(cleanSecurityName("中航光电")).toBe("中航光电");
   });
+
+  // 库里存的是全角「粤高速Ａ」，文章里写的是半角「粤高速A」——不归一就永远匹配不上，
+  // 会把这些股自己的资讯当成误绑剪掉。
+  it("全角字母数字归一到半角", () => {
+    expect(cleanSecurityName("粤高速Ａ")).toBe("粤高速A");
+    expect(cleanSecurityName("深桑达Ａ")).toBe("深桑达A");
+  });
+});
+
+describe("全角 / 半角互认", () => {
+  const yue = { name: "粤高速Ａ", ticker: "000429" };
+  it("库里全角、文章半角，照样认得出", () => {
+    expect(titleNamesSubject("粤高速A：上半年通行费收入同比增长", yue)).toBe(true);
+  });
+  it("反过来也认", () => {
+    expect(titleNamesSubject("粤高速Ａ发布半年报", yue)).toBe(true);
+  });
 });
 
 describe("subjectTokens — 一家公司的全部叫法", () => {
