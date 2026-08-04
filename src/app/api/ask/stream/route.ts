@@ -88,6 +88,8 @@ export async function POST(req: Request) {
     history,
     facts: factsText,
     subjects: factsRes.subjects,
+    guessed: factsRes.guessed,
+    ambiguous: factsRes.ambiguous,
   });
 
   // 用户那条先落库：即使 AI 挂了，用户也不该丢掉自己刚打的字。

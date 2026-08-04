@@ -421,6 +421,8 @@ export type AskInput = {
   /** 事实段（`renderAskFacts()`）——2026-08-04 补的那一层，见 lib/ask-facts */
   facts?: string;
   subjects?: string[];
+  guessed?: { typed: string; name: string };
+  ambiguous?: string[];
 };
 
 export const ASK_SYSTEM = `你是"解牛"App 的**私人投研助手**。你手上有两样东西：这位用户的持仓 / 观察 / 投资逻辑(thesis) / 近期动态 / 决策史（「用户记忆」），以及解牛收录的**一手公告与资讯原文**（「可引用的事实」）。
@@ -446,6 +448,7 @@ ${i.question}
     facts.length > 0,
     i.hasMemory,
     Array.isArray(i.subjects) && i.subjects.length === 0 && !facts,
+    { guessed: i.guessed, ambiguous: i.ambiguous },
   )}`;
 }
 

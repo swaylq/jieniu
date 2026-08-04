@@ -14,6 +14,7 @@ import {
   type EntityDictEntry,
 } from "../lib/entity-tagging";
 import { isOwnFact } from "../lib/news-subject";
+import { fuzzyMatchEntities, distinctCompanies } from "../lib/entity-fuzzy";
 import { isDigestWorthyFiling } from "../lib/market-digest";
 import {
   usableExcerpt,
@@ -35,6 +36,10 @@ export type AskFactsResult = AskFactsInput & {
   entityIds: string[];
   /** 一个主体都没认出来——调用方据此告诉用户「我不知道你在问哪家公司」 */
   noSubject: boolean;
+  /** 名字打错了一个字、我们猜出来的：必须在回答开头**回显确认**，不能默默替他改 */
+  guessed?: { typed: string; name: string };
+  /** 一字之差同时像好几家公司：不猜，让模型问用户是哪一只 */
+  ambiguous?: string[];
 };
 
 const EMPTY: AskFactsResult = {
@@ -89,6 +94,8 @@ export async function loadAskFacts(
 
   // 主体：当前这条资讯绑的公司 → 当前页面的实体 → 从问题文本里认。
   const seed: { id: string; name: string }[] = [];
+  let guessed: { typed: string; name: string } | undefined;
+  let ambiguous: string[] | undefined;
   for (const e of focusRow?.entities ?? []) {
     if (e.entity.type === "COMPANY" || e.entity.type === "STOCK") {
       seed.push({ id: e.entityId, name: e.entity.name });
@@ -119,9 +126,23 @@ export async function loadAskFacts(
       const e = byId.get(id);
       if (e && (e.type === "COMPANY" || e.type === "STOCK")) seed.push({ id, name: e.name });
     }
+    // 精确匹配一个都没有时，才试「一字之差」——张楚寒把「麒盛科技」打成了「麟盛科技」，
+    // 精确匹配零命中，整个回答退回成泛泛的框架建议。名字打对时永远走上面那条路。
+    if (seed.length === 0) {
+      const fuzzy = fuzzyMatchEntities(opts.question, dict);
+      const names = distinctCompanies(fuzzy);
+      if (names.length === 1 && fuzzy[0]) {
+        // 只有一个候选才敢用，而且**必须回显**给用户确认（见 ask-prompt 的 guessed 分支）
+        guessed = { typed: fuzzy[0].typed, name: names[0]! };
+        for (const h of fuzzy) seed.push({ id: h.id, name: h.name });
+      } else if (names.length > 1) {
+        // 多个候选就别猜——猜错比不猜更糟，交给模型去问用户是哪一只
+        ambiguous = names;
+      }
+    }
   }
 
-  if (seed.length === 0 && !focusRow) return EMPTY;
+  if (seed.length === 0 && !focusRow) return { ...EMPTY, ambiguous };
 
   // 同一家公司的孪生实体归一到一个名字上，别在「主体」里出现两遍
   const bare = (n: string) => n.replace(/[（(]\d{4,6}[)）]\s*$/, "").trim();
@@ -147,7 +168,15 @@ export async function loadAskFacts(
     : null;
 
   if (entityIds.length === 0) {
-    return { focus, facts: [], subjects, entityIds: [], noSubject: subjects.length === 0 };
+    return {
+      focus,
+      facts: [],
+      subjects,
+      entityIds: [],
+      noSubject: subjects.length === 0,
+      guessed,
+      ambiguous,
+    };
   }
 
   const since = new Date(Date.now() - FACT_WINDOW_DAYS * 24 * 60 * 60 * 1000);
@@ -247,5 +276,13 @@ export async function loadAskFacts(
     .sort((a, b) => Number(b.ex) - Number(a.ex) || b.rel - a.rel)
     .map((x) => x.f);
 
-  return { focus, facts, subjects, entityIds, noSubject: subjects.length === 0 };
+  return {
+    focus,
+    facts,
+    subjects,
+    entityIds,
+    noSubject: subjects.length === 0,
+    guessed,
+    ambiguous,
+  };
 }

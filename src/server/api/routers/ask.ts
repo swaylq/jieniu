@@ -83,6 +83,8 @@ export const askRouter = createTRPCRouter({
           hasMemory: built.hasMemory,
           facts: factsText,
           subjects: factsRes.subjects,
+          guessed: factsRes.guessed,
+          ambiguous: factsRes.ambiguous,
         });
       } catch (e) {
         // 一定要打日志：以前这里是裸 `catch {}`，AI 层挂了整整一天，

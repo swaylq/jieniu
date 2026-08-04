@@ -16,6 +16,9 @@ export type AskPromptInput = {
   facts?: string;
   /** 认出来的主体公司名；空＝没认出他在问哪家公司。 */
   subjects?: string[];
+  /** 名字打错一个字时的猜测与歧义（见 answerStance） */
+  guessed?: { typed: string; name: string };
+  ambiguous?: string[];
 };
 
 /**
@@ -26,12 +29,37 @@ export type AskPromptInput = {
  *
  * 现在分三种情形，顺序有意为之——**先回答问题，再谈他的组合**：
  */
+export type StanceOpts = {
+  /** 名字打错一个字、我们猜出来的：必须回显确认，不能默默替他改 */
+  guessed?: { typed: string; name: string };
+  /** 一字之差同时像好几家：不猜，问用户 */
+  ambiguous?: string[];
+};
+
 export function answerStance(
   hasFacts: boolean,
   hasMemory: boolean,
   noSubject: boolean,
+  opts: StanceOpts = {},
 ): string {
   const parts: string[] = [];
+  // 猜名字这件事**必须让用户看见**。默默把「麟盛科技」当成「麒盛科技」作答，
+  // 万一猜错了，用户拿到的是一份关于另一家公司的、看起来完全可信的分析——比答不出来危险得多。
+  if (opts.ambiguous && opts.ambiguous.length > 1) {
+    parts.push(
+      `他打的公司名跟这几家都只差一个字：${opts.ambiguous.join("、")}。**先问他指的是哪一家**，` +
+        "别自己挑一个作答。",
+    );
+    parts.push("记忆里没有的信息不要编，事实里没有的也一样。");
+    return parts.join("");
+  }
+  if (opts.guessed) {
+    parts.push(
+      `他把公司名打成了「${opts.guessed.typed}」，解牛里跟它只差一个字的是「${opts.guessed.name}」，` +
+        `下面的事实是按「${opts.guessed.name}」取的。**回答第一句先说明这一点**` +
+        `（例如「你问的应该是${opts.guessed.name}吧？以下按它作答」），别默默替他改名字。`,
+    );
+  }
   if (hasFacts) {
     parts.push(
       "回答**事实性问题时必须先用【可引用的事实】里的原文**，并在每条结论句末标出处编号（如 `[1]`）；" +
@@ -81,6 +109,7 @@ ${i.question}
     // 只有**真的跑过主体识别、却一个都没认出来**时才走「不知道你在问谁」那条口径。
     // 没传 subjects（老调用方 / 不做识别的路径）不等于识别失败，否则会把正常提问一律怼回去。
     Array.isArray(i.subjects) && subjects.length === 0 && !facts,
+    { guessed: i.guessed, ambiguous: i.ambiguous },
   )}${
     past
       ? "这是一段持续的对话——「这个」「它」这类指代请顺着上面的对话理解，别当成新问题重新起头。"
