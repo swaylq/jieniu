@@ -13,16 +13,19 @@ import { AskIcon } from "./icons";
  * compact=列表卡用的轻量文字按钮；完整版（详情页）另附「更新我的逻辑」。
  */
 export function NewsActions({
+  id,
   title,
   entities,
   compact = false,
 }: {
+  /** 这条资讯的 id——带给问解牛，让它能读到**正文**而不只是标题（2026-08-04）。 */
+  id?: string;
   title: string;
   entities?: { id: string; name: string }[];
   compact?: boolean;
 }) {
   function onAsk() {
-    if (!emitAsk(newsAskQuestion(title))) {
+    if (!emitAsk(newsAskQuestion(title), id ? { newsId: id } : undefined)) {
       const back =
         typeof window !== "undefined"
           ? encodeURIComponent(window.location.pathname)

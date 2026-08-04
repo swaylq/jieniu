@@ -4,6 +4,13 @@ import { TRPCError } from "@trpc/server";
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { buildAskContext } from "~/lib/ask-context";
 import { loadAskMemory } from "~/server/ask-memory";
+import { loadAskFacts } from "~/server/ask-facts";
+import {
+  renderAskFacts,
+  factCount,
+  invalidCitations,
+  ungroundedNumbers,
+} from "~/lib/ask-facts";
 import { answerUserQuestion } from "~/server/ai";
 import { isCompliant, withDisclaimer } from "~/lib/compliance";
 
@@ -40,7 +47,13 @@ export const askRouter = createTRPCRouter({
   }),
 
   answer: protectedProcedure
-    .input(z.object({ question: z.string().min(1).max(500) }))
+    .input(
+      z.object({
+        question: z.string().min(1).max(500),
+        newsId: z.string().optional(),
+        entityId: z.string().optional(),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const q = input.question.trim();
       if (q.length === 0)
@@ -49,9 +62,18 @@ export const askRouter = createTRPCRouter({
       const uid = ctx.session.user.id;
 
       // 记忆取数抽到 `server/ask-memory`（流式那条路也用同一份，别写两遍）。
-      const mem = await loadAskMemory(ctx.db, uid);
+      // 事实层同理走 `server/ask-facts`——两条路给出的口径必须一致。
+      const [mem, factsRes] = await Promise.all([
+        loadAskMemory(ctx.db, uid),
+        loadAskFacts(ctx.db, {
+          question: q,
+          newsId: input.newsId ?? null,
+          entityId: input.entityId ?? null,
+        }),
+      ]);
 
       const built = buildAskContext(mem);
+      const factsText = renderAskFacts(factsRes);
 
       let raw: string;
       try {
@@ -59,6 +81,8 @@ export const askRouter = createTRPCRouter({
           question: q,
           context: built.contextText,
           hasMemory: built.hasMemory,
+          facts: factsText,
+          subjects: factsRes.subjects,
         });
       } catch (e) {
         // 一定要打日志：以前这里是裸 `catch {}`，AI 层挂了整整一天，
@@ -77,12 +101,24 @@ export const askRouter = createTRPCRouter({
         ? raw
         : "抱歉，这个回答在合规检查中被拦截了，暂不展示。可以换个问法，或直接查看相关资讯原文。";
 
+      // 与流式那条路同一套收尾核查：出处编号要存在、带单位的数字要来自语料。
+      const badCite = invalidCitations(safe, factCount(factsRes));
+      const badNum = ungroundedNumbers(safe, `${factsText}\n${built.contextText}`);
+      if (badCite.length > 0 || badNum.length > 0) {
+        console.warn(
+          `[ask] 核查未过：出处 ${badCite.join("/") || "-"}｜数字 ${badNum.join("/") || "-"}`,
+        );
+      }
+
       return {
         answer: withDisclaimer(safe),
         grounding: {
           holdings: built.groundedHoldings,
           theses: built.groundedTheses,
           hasMemory: built.hasMemory,
+          subjects: factsRes.subjects,
+          facts: factCount(factsRes),
+          unverified: badCite.length > 0 || badNum.length > 0,
         },
       };
     }),

@@ -144,6 +144,7 @@ export default async function NewsPage({
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <NewsActions
+              id={n.id}
               title={n.title}
               entities={n.entities.map(({ entity: e }) => ({
                 id: e.id,

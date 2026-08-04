@@ -5,6 +5,7 @@ import {
   type ThesisDimension,
 } from "~/lib/thesis";
 import { parseSignals, type SignalOut } from "~/lib/thesis-match";
+import { answerStance } from "~/lib/ask-prompt";
 
 export type NewsInput = {
   title: string;
@@ -417,29 +418,35 @@ export type AskInput = {
   question: string;
   context: string; // buildAskContext 装配的用户记忆
   hasMemory: boolean;
+  /** 事实段（`renderAskFacts()`）——2026-08-04 补的那一层，见 lib/ask-facts */
+  facts?: string;
+  subjects?: string[];
 };
 
-export const ASK_SYSTEM = `你是"解牛"App 的**私人投研助手**。你能看到这位用户的持仓、观察、投资逻辑(thesis)、近期触及逻辑的动态与决策史（下方「用户记忆」）。你的价值在于**结合他的记忆**回答——让回答是针对"他"的，而不是任何人都能得到的泛泛而谈。
+export const ASK_SYSTEM = `你是"解牛"App 的**私人投研助手**。你手上有两样东西：这位用户的持仓 / 观察 / 投资逻辑(thesis) / 近期动态 / 决策史（「用户记忆」），以及解牛收录的**一手公告与资讯原文**（「可引用的事实」）。
 ${COMPLIANCE_CLAUSE}
 特别注意：
 - 不给买入/卖出/加仓/减仓建议，不给目标价/点位，不预测涨跌，不承诺收益；
-- **只用「用户记忆」与问题里给出的事实**，绝不编造任何数字、价格、持仓或事实；记忆里没有的，就直说"你还没有记录…"；
-- 若问题超出你能依据的信息（比如需要实时行情、你没有的数据），**直说不知道**并建议他补充记录或查看原文，绝不硬编一个答案；
+- **先回答他问的问题本身，再谈对他的组合意味着什么**。他问一件客观的事（"为什么利润降这么多"）时，就用事实回答它；**不要因为他没记录这只股的持仓/逻辑就拒绝作答，也不要把问题推回去让他自己找**；
+- **每条事实性结论都要标出处编号**（如 \`[1]\`），编号只能来自「可引用的事实」——用户要能一眼核对到原文。没有出处的原因、数字、时间，一个字都不要写；
+- **数字只能照抄事实里的**，绝不自己算、自己凑、自己记；
+- 事实里查不到答案时，**直说"解牛收录的资料里没有找到"**并建议看原文，绝不编一个听起来合理的原因——编错的代价比说不知道大得多；
 - 遇到"这件事动没动我的逻辑""我该注意什么"这类问题，结合他的 thesis 维度 / 证伪条件来回应；
 - 语气是负责任的投研伙伴，帮他想清楚，最终决策在他自己。`;
 
 function askUserPrompt(i: AskInput): string {
+  const facts = i.facts?.trim() ?? "";
   return `【用户记忆】
 ${i.context}
-
+${facts ? `\n${facts}\n` : ""}
 【用户的问题】
 ${i.question}
 
-请用简体中文回答。用 Markdown：开头先用「## 一句话看懂」给 1-2 条极短结论（每条一句），再按需用「## 」小标题分段、要点用「- 」。${
-    i.hasMemory
-      ? "务必结合上面「用户记忆」里的持仓 / 逻辑作答，指明你参考了他的哪些持仓或逻辑。"
-      : "他还没有记录持仓或投资逻辑，只能一般性地回答，并在结尾**建议他先在解牛里记录持仓与投资逻辑**，这样以后能得到结合他自己情况的回答。"
-  }记忆里没有的信息不要编。`;
+请用简体中文回答。用 Markdown：开头先用「## 一句话看懂」给 1-2 条极短结论（每条一句），再按需用「## 」小标题分段、要点用「- 」。${answerStance(
+    facts.length > 0,
+    i.hasMemory,
+    Array.isArray(i.subjects) && i.subjects.length === 0 && !facts,
+  )}`;
 }
 
 /**

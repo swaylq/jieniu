@@ -23,7 +23,7 @@ describe("ask-store", () => {
     registerAskHandler(spy);
     expect(hasAskHandler()).toBe(true);
     expect(emitAsk("你好")).toBe(true);
-    expect(spy).toHaveBeenCalledWith("你好");
+    expect(spy).toHaveBeenCalledWith("你好", undefined);
   });
 
   it("注销后回到无 handler 态", () => {

@@ -91,7 +91,7 @@ export function NewsCard({
           </span>
         ) : null}
         <span className="ml-auto flex shrink-0 items-center gap-3">
-          <NewsActions title={n.title} compact />
+          <NewsActions id={n.id} title={n.title} compact />
           <a
             href={n.url}
             target="_blank"

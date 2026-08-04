@@ -16,6 +16,13 @@ import { auth } from "~/server/auth";
 import { db } from "~/server/db";
 import { buildAskContext } from "~/lib/ask-context";
 import { loadAskMemory } from "~/server/ask-memory";
+import { loadAskFacts } from "~/server/ask-facts";
+import {
+  renderAskFacts,
+  factCount,
+  invalidCitations,
+  ungroundedNumbers,
+} from "~/lib/ask-facts";
 import { askConversationPrompt } from "~/lib/ask-prompt";
 import { recentTurns, type AskTurn } from "~/lib/ask-history";
 import { ASK_SYSTEM } from "~/server/ai";
@@ -42,24 +49,36 @@ export async function POST(req: Request) {
 
   const body = (await req.json().catch(() => null)) as {
     question?: unknown;
+    newsId?: unknown;
+    entityId?: unknown;
   } | null;
   const question =
     typeof body?.question === "string" ? body.question.trim() : "";
   if (!question || question.length > 500) {
     return NextResponse.json({ error: "问题为空或过长" }, { status: 400 });
   }
+  // 「问解牛这条」带过来的那条资讯 / 当前个股页——答案通常就在这条的正文里
+  // （Alley_Stella 2026-08-04：点的就是那条业绩预告，摘要里写着「汇兑损失增加」）。
+  const newsId = typeof body?.newsId === "string" ? body.newsId : null;
+  const entityId = typeof body?.entityId === "string" ? body.entityId : null;
 
-  const [memory, historyRows] = await Promise.all([
+  const [memory, historyRows, factsRes] = await Promise.all([
     loadAskMemory(db, userId),
     db.askMessage.findMany({
       where: { userId },
       orderBy: { createdAt: "asc" },
       select: { role: true, content: true },
     }),
+    loadAskFacts(db, { question, newsId, entityId }),
   ]);
   const built = buildAskContext(memory);
   const history = recentTurns(
     historyRows.map((r) => ({ role: r.role, content: r.content }) as AskTurn),
+  );
+  const factsText = renderAskFacts(factsRes);
+  const nFacts = factCount(factsRes);
+  console.log(
+    `[ask/stream] 主体 ${factsRes.subjects.join("/") || "（未识别）"}｜可引用事实 ${nFacts} 条`,
   );
 
   const prompt = askConversationPrompt({
@@ -67,6 +86,8 @@ export async function POST(req: Request) {
     context: built.contextText,
     hasMemory: built.hasMemory,
     history,
+    facts: factsText,
+    subjects: factsRes.subjects,
   });
 
   // 用户那条先落库：即使 AI 挂了，用户也不该丢掉自己刚打的字。
@@ -119,10 +140,27 @@ export async function POST(req: Request) {
         return; // 判废不入库
       }
 
-      const answer = withDisclaimer(final.text);
+      // 收尾核查（B3）：出处编号必须真的存在，带单位的数字必须来自语料。
+      // 两条都是**机械判据**、零成本、不阻塞流——文字已经打出去了，退不回来，
+      // 所以判否时**追加一行诚实的提示**并留日志，而不是假装无事发生。
+      const corpus = `${factsText}\n${built.contextText}`;
+      const badCite = invalidCitations(final.text, nFacts);
+      const badNum = ungroundedNumbers(final.text, corpus);
+      let caveat = "";
+      if (badCite.length > 0 || badNum.length > 0) {
+        const bits = [
+          badCite.length > 0 ? `出处 ${badCite.map((n) => `[${n}]`).join("")} 不存在` : "",
+          badNum.length > 0 ? `数字 ${badNum.join("、")} 未出现在解牛收录的原文里` : "",
+        ].filter(Boolean);
+        console.warn(`[ask/stream] 核查未过：${bits.join("；")}`);
+        caveat = `\n\n> ⚠️ 这段回答里有内容我没能在解牛收录的原文里核对上（${bits.join("；")}），请以原文为准。`;
+      }
+
+      const answer = withDisclaimer(final.text + caveat);
       await db.askMessage.create({
         data: { userId, role: "assistant", content: answer },
       });
+      if (caveat) send("delta", { text: caveat });
       // 免责声明不走流（它是固定尾巴，逐字打出来没有意义），最后一次性补上。
       send("done", { disclaimer: `\n\n—— ${DISCLAIMER}` });
       ctrl.close();

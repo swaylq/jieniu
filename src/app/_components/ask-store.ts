@@ -3,7 +3,15 @@
  * 打开常驻的问解牛面板并带入一个问题。`AskJieniu` 挂载时注册 handler；未登录时 AskJieniu 不挂载，
  * `emitAsk` 返回 false，调用方据此跳登录。纯模块状态、可测（register/emit/has 不依赖 window）。
  */
-type AskHandler = (question: string) => void;
+/**
+ * 提问时的现场（2026-08-04）。原来只传一个问题字符串，于是「问解牛这条」把标题拼进问题里、
+ * **把正文丢了**——而用户要的答案常常就在那段正文里（实测麒盛科技那条业绩预告，
+ * 摘要原文写着「主要系受美元汇率波动影响，本报告期汇兑损失增加」，系统却答不出来）。
+ * 现在把 newsId / entityId 一起带上，后端据此取原文。
+ */
+export type AskContextRef = { newsId?: string; entityId?: string };
+
+type AskHandler = (question: string, ref?: AskContextRef) => void;
 
 let handler: AskHandler | null = null;
 
@@ -21,9 +29,9 @@ export function hasAskHandler(): boolean {
 }
 
 /** 带问题打开问解牛面板；无 handler（未登录）返回 false，由调用方处理（跳登录）。 */
-export function emitAsk(question: string): boolean {
+export function emitAsk(question: string, ref?: AskContextRef): boolean {
   if (handler) {
-    handler(question);
+    handler(question, ref);
     return true;
   }
   return false;

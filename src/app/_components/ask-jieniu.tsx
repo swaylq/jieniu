@@ -8,7 +8,7 @@ import { splitSseFrames, parseSseFrame } from "~/lib/sse";
 import { InterpretationBody } from "./interpretation-body";
 import { fieldCls } from "./section-head";
 import { AskIcon, CloseIcon } from "./icons";
-import { registerAskHandler } from "./ask-store";
+import { registerAskHandler, type AskContextRef } from "./ask-store";
 
 type Msg = { id: string; role: "user" | "assistant"; content: string };
 
@@ -75,7 +75,12 @@ export function AskJieniu() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [msgs, streaming]);
 
-  const send = useCallback(async (question: string) => {
+  // 提问时的现场（newsId/entityId）跟着这一轮走：面板里接着追问时也要保持住——
+  // Alley 的现场正是「问解牛这条」之后连问两句，后面两句同样需要那条资讯的正文。
+  const refRef = useRef<AskContextRef | undefined>(undefined);
+
+  const send = useCallback(async (question: string, ref?: AskContextRef) => {
+    if (ref) refRef.current = ref;
     const text = question.trim();
     if (!text) return;
     setError(null);
@@ -106,7 +111,11 @@ export function AskJieniu() {
       const res = await fetch("/api/ask/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: text }),
+        body: JSON.stringify({
+          question: text,
+          newsId: refRef.current?.newsId,
+          entityId: refRef.current?.entityId,
+        }),
         signal: ctrl.signal,
       });
       if (!res.ok || !res.body) {
@@ -152,9 +161,9 @@ export function AskJieniu() {
 
   // 供新闻卡等外部组件「问解牛这条」种入问题。
   useEffect(() => {
-    return registerAskHandler((question) => {
+    return registerAskHandler((question, ref) => {
       setOpen(true);
-      void send(question);
+      void send(question, ref);
     });
   }, [send]);
 
