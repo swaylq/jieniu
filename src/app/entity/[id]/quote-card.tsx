@@ -2,6 +2,7 @@ import { formatMarketCap } from "~/lib/format";
 import { hasValuation } from "~/lib/quote";
 import { fetchQuote, fetchKline, fetchValuation } from "~/server/quote";
 import { PriceChart } from "../../_components/price-chart";
+import { LiveQuote } from "./live-quote";
 
 /**
  * 行情 / 走势 / 估值卡 —— **独立的 async 服务端组件，靠 `<Suspense>` 流式送达**。
@@ -22,29 +23,16 @@ export async function QuoteCard({ ticker }: { ticker: string }) {
   ]);
   if (!quote) return null;
 
-  const up = quote.changePct >= 0;
-  const color = up ? "text-up" : "text-down";
   const showVal = valuation && hasValuation(valuation);
 
   return (
     <div className="rounded-xl border border-line bg-surface p-4 shadow-sm">
-      <div className="flex items-baseline gap-3">
-        <span className={`tabular text-3xl font-bold ${color}`}>
-          {quote.price.toFixed(2)}
-        </span>
-        <span className={`tabular text-sm font-medium ${color}`}>
-          {up ? "+" : ""}
-          {(quote.price - quote.prevClose).toFixed(2)}　{up ? "+" : ""}
-          {quote.changePct.toFixed(2)}%
-        </span>
-      </div>
-      {kline.length >= 2 ? <PriceChart values={kline} /> : null}
-      <dl className="mt-3 grid grid-cols-4 gap-2 text-xs lg:grid-cols-2 lg:gap-3">
-        <QuoteStat label="昨收" value={quote.prevClose} />
-        <QuoteStat label="今开" value={quote.open} />
-        <QuoteStat label="最高" value={quote.high} />
-        <QuoteStat label="最低" value={quote.low} />
-      </dl>
+      {/* 价格与四格行情走客户端组件自行轮询——服务端渲染的这一份只作首帧初值。
+          K 线与估值仍留服务端：日频数据，跟着刷没有意义。走势图作 children 传进去，
+          是为了保持原来的版式顺序（价格 → 走势 → 四格），且它本身不进客户端 bundle。 */}
+      <LiveQuote ticker={ticker} initial={quote}>
+        {kline.length >= 2 ? <PriceChart values={kline} /> : null}
+      </LiveQuote>
       {showVal ? (
         <div className="mt-3 border-t border-line pt-3">
           <p className="mb-2 text-xs font-medium text-muted">
@@ -95,15 +83,6 @@ export function QuoteCardSkeleton() {
           <div key={i} className="h-8 animate-pulse rounded bg-muted/15" />
         ))}
       </div>
-    </div>
-  );
-}
-
-function QuoteStat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="flex flex-col">
-      <dt className="text-muted">{label}</dt>
-      <dd className="tabular text-ink">{value > 0 ? value.toFixed(2) : "—"}</dd>
     </div>
   );
 }
