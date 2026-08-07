@@ -41,7 +41,7 @@ thesis / drift / 画像 / 事件摘要）每次调用秒失败，登录验证码
 ```bash
 lsof -ti:3838 | xargs kill 2>/dev/null
 secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY -- \
-  env NODE_ENV=production PORT=3838 OPENROUTER_ASK_MODEL=openai/gpt-5.4-mini \
+env NODE_ENV=production PORT=3838 OPENROUTER_ASK_MODEL=openai/gpt-5.6-terra \
       MAIL_FROM="解牛 <noreply@mail.auramate.net>" ALI_REGION=cn-hangzhou \
       nohup npm run start > /Users/mac/jieniu-prod.log 2>&1 & disown
 ```
@@ -54,7 +54,7 @@ secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY -- \
 
 ### 模型分档与 OpenRouter 账号（2026-08-05）
 
-问解牛跑 `openai/gpt-5.4-mini`（由 `OPENROUTER_ASK_MODEL` 指定），其余 AI 跑
+问解牛跑 `openai/gpt-5.6-terra`（由 `OPENROUTER_ASK_MODEL` 指定），其余 AI 跑
 `deepseek/deepseek-chat`。**两档共用同一把 `OPENROUTER_API_KEY`**，不需要第二把 key。
 
 一段账号史，别再重踩：当天早些时候的**旧** key 对 `openai/*` `anthropic/*` `google/*`

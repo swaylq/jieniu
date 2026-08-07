@@ -22,11 +22,16 @@
  * 教训：`403 provider ToS` 这句文案既不区分账号也不区分 provider，
  * **必须逐个 provider + 换个地点各打一遍**才说得清边界，不然会把「受限」当成「废了」。
  *
- * ## 为什么默认是 gpt-5.4-mini 而不是 gpt-5.2 / gpt-5.4
+ * ## 为什么默认是 gpt-5.6-terra 而不是 gpt-5.2 / gpt-5.4 / gpt-5.4-mini
  *
- * 三个都实测过。gpt-5.2 把出处编号写成全角 `〔1〕`，而收尾核查 `invalidCitations()`
- * 只认半角 `[1]`——等于每条回答都会被判「出处不存在」并挂上警告尾巴。
- * gpt-5.4-mini 稳定输出半角 `[1]`，输出价还便宜约 3 倍。
+ * 换代记录（2026-08-07，sway：换最新 GPT）：5.6 是当前最新系列，三档分别为
+ * Luna（快而省）/ Terra（均衡）/ Sol（旗舰）。选 Terra：比 5.4-mini 只贵约 30%
+ * （$1/$6 per M vs $0.75/$4.5），但推理质量跨两代；问解牛是产品核心、一天几条，
+ * 值得。Luna 更便宜（约 1/6）但定位高吞吐轻任务，实测回答更简略。
+ *
+ * 关键约束是**出处编号必须是半角 `[1]`**：收尾核查 `invalidCitations()` 只认半角，
+ * 全角 `〔1〕` 会让每条回答都被判「出处不存在」并挂上警告尾巴——gpt-5.2 就栽在这。
+ * 5.6-terra / 5.6-luna 均已实测稳定输出半角 `[1]`（2026-08-07 真调用验证）。
  *
  * ## 兜底
  *
@@ -41,7 +46,7 @@
  */
 
 /** 问解牛默认模型。可用 `OPENROUTER_ASK_MODEL` 覆盖（换 key 时多半也要换它）。 */
-export const ASK_DEFAULT_MODEL = "openai/gpt-5.4-mini";
+export const ASK_DEFAULT_MODEL = "openai/gpt-5.6-terra";
 
 /** 全站默认档（`server/llm.ts` 的同名常量，此处刻意重复一份以免互相 import）。 */
 const FALLBACK_MODEL = "deepseek/deepseek-chat";

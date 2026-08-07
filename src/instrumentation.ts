@@ -46,7 +46,7 @@ export function register() {
    * 正是 7-24 / 7-25 那种「看不出坏了」的形状，所以启动就把打算用哪一档打出来
    * （真降级了另有 `[ask] 降级到 …` 一行）。
    */
-  const askModel = process.env.OPENROUTER_ASK_MODEL ?? "openai/gpt-5.4-mini";
+  const askModel = process.env.OPENROUTER_ASK_MODEL ?? "openai/gpt-5.6-terra";
   const askKeyOwn =
     !!process.env.OPENROUTER_ASK_API_KEY &&
     process.env.OPENROUTER_ASK_API_KEY !== process.env.OPENROUTER_API_KEY;

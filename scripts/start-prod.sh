@@ -60,7 +60,7 @@ sleep 1
 echo "→ 启动（secret exec 注入 ALI_KEY / ALI_SECRET / OPENROUTER_API_KEY / AUTH_SECRET）"
 secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY AUTH_SECRET -- \
   env NODE_ENV=production PORT="$PORT" \
-  OPENROUTER_ASK_MODEL="${OPENROUTER_ASK_MODEL:-openai/gpt-5.4-mini}" \
+  OPENROUTER_ASK_MODEL="${OPENROUTER_ASK_MODEL:-openai/gpt-5.6-terra}" \
   AUTH_URL="${AUTH_URL:-https://jieniu.swaylab.ai}" \
   MAIL_FROM="解牛 <noreply@mail.auramate.net>" \
   ALI_REGION=cn-hangzhou \
