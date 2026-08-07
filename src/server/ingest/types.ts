@@ -12,6 +12,14 @@ export type RawNewsItem = {
   eventType?: string | null;
   /** fetcher 已知的权威实体归属（公司名/股票代码等），供 resolveHints 精确挂载。 */
   entityHints?: string[];
+  /**
+   * 源侧已知的重要性下限——`scoreImportance` 算出来的分若低于它，取它。
+   *
+   * 给的是「源自己标了重磅」这类信号：财联社电报的 `level` 加红分级（A/B 约占一成，
+   * 实测是 DRAM 涨价 15~20%、涨停分析、收评这类），不接的话它们跟「水库泄洪」同为 30 分基线。
+   * 只抬不压——`scoreImportance` 算得更高时以它为准。
+   */
+  importanceFloor?: number;
 };
 
 /** 一个数据源的定义 + 抓取方法（拿到实体词典以便按代码定向抓取）。 */

@@ -4,8 +4,10 @@ import {
   type ThesisData,
   type ThesisDimension,
 } from "~/lib/thesis";
+import { fetchLlm } from "~/lib/llm-http";
 import { parseSignals, type SignalOut } from "~/lib/thesis-match";
 import { answerStance } from "~/lib/ask-prompt";
+import { askCandidates } from "~/server/ask-model";
 
 export type NewsInput = {
   title: string;
@@ -42,23 +44,22 @@ function neutralUserPrompt(n: NewsInput): string {
 【内容】${n.content ?? n.summary}`;
 }
 
-async function chat(
+async function chatWith(
+  cand: { model: string; apiKey: string },
   system: string,
   user: string,
-  maxTokens = 900,
+  maxTokens: number,
 ): Promise<string> {
-  if (!env.OPENROUTER_API_KEY)
-    throw new Error("OPENROUTER_API_KEY not configured");
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  const res = await fetchLlm("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+      Authorization: `Bearer ${cand.apiKey}`,
       "Content-Type": "application/json",
       "HTTP-Referer": "https://jieniu.swaylab.ai",
       "X-Title": "jieniu",
     },
     body: JSON.stringify({
-      model: env.OPENROUTER_MODEL,
+      model: cand.model,
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
@@ -74,6 +75,48 @@ async function chat(
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error("openrouter empty response");
   return content.trim();
+}
+
+async function chat(
+  system: string,
+  user: string,
+  maxTokens = 900,
+): Promise<string> {
+  if (!env.OPENROUTER_API_KEY)
+    throw new Error("OPENROUTER_API_KEY not configured");
+  return chatWith(
+    { model: env.OPENROUTER_MODEL, apiKey: env.OPENROUTER_API_KEY },
+    system,
+    user,
+    maxTokens,
+  );
+}
+
+/**
+ * 问解牛专属：走 GPT 候选链，打不开逐档退回（见 `server/ask-model.ts`）。
+ * 只有这条链路换模型，其余 AI 全部继续走 `chat()` 的默认档。
+ */
+async function askChat(
+  system: string,
+  user: string,
+  maxTokens: number,
+): Promise<string> {
+  const cands = askCandidates();
+  if (cands.length === 0) throw new Error("OPENROUTER_API_KEY not configured");
+  let lastErr: unknown = null;
+  for (const [i, c] of cands.entries()) {
+    try {
+      const out = await chatWith(c, system, user, maxTokens);
+      if (i > 0) console.warn(`[ask] 降级到 ${c.label}（前一档失败）`);
+      return out;
+    } catch (e) {
+      lastErr = e;
+      console.warn(
+        `[ask] ${c.label} 失败：${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 /** 中性结构化解读。 */
@@ -457,5 +500,5 @@ ${i.question}
  * 非投资建议、不编数字；合规过滤 + 免责声明由调用方(router)统一附加。
  */
 export async function answerUserQuestion(i: AskInput): Promise<string> {
-  return chat(ASK_SYSTEM, askUserPrompt(i), 850);
+  return askChat(ASK_SYSTEM, askUserPrompt(i), 850);
 }

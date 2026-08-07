@@ -26,9 +26,11 @@ import {
 import { askConversationPrompt } from "~/lib/ask-prompt";
 import { recentTurns, type AskTurn } from "~/lib/ask-history";
 import { ASK_SYSTEM } from "~/server/ai";
-import { llmChatStream } from "~/server/llm-stream";
+import { llmChatStreamAny } from "~/server/llm-stream";
+import { askCandidates } from "~/server/ask-model";
 import { createStreamGuard } from "~/lib/ask-guard";
 import { withDisclaimer, DISCLAIMER } from "~/lib/compliance";
+import { rateLimit } from "~/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -47,6 +49,10 @@ export async function POST(req: Request) {
   }
   const userId = session.user.id;
 
+  // 付费 AI 流式生成：per-user 限流（与 tRPC ask.answer 同口径，两条路别互相绕过）。
+  if (!rateLimit(`ask:stream:${userId}`, 20, 60_000)) {
+    return NextResponse.json({ error: "提问过于频繁，请稍后再试。" }, { status: 429 });
+  }
   const body = (await req.json().catch(() => null)) as {
     question?: unknown;
     newsId?: unknown;
@@ -109,9 +115,13 @@ export async function POST(req: Request) {
       const guard = createStreamGuard();
       let blocked = false;
       try {
-        for await (const delta of llmChatStream(ASK_SYSTEM, prompt, {
-          signal: controller.signal,
-        })) {
+        // 模型走问解牛专属候选链（GPT 优先，打不开退回默认档）——见 `server/ask-model.ts`。
+        for await (const delta of llmChatStreamAny(
+          ASK_SYSTEM,
+          prompt,
+          askCandidates(),
+          { signal: controller.signal },
+        )) {
           const step = guard.push(delta);
           if (step.blocked) {
             blocked = true;

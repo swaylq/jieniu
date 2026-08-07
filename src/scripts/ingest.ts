@@ -4,6 +4,8 @@ import { enrichPdfContent } from "../server/ingest/enrich";
 import { checkPriceAlerts } from "../server/price-alert-check";
 import { targetsByNeed, hotStockTargets } from "../server/backfill-targets";
 import { wallstreetcnAStock } from "../server/ingest/sources/wallstreetcn";
+import { clsTelegraph } from "../server/ingest/sources/cls-telegraph";
+import { jin10Flash } from "../server/ingest/sources/jin10-flash";
 import { eastmoneyAnnouncements } from "../server/ingest/sources/eastmoney-ann";
 import { eastmoneyFastNews } from "../server/ingest/sources/eastmoney";
 import { jiweiSemi } from "../server/ingest/sources/jiwei";
@@ -27,6 +29,8 @@ const db = new PrismaClient();
 const SOURCES = [
   eastmoneyAnnouncements,
   wallstreetcnAStock,
+  clsTelegraph, // 财联社电报：A 股时效最快的一手快讯流（rn=50 覆盖约 2.5h，够 30 分钟一轮）
+  jin10Flash, // 金十快讯：全球宏观/商品，主要喂「今日复盘」的国际·国内层（A 股相关仅约 20%）
   eastmoneyFastNews,
   jiweiSemi,
   eastmoneyBillboard, // 龙虎榜结构化事件（覆盖池内个股，收盘后 T+1）

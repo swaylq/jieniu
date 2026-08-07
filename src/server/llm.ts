@@ -3,6 +3,7 @@
 // 别为了「复用」把 ai.ts 改成相对导入，那会牵动一大票在用的调用方。
 //
 // 密钥缺失时抛错并写明原因，**绝不裸 catch**：密钥缺失型故障是静默的（7-24 / 7-25 都栽在这）。
+import { fetchLlm } from "~/lib/llm-http";
 
 const DEFAULT_MODEL = "deepseek/deepseek-chat";
 
@@ -39,7 +40,7 @@ export async function llmChat(
       "缺 OPENROUTER_API_KEY —— cron 必须用 `secret exec OPENROUTER_API_KEY -- …` 起",
     );
   }
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  const res = await fetchLlm("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${key}`,
@@ -56,7 +57,6 @@ export async function llmChat(
       max_tokens: opts.maxTokens ?? 1400,
       temperature: opts.temperature ?? 0.4,
     }),
-    signal: AbortSignal.timeout(120_000),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");

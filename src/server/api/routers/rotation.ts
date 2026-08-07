@@ -91,7 +91,15 @@ export const rotationRouter = createTRPCRouter({
       return {
         asOf,
         covered: flows.length,
-        sectors: ranked.map((r) => ({ ...r, sectorId: sectorId.get(r.sector) ?? null })),
+        sectors: ranked.map((r) => ({
+          ...r,
+          sectorId: sectorId.get(r.sector) ?? null,
+          // 代表股也要能点进去（sway：点名称也要能进个股页），复用同一张 code→实体 id 表。
+          leaders: r.leaders.map((l) => ({
+            ...l,
+            entityId: entityIdByCode.get(l.code) ?? null,
+          })),
+        })),
         discoveries: discoveries.map((d) => ({
           ...d,
           sectorId: sectorId.get(d.sector) ?? null,

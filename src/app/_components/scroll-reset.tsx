@@ -3,10 +3,11 @@
 import { useEffect, useRef } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
-  shouldResetScroll,
+  scrollAction,
   clampScrollTarget,
   type Loc,
 } from "~/lib/scroll-reset-policy";
+import { TAB_ANCHOR_ID } from "./entity-tabs";
 
 /**
  * 还原窗口。原来给到 1500ms，但新 tab 比原来短时 `target` 永远够不到 `saved`，
@@ -55,12 +56,27 @@ export function ScrollReset() {
   useEffect(() => {
     const next: Loc = { pathname, search };
     const el = document.getElementById("main-content");
-    const wasReset = shouldResetScroll(prev.current, next);
+    const action = scrollAction(prev.current, next);
     prev.current = next;
     if (!el) return;
 
-    if (wasReset) {
+    if (action === "top") {
       el.scrollTo({ top: 0 });
+      return;
+    }
+    if (action === "tabs") {
+      // 翻页：回到**列表顶部**而不是整页顶部（sway 2026-07-31）。
+      // 锚点是 tab 条前面那个零高度的 div——**不能直接用 tab 条本身**：它是 sticky 的，
+      // 滚过之后 getBoundingClientRect 给的是「吸住后的位置」（永远贴着容器顶），
+      // 拿它算偏移会得到 0，页面纹丝不动。锚点不 sticky，量到的才是真实文档位置。
+      const anchor = document.getElementById(TAB_ANCHOR_ID);
+      if (anchor) {
+        const delta =
+          anchor.getBoundingClientRect().top - el.getBoundingClientRect().top;
+        el.scrollTo({ top: el.scrollTop + delta });
+      } else {
+        el.scrollTo({ top: 0 }); // 没有锚点（别的页面）就按老行为
+      }
       return;
     }
     const saved = snapshot.current;

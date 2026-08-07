@@ -191,6 +191,23 @@ export const notificationsRouter = createTRPCRouter({
         },
         update: { crossedAt: input.crossedAt, action: input.action },
       });
+      // 8-07 修复：复核「不相关」时回写 outbox——把该 (user, entity, dim) 关联的
+      // **未投递** logic 事件置 offsite=false。此前 review 只写 thesisAlertReview，
+      // 下次邮件 cron 对已生成的事件照发（offsite 仍是 true、emailedAt 仍是 null），
+      // 复核闭环对站外投递形同虚设。
+      if (input.action === "dismissed") {
+        await ctx.db.alertEvent.updateMany({
+          where: {
+            userId,
+            kind: "logic",
+            emailedAt: null,
+            dedupeKey: {
+              startsWith: `logic:${input.entityId}:${input.dimensionKey}:`,
+            },
+          },
+          data: { offsite: false },
+        });
+      }
       return { ok: true };
     }),
 

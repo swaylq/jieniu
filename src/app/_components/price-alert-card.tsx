@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { api } from "~/trpc/react";
 import { describeAlert, type AlertDirection } from "~/lib/price-alert";
@@ -32,6 +33,7 @@ export function PriceAlertCard({
   /** true = 并入「我的」合并卡：不渲染自带卡壳/大标题/说明段（合规提示由外层统一给）。 */
   bare?: boolean;
 }) {
+  const router = useRouter();
   const utils = api.useUtils();
   const list = api.priceAlert.listByEntity.useQuery({ entityId });
   const [direction, setDirection] = useState<AlertDirection>("above");
@@ -43,9 +45,17 @@ export function PriceAlertCard({
     onSuccess: () => {
       setPrice("");
       invalidate();
+      // RSC 决策卡把 priceAlert 当条件、服务端渲染——只 invalidate client 缓存不会重渲染它，
+      // 写操作后必须整页刷新（同 holding-editor 的写法）。
+      router.refresh();
     },
   });
-  const remove = api.priceAlert.remove.useMutation({ onSuccess: invalidate });
+  const remove = api.priceAlert.remove.useMutation({
+    onSuccess: () => {
+      invalidate();
+      router.refresh();
+    },
+  });
 
   const alerts = list.data ?? [];
   const priceNum = Number(price);

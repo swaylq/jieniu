@@ -6,6 +6,7 @@ import {
   publicProcedure,
   protectedProcedure,
 } from "~/server/api/trpc";
+import { rateLimit } from "~/lib/rate-limit";
 import { ensureThesis } from "~/server/thesis-ensure";
 import { groupRelations, type GraphRelation } from "~/lib/entity-graph";
 import { IMPORTANT_THRESHOLD, surfacingSince } from "~/lib/importance";
@@ -123,6 +124,14 @@ export const entityRouter = createTRPCRouter({
   ensureThesis: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      // 生成 thesis 是**付费 AI 调用**：生成路径只放给登录用户 + 限流，防匿名者
+      // 枚举公开的实体 ID 批量触发（成本 DoS）——与 `interpret.getOrCreate` 同款闸。
+      // 匿名 / 超限返回 `skipped`：前端 `ThesisPending` 会显示「后台补齐」，
+      // 与「没轮到它」同一语义，不把匿名用户卡在错误上。
+      if (!ctx.session?.user) return { result: "skipped" as const };
+      if (!rateLimit(`thesis:ensure:${ctx.session.user.id}`, 20, 60_000)) {
+        return { result: "skipped" as const };
+      }
       const result = await ensureThesis(input.id, ctx.db);
       return { result };
     }),

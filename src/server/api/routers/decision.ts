@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { isValidReason } from "~/lib/decision";
@@ -12,6 +13,7 @@ import {
 import { MATERIAL_ALERT_THRESHOLD } from "~/lib/thesis-status";
 import { generateDriftChallenge } from "~/server/ai";
 import type { Prisma } from "../../../../generated/prisma";
+import { rateLimit } from "~/lib/rate-limit";
 
 const actionEnum = z.enum(["BUY", "ADD", "TRIM", "SELL", "HOLD_REAFFIRM"]);
 
@@ -69,6 +71,13 @@ export const decisionRouter = createTRPCRouter({
   driftCheck: protectedProcedure
     .input(z.object({ entityId: z.string(), action: actionEnum }))
     .mutation(async ({ ctx, input }) => {
+      // AI 调用（仅在 shouldChallenge 时）——per-user 限流，防刷。
+      if (!rateLimit(`drift:${ctx.session.user.id}`, 20, 60_000)) {
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: "操作过于频繁，请稍后再试。",
+        });
+      }
       const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const [entity, thesis, signals, earliest, profile] = await Promise.all([
         ctx.db.entity.findUnique({

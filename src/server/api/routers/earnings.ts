@@ -26,7 +26,7 @@ type Paired = {
  * 解析 COMPANY ↔ STOCK 配对（`ISSUES` 关系）。
  * `Thesis` 挂 COMPANY、`EntitySignal`/行情挂 STOCK——只查单边会各丢一半。
  */
-async function resolvePair(
+export async function resolvePair(
   db: PrismaClient,
   id: string,
 ): Promise<Paired | null> {

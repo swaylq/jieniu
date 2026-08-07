@@ -1,4 +1,4 @@
-import type { PrismaClient } from "../../../generated/prisma";
+import type { PrismaClient, SourceTier } from "../../../generated/prisma";
 import type { SourceDef } from "./types";
 import { newsHash } from "./hash";
 import {
@@ -36,6 +36,10 @@ export type IngestResult = {
   inserted: number;
   tagged: number;
   screened: number;
+  /** 已判重丢弃（标题/跨源/库内 hash 重复）或 createMany 跳过的条数。 */
+  skipped: number;
+  /** 入库抛错（整批降级逐条后仍失败）的条数。 */
+  failed: number;
 };
 
 /**
@@ -59,6 +63,50 @@ export type BackfillScope = {
 export type IngestOptions = {
   backfill?: BackfillScope;
 };
+
+/** 攒批入库的批次大小——控制单条 createMany 的数据量与失败影响面。 */
+const BATCH_SIZE = 200;
+
+type PendingNews = {
+  hash: string;
+  entityIds: string[];
+  data: {
+    sourceId: string;
+    tier: SourceTier;
+    title: string;
+    url: string;
+    publishedAt: Date;
+    summary: string;
+    content: string | null;
+    hash: string;
+    importance: number;
+    eventType: string | null;
+  };
+};
+
+/**
+ * 给「已建成 NewsItem」批量挂实体绑定。
+ * NewsEntity 主键是 (newsId, entityId)，skipDuplicates 保证重复绑定幂等。
+ * 返回本次实际绑定的实体数（计入 tagged）。
+ */
+async function bindEntities(
+  db: PrismaClient,
+  items: { hash: string; entityIds: string[] }[],
+  idByHash: Map<string, string>,
+): Promise<number> {
+  const rows: { newsId: string; entityId: string }[] = [];
+  let tagged = 0;
+  for (const it of items) {
+    const newsId = idByHash.get(it.hash);
+    if (!newsId) continue;
+    tagged += it.entityIds.length;
+    for (const entityId of it.entityIds) rows.push({ newsId, entityId });
+  }
+  if (rows.length > 0) {
+    await db.newsEntity.createMany({ data: rows, skipDuplicates: true });
+  }
+  return tagged;
+}
 
 /**
  * 抓一个源 → 归一化 → hash 去重 → 词典标注实体 → 重要性打分 → 入库。
@@ -166,7 +214,10 @@ export async function ingestSource(
   let inserted = 0;
   let tagged = 0;
   let screened = 0;
+  let skipped = 0;
+  let failed = 0;
   const nowRun = new Date();
+  const pending: PendingNews[] = [];
   for (const r of raws) {
     // publishedAt 铁律：不得落在未来（股东增减持 CHANGE_DATE 打 18:00、业绩预告 08:00、部分源自带
     // 未来 pubDate 都会越过 now）。统一钳位，后续判重 key 与入库都用钳过的值。
@@ -186,10 +237,14 @@ export async function ingestSource(
     if (isBoilerplateFiling(title)) continue; // 纯治理/文件模板公告（章程/鉴证/H股月报表…）——噪声，不入库
     if (isForeignMarketNoise(title)) continue; // 海外市场盘面碎讯（美股/纳指/日韩…）——非 A 股，不入库
     const norm = normalizeTitle(title);
-    if (norm && seenTitles.has(norm)) continue; // 已有同标题（可能来自他源），跳过
+    if (norm && seenTitles.has(norm)) {
+      skipped++; // 已有同标题（可能来自他源），跳过
+      continue;
+    }
 
     const hash = newsHash(def.key, r.externalId ?? r.url, title);
-    if (await db.newsItem.findUnique({ where: { hash } })) continue;
+    // 不再逐条 findUnique 判重：库内已有 hash 在攒批时用一次 findMany(in) 滤掉，
+    // 同批内 hash 重复靠 createMany skipDuplicates 兜底，都不再抛唯一约束错。
 
     // 官方公告(official-filing=东财公告/巨潮)按市场全量抓，非覆盖小盘股的章程/股东会/董事会/业绩预告
     // 会刷屏首页「最新」。公告是公司专属体裁，主体=源给的权威归属(entityHints: 股票简称+代码)。
@@ -248,20 +303,32 @@ export async function ingestSource(
         : bf
           ? historicalKey(title, entityIds, r.publishedAt)
           : crossSourceKey(title, entityIds);
-    if (ckey && seenCross.has(ckey)) continue;
+    if (ckey && seenCross.has(ckey)) {
+      skipped++;
+      continue;
+    }
     // 跨源同一份公告（日期差 1–2 天）：只并跨源，同源同名不动（可能是两件真事）。
     if (bf && entityIds.length > 0) {
       const loose = crossSourceKey(title, entityIds);
       const priors = priorsByTitle.get(loose);
-      if (priors && isCrossSourceRepeat(priors, r.publishedAt, def.key)) continue;
+      if (priors && isCrossSourceRepeat(priors, r.publishedAt, def.key)) {
+        skipped++;
+        continue;
+      }
     }
     // 所有源统一识别事件类型：源已显式给出则用之，否则从 标题+摘要+正文 检测。
     // 修复：此前仅 cninfo 设 eventType，媒体源恒为 30 分、永远进不了「重大动态」/通知。
     const eventType =
       r.eventType ?? detectEventType(`${title}\n${summary}\n${content ?? ""}`);
-    const importance = scoreImportance({ tier: def.tier, eventType });
+    // importanceFloor：源自己标了重磅时的下限（如财联社 level 加红），只抬不压。
+    const importance = Math.max(
+      scoreImportance({ tier: def.tier, eventType }),
+      r.importanceFloor ?? 0,
+    );
 
-    await db.newsItem.create({
+    pending.push({
+      hash,
+      entityIds,
       data: {
         sourceId: source.id,
         tier: def.tier,
@@ -273,7 +340,6 @@ export async function ingestSource(
         hash,
         importance,
         eventType,
-        entities: { create: entityIds.map((entityId) => ({ entityId })) },
       },
     });
     if (norm) seenTitles.add(norm);
@@ -288,9 +354,75 @@ export async function ingestSource(
       if (arr) arr.push(entry);
       else priorsByTitle.set(loose, [entry]);
     }
-    inserted++;
-    tagged += entityIds.length;
   }
 
-  return { source: def.key, fetched: raws.length, inserted, tagged, screened };
+  // ── 攒批入库 ──────────────────────────────────────────────────────────────
+  // 逐条 findUnique(hash)+create 改为：每 BATCH_SIZE 条一批，先 createMany 建 NewsItem
+  // （hash 唯一约束 + skipDuplicates 天然去重），再用唯一 hash 反查新 id 后批量挂实体。
+  // 同批内 hash 重复不再抛唯一约束错；整轮写事务数从 N 降到 N/200。
+  for (let i = 0; i < pending.length; i += BATCH_SIZE) {
+    const chunk = pending.slice(i, i + BATCH_SIZE);
+    const chunkHashes = chunk.map((p) => p.hash);
+
+    // 库内已有这批 hash 的先滤掉——一次 in 查询替代 N 次逐条 findUnique。
+    const existing = await db.newsItem.findMany({
+      where: { hash: { in: chunkHashes } },
+      select: { hash: true },
+    });
+    const existingHashes = new Set(existing.map((e) => e.hash));
+    // 同批内 hash 重复只留首个（createMany 也会跳，但实体绑定按「真正新建」计 tagged 才准）。
+    const seenInBatch = new Set<string>();
+    const fresh = chunk.filter((p) => {
+      if (existingHashes.has(p.hash) || seenInBatch.has(p.hash)) return false;
+      seenInBatch.add(p.hash);
+      return true;
+    });
+    skipped += chunk.length - fresh.length;
+    if (fresh.length === 0) continue;
+
+    const freshHashes = fresh.map((p) => p.hash);
+    let createdCount: number;
+    try {
+      const res = await db.newsItem.createMany({
+        data: fresh.map((p) => p.data),
+        skipDuplicates: true,
+      });
+      createdCount = res.count;
+    } catch {
+      // 整批被一条坏数据带崩时降级逐条建（隔离坏条、其余照常；正常路径不会走到）。
+      const created: { id: string; hash: string; entityIds: string[] }[] = [];
+      for (const p of fresh) {
+        try {
+          const row = await db.newsItem.create({ data: p.data });
+          created.push({ id: row.id, hash: p.hash, entityIds: p.entityIds });
+          inserted++;
+        } catch {
+          failed++;
+        }
+      }
+      const fbIdByHash = new Map(created.map((c) => [c.hash, c.id]));
+      tagged += await bindEntities(db, created, fbIdByHash);
+      continue;
+    }
+    inserted += createdCount;
+    skipped += fresh.length - createdCount; // 并发写库抢先插入造成的 skip
+
+    // createMany 不返回行，用唯一 hash 反查新 NewsItem 的 id，再批量挂实体。
+    const created = await db.newsItem.findMany({
+      where: { hash: { in: freshHashes } },
+      select: { id: true, hash: true },
+    });
+    const idByHash = new Map(created.map((c) => [c.hash, c.id]));
+    tagged += await bindEntities(db, fresh, idByHash);
+  }
+
+  return {
+    source: def.key,
+    fetched: raws.length,
+    inserted,
+    tagged,
+    screened,
+    skipped,
+    failed,
+  };
 }

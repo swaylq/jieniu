@@ -83,6 +83,7 @@ export const eastmoneyAnnouncements: SourceDef = {
     const res = await fetch(LIST, {
       headers: { "User-Agent": UA },
       cache: "no-store",
+      signal: AbortSignal.timeout(15000), // 与 fetchAnnPage 的 15s 一致
     });
     if (!res.ok) throw new Error(`eastmoney-ann ${res.status}`);
     const j = (await res.json()) as { data?: { list?: EmAnn[] } };
@@ -176,7 +177,11 @@ export async function fetchEastmoneyAnnText(
   try {
     const res = await fetch(
       `${CONTENT}?art_code=${artCode}&client_source=web&page_index=1`,
-      { headers: { "User-Agent": UA }, cache: "no-store" },
+      {
+        headers: { "User-Agent": UA },
+        cache: "no-store",
+        signal: AbortSignal.timeout(15000), // 与 fetchAnnPage 的 15s 一致
+      },
     );
     if (!res.ok) return null;
     const j = (await res.json()) as { data?: { notice_content?: string } };

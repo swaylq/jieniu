@@ -20,6 +20,7 @@ import {
   type DigestSectorIn,
   type MarketDigestData,
 } from "../lib/market-digest";
+import { ungroundedNumbers } from "../lib/ask-facts";
 import { aggregateSectors, rankSectors, type StockFlow } from "../lib/rotation";
 import { isInauspicious } from "../lib/digest-filter";
 import { summarizeBreadth, isMarketLevelWorthy } from "../lib/digest-substance";
@@ -539,18 +540,45 @@ export async function generateMarketDigest(
 
   // 第 6 步：**只有这一次调用**用强模型档——前五步全是纯规则。
   // 事件从 ~10 条涨到 15–25 条，token 只涨在这一次 prompt 上，不涨调用次数（张楚寒的成本要求）。
-  const raw = await llmChat(
-    session === "preopen" ? PREOPEN_SYSTEM : DIGEST_SYSTEM,
-    buildDigestPrompt(inputs),
-    {
-      maxTokens: 3200,
-      tier: "strong",
-    },
-  );
+  const prompt = session === "preopen" ? PREOPEN_SYSTEM : DIGEST_SYSTEM;
+  const raw = await llmChat(prompt, buildDigestPrompt(inputs), {
+    maxTokens: 3200,
+    tier: "strong",
+  });
   const data = parseDigestResponse(raw, inputs.breadth, inputs.stocks, [
     ...inputs.sectors.strong,
     ...inputs.sectors.weak,
   ]);
+  if (data) {
+    // 数字兜底（8-07 修复）：模型自由文本里的带单位数字必须能在**喂给它的语料**里找到。
+    // corpus 用 prompt 全文——它就是模型唯一的数据来源，比另拼一份更贴近「它该知道什么」。
+    // overview/judgment 越界 → 整篇判废重来（成本可接受：重试一次）；drivers/notes 越界 → 清空该条。
+    const corpus = buildDigestPrompt(inputs);
+    const badOverview = ungroundedNumbers(data.overview, corpus);
+    const badJudgment = ungroundedNumbers(data.judgment, corpus);
+    if (badOverview.length > 0 || badJudgment.length > 0) {
+      console.warn(
+        `[digest] 数字兜底判废：overview ${badOverview.join("/") || "-"}｜judgment ${badJudgment.join("/") || "-"}`,
+      );
+      return {
+        status: "rejected",
+        tradeDate,
+        reason: `自由文本含语料外数字（overview ${badOverview.join("/") || "-"}｜judgment ${badJudgment.join("/") || "-"}）`,
+      };
+    }
+    data.drivers = data.drivers.filter(
+      (d) => ungroundedNumbers(d.text, corpus).length === 0,
+    );
+    data.watchpoints = data.watchpoints.filter(
+      (w) => ungroundedNumbers(w, corpus).length === 0,
+    );
+    for (const s of data.stocks) {
+      if (s.note && ungroundedNumbers(s.note, corpus).length > 0) s.note = "";
+    }
+    for (const s of [...data.sectors.strong, ...data.sectors.weak]) {
+      if (s.note && ungroundedNumbers(s.note, corpus).length > 0) s.note = "";
+    }
+  }
   if (!data) {
     return {
       status: "rejected",

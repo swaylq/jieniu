@@ -50,9 +50,17 @@ sleep 1
 # 签名必须是阿里云已过审的那几个之一（执楠科技 / 上海执楠信息科技 / live这一刻）。
 # 模板同理写死：该账号 QuerySmsTemplateList 列出 4 个全是 AUDIT_STATE_PASS，
 # 但 SendSms **只认 SMS_501775398**，其余报「该账号下找不到对应模板」（2026-07-31 实测）。
+#
+# 问解牛跑 GPT（2026-08-05）。只是**换模型**，不换 key —— sway 当天把 OPENROUTER_API_KEY
+# 换成了新账号那把，实测 openai / anthropic / google 全部 200（旧那把对这三家一律 403
+# provider ToS，限制绑在账号注册地区上、换机房绕不开）。所以这里只需要多给一个
+# OPENROUTER_ASK_MODEL；`OPENROUTER_ASK_API_KEY` 留作后路，不设就跟主 key 同一把。
+# 万一哪天这把 key 又对 GPT 403，`server/ask-model.ts` 的候选链会静默退回 DeepSeek ——
+# 静默降级看不出来，所以 instrumentation.ts 的 [boot] 行会把「问解牛 → 哪个模型」打出来。
 echo "→ 启动（secret exec 注入 ALI_KEY / ALI_SECRET / OPENROUTER_API_KEY / AUTH_SECRET）"
 secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY AUTH_SECRET -- \
   env NODE_ENV=production PORT="$PORT" \
+  OPENROUTER_ASK_MODEL="${OPENROUTER_ASK_MODEL:-openai/gpt-5.4-mini}" \
   AUTH_URL="${AUTH_URL:-https://jieniu.swaylab.ai}" \
   MAIL_FROM="解牛 <noreply@mail.auramate.net>" \
   ALI_REGION=cn-hangzhou \

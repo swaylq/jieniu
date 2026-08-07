@@ -14,6 +14,7 @@
 // 另加 `breadth`（涨跌家数 / 涨跌停 / 中位涨跌幅）：指数会骗人，宽度才是「今天什么盘」的骨架。
 
 import { createHash } from "crypto";
+import { scanCompliance } from "./compliance";
 import { isBoilerplateFiling, isIntermediaryRole } from "./relevance";
 import {
   isVacuousWatchpoint,
@@ -195,7 +196,8 @@ const FORBIDDEN =
   /建议(买入|卖出|清仓|减持|增持|加仓|减仓)|目标价|逢低(买|吸|加)|逢高(卖|减)|可(买入|卖出|加仓|减仓|抄底)|值得(买入|入手)|必(涨|跌)|稳(赚|赢)|翻倍可期|强烈推荐|重仓/;
 
 export function hasForbiddenAdvice(text: string): boolean {
-  return FORBIDDEN.test(text);
+  // 复盘类文本与问解牛/解读共用同一套合规护栏：两套词表都查，一处补洞两处生效。
+  return FORBIDDEN.test(text) || scanCompliance(text).length > 0;
 }
 
 /** 判断段必须双向：给了条件假设，就要给相反那一侧。 */
@@ -447,7 +449,9 @@ function asDrivers(v: unknown, max = 25): DigestDriverOut[] {
       text = typeof o.text === "string" ? o.text.trim() : "";
       scope = normalizeScope(o.scope);
     }
-    if (!text || !isSubstantive(text)) continue;
+    // 8-07 修复：drivers 此前只过 isSubstantive（循环归因/无锚点），不查买卖指令——
+    // 一条含「逢低买入」的 driver 会因命中事件锚点被放行并上首屏/邮件。现在补查。
+    if (!text || hasForbiddenAdvice(text) || !isSubstantive(text)) continue;
     out.push({ scope, text });
     if (out.length >= max) break;
   }
@@ -463,9 +467,14 @@ function asSectors(v: unknown, factsBySector: Map<string, boolean>): DigestSecto
     if (typeof o.name !== "string" || !o.name.trim()) continue;
     const name = o.name.trim();
     const note = typeof o.note === "string" ? o.note.trim() : "";
+    // 8-07 修复：板块 note 补合规检查（与个股 note 同一立场——宁可留空，不留越线文案）。
     out.push({
       name,
-      note: isValidAttribution(note, factsBySector.get(name) ?? false) ? note : "",
+      note:
+        !hasForbiddenAdvice(note) &&
+        isValidAttribution(note, factsBySector.get(name) ?? false)
+          ? note
+          : "",
     });
     if (out.length >= 5) break;
   }
@@ -489,7 +498,12 @@ function asStocks(v: unknown, factsByName: Map<string, boolean>): DigestStockOut
       name,
       // 模型偶尔把数字写成中文（「三点一」）——接不住就置 null，别让整体解析失败
       changePct: typeof o.changePct === "number" ? o.changePct : null,
-      note: isValidAttribution(note, factsByName.get(name) ?? false) ? note : "",
+      // 8-07 修复：个股 note 补合规检查（此前只过 isValidAttribution）。
+      note:
+        !hasForbiddenAdvice(note) &&
+        isValidAttribution(note, factsByName.get(name) ?? false)
+          ? note
+          : "",
     });
     if (out.length >= 8) break;
   }

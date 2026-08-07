@@ -38,9 +38,23 @@ export function register() {
     ? `｜手机号登录 ✓（签名 ${smsSign}）`
     : "｜⚠ 手机号登录未开启（缺 ALI_SMS_SIGN_NAME，登录页只剩邮箱/密码）";
 
+  /**
+   * 问解牛跑在哪个模型上（2026-08-05 换 GPT 之后加的）。
+   *
+   * 它跟全站其余 AI 用**不同的模型**（GPT vs DeepSeek），而 `server/ask-model.ts` 的候选链
+   * 在 GPT 打不开时会**静默**退回 DeepSeek：功能正常、答得差一档、没有任何报错。
+   * 正是 7-24 / 7-25 那种「看不出坏了」的形状，所以启动就把打算用哪一档打出来
+   * （真降级了另有 `[ask] 降级到 …` 一行）。
+   */
+  const askModel = process.env.OPENROUTER_ASK_MODEL ?? "openai/gpt-5.4-mini";
+  const askKeyOwn =
+    !!process.env.OPENROUTER_ASK_API_KEY &&
+    process.env.OPENROUTER_ASK_API_KEY !== process.env.OPENROUTER_API_KEY;
+  const askLine = `｜问解牛 → ${askModel}${askKeyOwn ? "（专用 key）" : ""}`;
+
   if (missing.length === 0) {
     console.log(
-      `[boot] ✓ 密钥齐全：AI + 邮件可用${smsLine}${weakAuth ? " ｜ ⚠ AUTH_SECRET 是弱值（含空格/非 base64），说明没走 scripts/start-prod.sh" : ""}`,
+      `[boot] ✓ 密钥齐全：AI + 邮件可用${smsLine}${askLine}${weakAuth ? " ｜ ⚠ AUTH_SECRET 是弱值（含空格/非 base64），说明没走 scripts/start-prod.sh" : ""}`,
     );
     return;
   }

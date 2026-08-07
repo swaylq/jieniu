@@ -3,11 +3,19 @@ import Link from "next/link";
 import type { UserDigestData } from "~/lib/user-digest";
 import { DIM_STATE_LABEL, type DimState } from "~/lib/dimension-state";
 
-/** 涨跌只用字重与符号表达，不用红绿（全站配色铁律：强调一律 amber）。 */
+/** 真实涨跌一律走语义色（铁律：色盲模式靠 text-up/text-down 重映射）；0 值（平盘）走中性灰。 */
 function Pct({ v }: { v: number }) {
   return (
-    <span className={`tabular text-xs ${v >= 0 ? "font-semibold text-ink" : "text-muted"}`}>
-      {v >= 0 ? "+" : ""}
+    <span
+      className={`tabular text-xs ${
+        v > 0
+          ? "font-semibold text-up"
+          : v < 0
+            ? "font-semibold text-down"
+            : "text-muted"
+      }`}
+    >
+      {v > 0 ? "+" : ""}
       {v.toFixed(2)}%
     </span>
   );

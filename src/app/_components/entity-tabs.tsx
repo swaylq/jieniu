@@ -59,6 +59,13 @@ function TabLink({
   );
 }
 
+/**
+ * 翻页时要滚回的锚点。**必须是 tab 条前面一个不 sticky 的零高度元素**——
+ * tab 条自己是 sticky 的，滚过之后 `getBoundingClientRect()` 给的是「吸住后的位置」
+ * （永远贴着容器顶），拿它算偏移永远是 0、页面纹丝不动。见 `scroll-reset.tsx`。
+ */
+export const TAB_ANCHOR_ID = "entity-tabs-anchor";
+
 export function EntityTabs({
   basePath,
   tabs,
@@ -69,15 +76,22 @@ export function EntityTabs({
   active: string;
 }) {
   return (
-    <div className="border-line flex gap-1 border-b">
-      {tabs.map((t) => (
-        <TabLink
-          key={t.key}
-          href={`${basePath}?tab=${t.key}`} /* 切 tab 回到第 1 页 */
-          active={active === t.key}
-          label={t.label}
-        />
-      ))}
-    </div>
+    <>
+      <div id={TAB_ANCHOR_ID} aria-hidden className="h-0" />
+      {/* sticky（sway 2026-07-31）：往下翻列表时 tab 条黏在顶上，随时能切。
+          `top-0` 是相对 `#main-content` 这个滚动容器（外壳锁死一屏、滚动只发生在它里面）。
+          必须带**不透明**底色，否则滚过去的卡片会从字缝里透出来。
+          不用负 margin 铺满：tab 条在左栏里，拉出去会盖到右栏。 */}
+      <div className="border-line bg-canvas sticky top-0 z-20 flex gap-1 border-b">
+        {tabs.map((t) => (
+          <TabLink
+            key={t.key}
+            href={`${basePath}?tab=${t.key}`} /* 切 tab 回到第 1 页 */
+            active={active === t.key}
+            label={t.label}
+          />
+        ))}
+      </div>
+    </>
   );
 }

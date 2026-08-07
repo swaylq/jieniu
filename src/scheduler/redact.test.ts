@@ -23,4 +23,41 @@ describe("redact", () => {
       "[signals] 完成：本轮 60 条｜新写信号 25",
     );
   });
+
+  it("掩码 postgres 连接串密码", () => {
+    expect(redact("postgres://postgres:S3cr3t@localhost:5432/jieniu")).toBe(
+      "postgres://postgres:***@localhost:5432/jieniu",
+    );
+  });
+
+  it("掩码 OpenRouter / OpenAI 形态密钥", () => {
+    expect(redact("OPENROUTER_API_KEY=sk-or-v1-abcdef1234567890")).toBe(
+      "OPENROUTER_API_KEY=sk-or-***",
+    );
+    expect(redact("sk-abcdefghijklmnopqrstuvwxyz123456")).toBe("sk-***");
+  });
+
+  it("掩码 Bearer 令牌", () => {
+    expect(
+      redact("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc.def"),
+    ).toBe("Authorization: Bearer ***");
+  });
+
+  it("掩码阿里云 AccessKey（LTAI 形状）", () => {
+    expect(redact("AccessKeyId=LTAI5t1234567890abcdefgh")).toBe(
+      "AccessKeyId=LTAI***",
+    );
+  });
+
+  it("掩码阿里云 KEY 类环境变量值", () => {
+    expect(redact("ALIYUN_ACCESS_KEY_SECRET=abcdef1234567890")).toBe(
+      "ALIYUN_ACCESS_KEY_SECRET=***",
+    );
+  });
+
+  it("Bearer 后接普通短词不误伤", () => {
+    expect(redact("the bearer of the bad news")).toBe(
+      "the bearer of the bad news",
+    );
+  });
 });

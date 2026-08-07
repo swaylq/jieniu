@@ -81,7 +81,7 @@ async function draftsForUser(
     }),
     db.thesisAlertReview.findMany({
       where: { userId, entityId: { in: ids } },
-      select: { entityId: true, dimensionKey: true, action: true },
+      select: { entityId: true, dimensionKey: true, action: true, crossedAt: true },
     }),
     db.newsItem.findMany({
       where: {
@@ -155,11 +155,17 @@ async function draftsForUser(
     sigRows.map((r) => [`${r.entityId}::${r.newsId}::${r.dimensionKey}`, r.materiality]),
   );
 
-  const dismissedKeys = new Set(
-    reviews
-      .filter((r) => r.action === "dismissed")
-      .map((r) => `${r.entityId}::${r.dimensionKey}`),
-  );
+  // 8-07 修复：dismissed 必须**按跨越时刻**比较——`crossedAt >= 当前跨越` 才算已处置。
+  // 此前只查维度 key 是否存在 dismissed，新跨越对同一维度也会被永久静音，
+  // 与 thesisAlerts「之后更晚的新跨越会重新浮现」的语义不一致。
+  const dismissedFor = (entityId: string, dimensionKey: string, crossedAt: Date) =>
+    reviews.some(
+      (r) =>
+        r.action === "dismissed" &&
+        r.entityId === entityId &&
+        r.dimensionKey === dimensionKey &&
+        r.crossedAt >= crossedAt,
+    );
 
   const crossings: CrossingInput[] = states
     .filter((s) => s.lastCrossAt)
@@ -178,7 +184,7 @@ async function draftsForUser(
         crossedAt: s.lastCrossAt!,
         muted: st?.muted ?? false,
         priority: st?.priority ?? false,
-        dismissed: dismissedKeys.has(`${s.entityId}::${s.dimensionKey}`),
+        dismissed: dismissedFor(s.entityId, s.dimensionKey, s.lastCrossAt!),
         materiality:
           materialityByKey.get(
             `${s.entityId}::${s.lastCrossNewsId ?? ""}::${s.dimensionKey}`,
@@ -215,10 +221,9 @@ async function draftsForUser(
       triggeredAt: p.triggeredAt!,
     }));
 
-  return buildAlertEvents({ crossings, news, priceAlerts, prefs }).slice(
-    0,
-    MAX_EVENTS_PER_RUN,
-  );
+  // 8-07 修复：**不再在这里 slice**。截断要发生在「滤掉已存在」之后（见 generateAlertEvents），
+  // 否则每轮重跑都取同样的 top-N、被 skipDuplicates 挡掉，第 N+1 条永远轮不到、48h 窗口滑出后永久漏发。
+  return buildAlertEvents({ crossings, news, priceAlerts, prefs });
 }
 
 /**
@@ -244,13 +249,27 @@ export async function generateAlertEvents(
     created: 0,
     duplicate: 0,
   };
-
   for (const u of users) {
     const drafts = await draftsForUser(db, u.id, u.alertPrefs, since);
     if (drafts.length === 0) continue;
     stats.drafted += drafts.length;
+    // 8-07 修复：先滤掉**已写入**的 dedupeKey，再对「真正的新草稿」取上限。
+    // 此前 draftsForUser 先 slice(top-N) 再 createMany skipDuplicates——每轮重跑都取
+    // 同样的 top-N、被 skipDuplicates 挡掉，第 N+1 条永远轮不到、48h 窗口滑出后永久漏发。
+    const existing = await db.alertEvent.findMany({
+      where: { userId: u.id, dedupeKey: { in: drafts.map((d) => d.dedupeKey) } },
+      select: { dedupeKey: true },
+    });
+    const existingKeys = new Set(existing.map((e) => e.dedupeKey));
+    const fresh = drafts
+      .filter((d) => !existingKeys.has(d.dedupeKey))
+      .slice(0, MAX_EVENTS_PER_RUN);
+    if (fresh.length === 0) {
+      stats.duplicate += drafts.length;
+      continue;
+    }
     const res = await db.alertEvent.createMany({
-      data: drafts.map((d) => ({
+      data: fresh.map((d) => ({
         userId: u.id,
         kind: d.kind,
         dedupeKey: d.dedupeKey,

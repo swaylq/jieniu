@@ -415,7 +415,11 @@ export function parseUserDigestResponse(
         const note = moverNotes.get(m.name)?.trim() ?? "";
         return {
           ...m,
-          note: isValidAttribution(note, m.facts.length > 0) ? note : "",
+          // 8-07 修复：mover note 补合规检查（此前只过 isValidAttribution，不查买卖指令）。
+          note:
+            !hasForbiddenAdvice(note) && isValidAttribution(note, m.facts.length > 0)
+              ? note
+              : "",
         };
       }),
     },
@@ -431,5 +435,6 @@ export function parseUserDigestResponse(
 
 function substantive(note: string | undefined): string {
   const t = note?.trim() ?? "";
-  return t && isSubstantive(t) ? t : "";
+  // 8-07 修复：exposure note 补合规检查（宁可留空，不留越线文案）。
+  return t && !hasForbiddenAdvice(t) && isSubstantive(t) ? t : "";
 }

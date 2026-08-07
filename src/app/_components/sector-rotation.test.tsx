@@ -15,8 +15,8 @@ const sectors = [
     alignment: 0.849,
     signal: "共振" as const,
     leaders: [
-      { code: "688981", name: "中芯国际", price: 98.5, changePct: 5.1, netInflow: 3.2e8, inflowRatio: 6 },
-      { code: "002371", name: "北方华创", price: 410, changePct: 4.2, netInflow: 2.1e8, inflowRatio: 5 },
+      { code: "688981", name: "中芯国际", price: 98.5, changePct: 5.1, netInflow: 3.2e8, inflowRatio: 6, entityId: "lead-1" },
+      { code: "002371", name: "北方华创", price: 410, changePct: 4.2, netInflow: 2.1e8, inflowRatio: 5, entityId: null },
     ],
   },
   {
@@ -31,7 +31,7 @@ const sectors = [
     alignment: 0.842,
     signal: "共跌" as const,
     leaders: [
-      { code: "600519", name: "贵州茅台", price: 1289, changePct: -1.2, netInflow: -1e8, inflowRatio: -2 },
+      { code: "600519", name: "贵州茅台", price: 1289, changePct: -1.2, netInflow: -1e8, inflowRatio: -2, entityId: "lead-2" },
     ],
   },
 ];
@@ -112,5 +112,41 @@ describe("StockDiscovery", () => {
 
   it("无数据时整块不渲染", () => {
     expect(renderToStaticMarkup(<StockDiscovery items={[]} asOf={null} />)).toBe("");
+  });
+});
+
+// sway：「这里名称点击也会进入」——个股发现里只有代码是链接，名称是纯文本，点不动。
+describe("个股发现 / 代表股：名称也要能点进去（sway 反馈）", () => {
+  it("名称和代码在同一个链接里，点名字也进个股页", () => {
+    // 名称必须落在指向该个股实体的 <a> 之内，而不是链接外的纯文本
+    const anchors = [...dis.matchAll(/<a[^>]*href="\/entity\/stk-9"[^>]*>([\s\S]*?)<\/a>/g)].map(
+      (m) => m[1]!,
+    );
+    expect(anchors.length).toBeGreaterThan(0);
+    expect(anchors.join("")).toContain("中芯国际");
+    expect(anchors.join("")).toContain("688981");
+  });
+
+  it("名称里不再重复代码——代码已经单独显示在前面了", () => {
+    const withParen = renderToStaticMarkup(
+      <StockDiscovery
+        items={[{ ...discoveries[0]!, name: "德明利(001309)", code: "001309" }]}
+        asOf={asOf}
+      />,
+    );
+    expect(withParen).toContain("德明利");
+    expect(withParen).not.toContain("德明利(001309)");
+  });
+
+  it("拿不到实体 id 时优雅退化成纯文本，不产生死链", () => {
+    const noId = renderToStaticMarkup(
+      <StockDiscovery items={[{ ...discoveries[0]!, entityId: null }]} asOf={asOf} />,
+    );
+    expect(noId).toContain("中芯国际");
+    expect(noId).not.toContain('href="/entity/null"');
+  });
+
+  it("板块轮动的「主力资金前三」也可点（有 id 才给链接）", () => {
+    expect(rot).toMatch(/<a[^>]*href="\/entity\/lead-1"[^>]*>[\s\S]*?中芯国际/);
   });
 });

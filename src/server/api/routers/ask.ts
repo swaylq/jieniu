@@ -13,6 +13,7 @@ import {
 } from "~/lib/ask-facts";
 import { answerUserQuestion } from "~/server/ai";
 import { isCompliant, withDisclaimer } from "~/lib/compliance";
+import { rateLimit } from "~/lib/rate-limit";
 
 /**
  * 「问解牛」（P5-5）——全局、结合用户四层 Memory 的私人投研问答。
@@ -61,6 +62,14 @@ export const askRouter = createTRPCRouter({
 
       const uid = ctx.session.user.id;
 
+      // 付费 AI 生成：per-user 限流（与 interpret.getOrCreate 同款闸）。
+      // 流式那条路（/api/ask/stream）在 route handler 里是另一份，别漏。
+      if (!rateLimit(`ask:answer:${uid}`, 20, 60_000)) {
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: "提问过于频繁，请稍后再试。",
+        });
+      }
       // 记忆取数抽到 `server/ask-memory`（流式那条路也用同一份，别写两遍）。
       // 事实层同理走 `server/ask-facts`——两条路给出的口径必须一致。
       const [mem, factsRes] = await Promise.all([

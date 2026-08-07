@@ -11,6 +11,8 @@
 
 import { PrismaClient } from "../../generated/prisma";
 import { generateEventBrief } from "~/server/ai";
+import { isCompliant } from "~/lib/compliance";
+import { ungroundedNumbers } from "~/lib/ask-facts";
 import { IMPORTANT_THRESHOLD } from "../lib/importance";
 
 const db = new PrismaClient();
@@ -86,6 +88,21 @@ async function main() {
       if (!tidy) throw new Error("摘要被截断且无法回退到完整句，跳过");
       const brief2 = tidy;
       if (!brief2) throw new Error("空摘要");
+      // 合规 + 数字校验（8-07 修复）：brief 会进用户邮件、并成为下游 digest 与
+      // note-grounding 的「事实」语料——越线措辞或编造数字的摘要必须在入库前拦下，
+      // 与 interpret / ask 两条生成路的护栏对齐。宁可丢弃（回退用 summary），不留风险。
+      if (!isCompliant(brief2)) {
+        console.warn(`✗ ${n.title.slice(0, 26)}: 合规检查未通过，跳过`);
+        continue;
+      }
+      const corpus = `${n.title}\n${n.summary}\n${n.content ?? ""}`;
+      const badNums = ungroundedNumbers(brief2, corpus);
+      if (badNums.length > 0) {
+        console.warn(
+          `✗ ${n.title.slice(0, 26)}: 摘要含语料外数字 ${badNums.join("、")}，跳过`,
+        );
+        continue;
+      }
       await db.newsItem.update({
         where: { id: n.id },
         data: { brief: brief2 },

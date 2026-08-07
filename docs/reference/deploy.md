@@ -41,7 +41,7 @@ thesis / drift / 画像 / 事件摘要）每次调用秒失败，登录验证码
 ```bash
 lsof -ti:3838 | xargs kill 2>/dev/null
 secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY -- \
-  env NODE_ENV=production PORT=3838 \
+  env NODE_ENV=production PORT=3838 OPENROUTER_ASK_MODEL=openai/gpt-5.4-mini \
       MAIL_FROM="解牛 <noreply@mail.auramate.net>" ALI_REGION=cn-hangzhou \
       nohup npm run start > /Users/mac/jieniu-prod.log 2>&1 & disown
 ```
@@ -51,6 +51,25 @@ secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY -- \
 
 启动后日志第一行 `[boot] ✓ 密钥齐全` 表示密钥进了进程；`[boot] ✗ 缺少密钥 …` 说明启动方式不对，
 脚本会以非 0 退出。
+
+### 模型分档与 OpenRouter 账号（2026-08-05）
+
+问解牛跑 `openai/gpt-5.4-mini`（由 `OPENROUTER_ASK_MODEL` 指定），其余 AI 跑
+`deepseek/deepseek-chat`。**两档共用同一把 `OPENROUTER_API_KEY`**，不需要第二把 key。
+
+一段账号史，别再重踩：当天早些时候的**旧** key 对 `openai/*` `anthropic/*` `google/*`
+一律 403 provider ToS（`deepseek/*` `meta-llama/*` 正常）。挡的是三家美国大厂、不是 OpenAI 单家；
+**限制绑在账号的注册/结算地区上、不看请求 IP**——同一把旧 key 从日本 VPS 打也是 403，
+上代理/换机房绕不开。sway 当天换上新账号那把，三家全通。
+
+> `403 provider ToS` 这句文案既不区分账号也不区分 provider。要判它的边界，
+> **必须逐个 provider + 换个地点各打一遍**，否则容易把「受限」当成「废了」而误删。
+
+- 万一将来主 key 又打不了 GPT：设 `OPENROUTER_ASK_API_KEY` 指到另一个账号即可，代码不用动。
+- GPT 打不开时 `server/ask-model.ts` 的候选链会**静默**退回 DeepSeek——功能正常、答得差一档、
+  零报错。所以 `[boot]` 行会打「问解牛 → 哪个模型」。
+- 判断线上到底跑在哪一档：`grep '^\[boot\]' /Users/mac/jieniu-prod.log`，
+  以及 `grep '^\[ask\]' /Users/mac/jieniu-prod.log` 看有没有降级记录。
 
 ## 注意
 

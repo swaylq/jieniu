@@ -41,9 +41,22 @@ export const env = createEnv({
     ALI_SMS_TEMPLATE_CODE: z.string().default("SMS_501775398"),
     MAIL_FROM: z.string().default("解牛 <noreply@mail.auramate.net>"),
     OPENROUTER_API_KEY: z.string().optional(),
-    // 生产机在中国大陆网络：OpenRouter 的 anthropic/openai provider 会 403（provider ToS/地域封锁）。
-    // 默认改用 DeepSeek——可访问、中文/A股财经能力强、成本低。可用 OPENROUTER_MODEL 环境变量覆盖。
+    /**
+     * 全站默认档（解读 / thesis / drift / 画像 / 事件摘要 / 复盘）。
+     *
+     * 仍然是 DeepSeek，但**这已经是成本选择、不再是被迫**：2026-08-05 换上的新 OpenRouter
+     * 账号对 openai / anthropic / google 全部可用（旧账号对这三家一律 403 provider ToS）。
+     * 批量管线跑的是分类/归纳这类活，DeepSeek 中文与 A 股语料够用、成本低一个量级，
+     * 贵模型只留给问解牛与复盘成文（分层原则见 `server/llm.ts`）。
+     */
     OPENROUTER_MODEL: z.string().default("deepseek/deepseek-chat"),
+    /**
+     * 「问解牛」专属模型 / 密钥（2026-08-05）。只换问解牛这一条链路，其余全站不动。
+     * `_API_KEY` 现在不需要设（主 key 就能打 GPT），留作后路。
+     * 缺省时自动退回上面那档，见 `src/server/ask-model.ts` 的完整说明。
+     */
+    OPENROUTER_ASK_MODEL: z.string().optional(),
+    OPENROUTER_ASK_API_KEY: z.string().optional(),
   },
 
   /**
@@ -72,6 +85,8 @@ export const env = createEnv({
     MAIL_FROM: process.env.MAIL_FROM,
     OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
     OPENROUTER_MODEL: process.env.OPENROUTER_MODEL,
+    OPENROUTER_ASK_MODEL: process.env.OPENROUTER_ASK_MODEL,
+    OPENROUTER_ASK_API_KEY: process.env.OPENROUTER_ASK_API_KEY,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

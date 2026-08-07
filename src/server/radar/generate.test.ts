@@ -83,3 +83,62 @@ describe("evidenceWriteValue（Prisma 里 undefined ≠ 置空）", () => {
     expect(evidenceWriteValue([])).not.toBe(undefined);
   });
 });
+
+import { todaySignalFor } from "./generate";
+
+describe("todaySignalFor（生命周期匹配：个股按 ticker、行业按板块名）", () => {
+  const sectors = [
+    { sector: "通信设备", signalType: "CONFIRMED", metrics: { posFlowDays3: 3 } },
+    { sector: "银行", signalType: "EARLY", metrics: { posFlowDays3: 2 } },
+  ];
+  const stocks = [
+    { ticker: "600733", signalType: "EARLY", metrics: { posFlowDays3: 2 } },
+    { ticker: "300308", signalType: "CONFIRMED", metrics: { posFlowDays3: 3 } },
+  ];
+
+  it("个股信号（COMPANY）按 ticker 去 stocks 找", () => {
+    const r = todaySignalFor(
+      { entityType: "COMPANY", ticker: "300308", dedupeKey: "300308" },
+      sectors,
+      stocks,
+    );
+    expect(r?.signalType).toBe("CONFIRMED");
+  });
+
+  it("行业信号（SECTOR）按 dedupeKey（板块名）去 sectors 找", () => {
+    const r = todaySignalFor(
+      { entityType: "SECTOR", ticker: null, dedupeKey: "通信设备" },
+      sectors,
+      stocks,
+    );
+    expect(r?.signalType).toBe("CONFIRMED");
+  });
+
+  it("个股今日不再入选 → undefined（不续命，走默认过期语义）", () => {
+    const r = todaySignalFor(
+      { entityType: "COMPANY", ticker: "000001", dedupeKey: "000001" },
+      sectors,
+      stocks,
+    );
+    expect(r).toBeUndefined();
+  });
+
+  it("回归：个股 ticker 永远不会去 sectors 里匹配板块名", () => {
+    // 个股的 dedupeKey 是 ticker，「通信设备」这种巧合字符串也不该命中板块
+    const r = todaySignalFor(
+      { entityType: "COMPANY", ticker: "通信设备", dedupeKey: "通信设备" },
+      sectors,
+      stocks,
+    );
+    expect(r).toBeUndefined();
+  });
+
+  it("ticker 为 null 的 COMPANY（历史异常行）按 dedupeKey 走行业匹配", () => {
+    const r = todaySignalFor(
+      { entityType: "COMPANY", ticker: null, dedupeKey: "银行" },
+      sectors,
+      stocks,
+    );
+    expect(r?.signalType).toBe("EARLY");
+  });
+});

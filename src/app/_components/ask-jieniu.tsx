@@ -80,6 +80,10 @@ export function AskJieniu() {
   const refRef = useRef<AskContextRef | undefined>(undefined);
 
   const send = useCallback(async (question: string, ref?: AskContextRef) => {
+    // 双流竞态防护：上一轮流还没走完就忽略新 send（连续点外部「问解牛这条」/示例问题会起
+    // 两条并发 SSE，上游按会话聚合会把两段答案串成一条）。读 ref 而不是 state——send 是
+    // [] 依赖的 useCallback，闭包里的 streaming 永远是首帧的 false。
+    if (abortRef.current) return;
     if (ref) refRef.current = ref;
     const text = question.trim();
     if (!text) return;

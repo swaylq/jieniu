@@ -50,8 +50,9 @@ export function LiveQuote({
   if (data) lastGood.current = data;
   const quote = data ?? lastGood.current;
 
-  const up = quote.changePct >= 0;
-  const color = up ? "text-up" : "text-down";
+  const pct = quote.changePct;
+  // 0.00%（平盘/停牌）不染红不染绿——`>= 0` 会把 0 染成红（同 market-strip 的三态）。
+  const color = pct > 0 ? "text-up" : pct < 0 ? "text-down" : "text-muted";
   const flash = useFlashOnChange(quote.price);
 
   return (
@@ -69,8 +70,8 @@ export function LiveQuote({
           {quote.price.toFixed(2)}
         </span>
         <span className={`tabular text-sm font-medium ${color}`}>
-          {up ? "+" : ""}
-          {(quote.price - quote.prevClose).toFixed(2)}　{up ? "+" : ""}
+          {pct > 0 ? "+" : ""}
+          {(quote.price - quote.prevClose).toFixed(2)}　{pct > 0 ? "+" : ""}
           {quote.changePct.toFixed(2)}%
         </span>
         <UpdatedAt at={dataUpdatedAt} />

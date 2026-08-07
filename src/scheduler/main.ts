@@ -123,155 +123,253 @@ async function prevMetricsOf(jobKey: string): Promise<Metrics | null> {
   return null;
 }
 
+/**
+ * jobRun 委托的窄接口：只暴露 recordFailRun / healOrphanRuns 用到的三个方法。
+ * 真 delegate（db.jobRun）是它的超集，直接传即可；测试用它来造假 store。
+ */
+export type JobRunStore = Pick<typeof db.jobRun, "findMany" | "update" | "create">;
+
+/**
+ * fire() 异常路径的兜底：尽力补一条 status=fail 的 JobRun，保留下钻痕迹。
+ *
+ * run 已建出来（jobRun.create 成功）就直接把那条改成 fail——再补建一条会多留一个
+ * 永远 running 的孤儿行（下钻只见 running、看不见原因）；还没建出来（create 本身就抛了）
+ * 才补建带 firedAt 的。任何 DB 错误都吞掉：这里是「尽力而为」，不能让它再往上抛。
+ */
+export async function recordFailRun(
+  jobRun: Pick<JobRunStore, "update" | "create">,
+  opts: { jobKey: string; firedAt: Date; runId: string | null; reason: string },
+): Promise<void> {
+  const output = `[scheduler] fire 中断: ${opts.reason}`;
+  try {
+    if (opts.runId) {
+      await jobRun.update({
+        where: { id: opts.runId },
+        data: { finishedAt: new Date(), status: "fail", output },
+      });
+    } else {
+      await jobRun.create({
+        data: {
+          jobKey: opts.jobKey,
+          firedAt: opts.firedAt,
+          finishedAt: new Date(),
+          status: "fail",
+          output,
+        },
+      });
+    }
+  } catch {
+    // 尽力而为：DB 都挂了也没辙，别挡住 finally 释放锁。
+  }
+}
+
+/**
+ * 启动时孤儿 JobRun 自愈：超过 24h 还卡在 status='running' 且没有 finishedAt 的必然是
+ * 死运行（进程被 kill -9 / DB 中断留下，/admin/jobs 会一直显示 running），统一标成
+ * timeout 并在 output 尾部追加一句自愈说明，保证历史记录不再永远挂着。
+ * 返回处理条数。
+ */
+export async function healOrphanRuns(
+  jobRun: Pick<JobRunStore, "findMany" | "update">,
+): Promise<number> {
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const orphans = await jobRun.findMany({
+    where: { status: "running", finishedAt: null, firedAt: { lt: cutoff } },
+    select: { id: true, output: true },
+  });
+  for (const o of orphans) {
+    await jobRun.update({
+      where: { id: o.id },
+      data: {
+        status: "timeout",
+        finishedAt: new Date(),
+        output: `${o.output ?? ""}\n\n[自愈] 进程重启时发现该运行未正常结束，已标记超时`,
+      },
+    });
+  }
+  return orphans.length;
+}
+
 async function fire(job: JobDef): Promise<void> {
   running.add(job.key);
   const startedAt = Date.now();
-  const prevMetrics = await prevMetricsOf(job.key);
 
-  await db.jobState.update({
-    where: { key: job.key },
-    data: {
-      runningAt: new Date(startedAt),
-      lastFire: new Date(startedAt),
-      lastStatus: "running",
-    },
-  });
-  const run = await db.jobRun.create({
-    data: { jobKey: job.key, firedAt: new Date(startedAt), status: "running" },
-  });
-  console.log(`[scheduler] fire ${job.key}`);
-
-  // 基线式判据的对照组：**上一次成功运行**的指标（不取失败/超时那次——半截跑出来的
-  // 指标当基线会把「恢复正常」误报成「暴涨」）。取不到就没有基线，那些判据本轮跳过。
-  const prevOk = await db.jobRun.findFirst({
-    where: { jobKey: job.key, status: "ok", metrics: { not: Prisma.DbNull }, id: { not: run.id } },
-    orderBy: { firedAt: "desc" },
-    select: { metrics: true },
-  });
-  const baseline = (prevOk?.metrics as Metrics | null) ?? null;
-
-  const chunks: string[] = [];
-  const metrics: Metrics = {};
-  const alerts: Alert[] = [];
-  let status: JobStatus = "ok";
-  let exitCode: number | null = 0;
-  let prevFailed = false;
-  let anyRan = false;
-
+  // fire() 主体放进 try/catch/finally：任一步 DB 写失败（jobRun.create / findFirst /
+  // update / jobState.update）都不能让 runningAt 悬着——否则该任务会被 tick 判成死锁，
+  // 冻结最长 2×job 超时才放行。finally 里幂等地清一次 runningAt（正常路径末尾也有，
+  // 重复无害），且**只在所有 await 落定后**执行，绝不会在 narrate/告警还在跑时提前释放。
+  let run: { id: string } | null = null;
+  let finalized = false; // 运行结果已成功落库（jobRun.update），之后只差释放锁 / 排下次
   try {
-    for (const step of job.steps) {
-      if (prevFailed && !step.runEvenIfPrevFailed) {
-        chunks.push(`── ${step.name}：前一步失败，跳过 ──`);
-        continue;
-      }
-      const r = await runStep(step, { cwd: ROOT, env: process.env });
-      chunks.push(
-        `── ${step.name}（${Math.round(r.durationMs / 1000)}s）──\n${r.output}`,
-      );
+    const prevMetrics = await prevMetricsOf(job.key);
 
-      if (r.skipped === "missing-secret") {
-        prevFailed = true;
-        if (status === "ok") status = "skipped";
-        continue;
-      }
-      anyRan = true;
-
-      const m = parseJsonResult(r.output);
-      if (m) Object.assign(metrics, m);
-      if (step.checks?.length) alerts.push(...evalChecks(step.checks, m ?? {}));
-      if (step.baselineChecks?.length) {
-        alerts.push(...evalBaselineChecks(step.baselineChecks, m ?? {}, baseline));
-      }
-
-      if (r.timedOut) {
-        status = "timeout";
-        exitCode = r.exitCode;
-        prevFailed = true;
-      } else if (r.exitCode !== 0) {
-        if (status !== "timeout") status = "fail";
-        exitCode = r.exitCode;
-        prevFailed = true;
-      }
-    }
-    if (!anyRan) status = "skipped";
-  } catch (e) {
-    status = "fail";
-    const reason = e instanceof Error ? e.message : String(e);
-    console.error(`[scheduler] ${job.key} 执行抛异常:`, reason);
-    chunks.push(`[scheduler] 执行抛异常: ${reason}`);
-  }
-
-  const output = chunks.join("\n\n").slice(-32_000);
-  const hasMetrics = Object.keys(metrics).length > 0;
-
-  const narration = await narrate(
-    {
-      title: job.title,
-      status,
-      alerts,
-      metrics: hasMetrics ? metrics : null,
-      prevMetrics,
-      output,
-    },
-    { alwaysNarrate: job.alwaysNarrate ?? false },
-  );
-
-  const durationMs = Date.now() - startedAt;
-  const lastNotified = await db.jobRun.findFirst({
-    where: { jobKey: job.key, notifiedAt: { not: null } },
-    orderBy: { notifiedAt: "desc" },
-  });
-  let notifiedAt: Date | null = null;
-  if (
-    shouldNotify({
-      status,
-      alertCount: alerts.length,
-      lastNotifiedAtMs: lastNotified?.notifiedAt?.getTime() ?? null,
-      nowMs: Date.now(),
-    })
-  ) {
-    const sent = await sendAlertMail({
-      jobKey: job.key,
-      title: job.title,
-      status,
-      alerts,
-      narration,
-      output,
-      durationMs,
+    await db.jobState.update({
+      where: { key: job.key },
+      data: {
+        runningAt: new Date(startedAt),
+        lastFire: new Date(startedAt),
+        lastStatus: "running",
+      },
     });
-    if (sent) notifiedAt = new Date();
+    run = await db.jobRun.create({
+      data: { jobKey: job.key, firedAt: new Date(startedAt), status: "running" },
+    });
+    console.log(`[scheduler] fire ${job.key}`);
+
+    // 基线式判据的对照组：**上一次成功运行**的指标（不取失败/超时那次——半截跑出来的
+    // 指标当基线会把「恢复正常」误报成「暴涨」）。取不到就没有基线，那些判据本轮跳过。
+    const prevOk = await db.jobRun.findFirst({
+      where: { jobKey: job.key, status: "ok", metrics: { not: Prisma.DbNull }, id: { not: run.id } },
+      orderBy: { firedAt: "desc" },
+      select: { metrics: true },
+    });
+    const baseline = (prevOk?.metrics as Metrics | null) ?? null;
+
+    const chunks: string[] = [];
+    const metrics: Metrics = {};
+    const alerts: Alert[] = [];
+    let status: JobStatus = "ok";
+    let exitCode: number | null = 0;
+    let prevFailed = false;
+    let anyRan = false;
+
+    try {
+      for (const step of job.steps) {
+        if (prevFailed && !step.runEvenIfPrevFailed) {
+          chunks.push(`── ${step.name}：前一步失败，跳过 ──`);
+          continue;
+        }
+        const r = await runStep(step, { cwd: ROOT, env: process.env });
+        chunks.push(
+          `── ${step.name}（${Math.round(r.durationMs / 1000)}s）──\n${r.output}`,
+        );
+
+        if (r.skipped === "missing-secret") {
+          prevFailed = true;
+          if (status === "ok") status = "skipped";
+          continue;
+        }
+        anyRan = true;
+
+        const m = parseJsonResult(r.output);
+        if (m) Object.assign(metrics, m);
+        if (step.checks?.length) alerts.push(...evalChecks(step.checks, m ?? {}));
+        if (step.baselineChecks?.length) {
+          alerts.push(...evalBaselineChecks(step.baselineChecks, m ?? {}, baseline));
+        }
+
+        if (r.timedOut) {
+          status = "timeout";
+          exitCode = r.exitCode;
+          prevFailed = true;
+        } else if (r.exitCode !== 0) {
+          if (status !== "timeout") status = "fail";
+          exitCode = r.exitCode;
+          prevFailed = true;
+        }
+      }
+      if (!anyRan) status = "skipped";
+    } catch (e) {
+      status = "fail";
+      const reason = e instanceof Error ? e.message : String(e);
+      console.error(`[scheduler] ${job.key} 执行抛异常:`, reason);
+      chunks.push(`[scheduler] 执行抛异常: ${reason}`);
+    }
+
+    const output = chunks.join("\n\n").slice(-32_000);
+    const hasMetrics = Object.keys(metrics).length > 0;
+
+    const narration = await narrate(
+      {
+        title: job.title,
+        status,
+        alerts,
+        metrics: hasMetrics ? metrics : null,
+        prevMetrics,
+        output,
+      },
+      { alwaysNarrate: job.alwaysNarrate ?? false },
+    );
+
+    const durationMs = Date.now() - startedAt;
+    const lastNotified = await db.jobRun.findFirst({
+      where: { jobKey: job.key, notifiedAt: { not: null } },
+      orderBy: { notifiedAt: "desc" },
+    });
+    let notifiedAt: Date | null = null;
+    if (
+      shouldNotify({
+        status,
+        alertCount: alerts.length,
+        lastNotifiedAtMs: lastNotified?.notifiedAt?.getTime() ?? null,
+        nowMs: Date.now(),
+      })
+    ) {
+      const sent = await sendAlertMail({
+        jobKey: job.key,
+        title: job.title,
+        status,
+        alerts,
+        narration,
+        output,
+        durationMs,
+      });
+      if (sent) notifiedAt = new Date();
+    }
+
+    await db.jobRun.update({
+      where: { id: run.id },
+      data: {
+        finishedAt: new Date(),
+        status,
+        exitCode,
+        output,
+        metrics: hasMetrics ? metrics : undefined,
+        alerts: alerts.length ? alerts : undefined,
+        narration,
+        durationMs,
+        notifiedAt,
+      },
+    });
+    finalized = true;
+    await db.jobState.update({
+      where: { key: job.key },
+      data: {
+        runningAt: null,
+        lastStatus: status,
+        // 按**开火时刻**排下一次，不是完成时刻：daily 的语义是「一天只跑一次」，
+        // 用完成时刻算会让「锚点前跑完」的任务当天又排一轮（brief-morning 一早跑了三次）。
+        nextFire: new Date(nextFireAfterRun(job.schedule, startedAt, Date.now())),
+      },
+    });
+
+    console.log(
+      `[scheduler] done ${job.key} ${status} ${durationMs}ms` +
+        (alerts.length ? ` · ${alerts.length} 项判据命中` : ""),
+    );
+  } catch (e) {
+    // 结果还没落库就抛了：尽力留一条 fail 痕迹（保留下钻原因）。已经 finalized
+    // 说明运行状态早已写对，只是收尾失败——别再覆盖成 fail。
+    if (finalized) {
+      console.error(`[scheduler] ${job.key} 收尾失败:`, e instanceof Error ? e.message : e);
+    } else {
+      const reason = e instanceof Error ? e.message : String(e);
+      console.error(`[scheduler] fire ${job.key} 未捕获异常:`, reason);
+      await recordFailRun(db.jobRun, {
+        jobKey: job.key,
+        firedAt: new Date(startedAt),
+        runId: run?.id ?? null,
+        reason,
+      });
+    }
+  } finally {
+    // 幂等释放重入锁：正常路径末尾已置 null，这里兜底覆盖所有异常路径。
+    // 尽力而为——DB 都挂了的话，tick 里的死锁自愈会在 2×timeout 后补放。
+    await db.jobState
+      .update({ where: { key: job.key }, data: { runningAt: null } })
+      .catch(() => undefined);
+    running.delete(job.key);
   }
-
-  await db.jobRun.update({
-    where: { id: run.id },
-    data: {
-      finishedAt: new Date(),
-      status,
-      exitCode,
-      output,
-      metrics: hasMetrics ? metrics : undefined,
-      alerts: alerts.length ? alerts : undefined,
-      narration,
-      durationMs,
-      notifiedAt,
-    },
-  });
-  await db.jobState.update({
-    where: { key: job.key },
-    data: {
-      runningAt: null,
-      lastStatus: status,
-      // 按**开火时刻**排下一次，不是完成时刻：daily 的语义是「一天只跑一次」，
-      // 用完成时刻算会让「锚点前跑完」的任务当天又排一轮（brief-morning 一早跑了三次）。
-      nextFire: new Date(nextFireAfterRun(job.schedule, startedAt, Date.now())),
-    },
-  });
-
-  running.delete(job.key);
-  console.log(
-    `[scheduler] done ${job.key} ${status} ${durationMs}ms` +
-      (alerts.length ? ` · ${alerts.length} 项判据命中` : ""),
-  );
 }
 
 async function tick(): Promise<void> {
@@ -336,6 +434,17 @@ async function tick(): Promise<void> {
 async function loop(): Promise<void> {
   bootCheck();
   await acquireSingleton();
+  // 孤儿 JobRun 自愈：进程重启时把超过 24h 还卡在 running 的死运行标成 timeout，
+  // 免得 /admin/jobs 永远显示 running。尽力而为——DB 抖动不该挡住 worker 启动，
+  // tick 会在下轮自己重试连接。
+  try {
+    await healOrphanRuns(db.jobRun);
+  } catch (e) {
+    console.error(
+      "[scheduler] 孤儿 JobRun 自愈失败（不影响启动）:",
+      e instanceof Error ? e.message : e,
+    );
+  }
   await ensureStates();
   console.log(
     `[scheduler] 已加载 ${JOBS.length} 条任务，每 ${TICK_MS / 1000}s 巡检一次`,
@@ -350,4 +459,8 @@ async function loop(): Promise<void> {
   }
 }
 
-void loop();
+// 直接执行（tsx src/scheduler/main.ts，生产 NODE_ENV 不是 test）时才拉起调度进程；
+// 被测试 import（vitest 下 NODE_ENV=test）只暴露可单测的函数，不启动调度器。
+if (process.env.NODE_ENV !== "test") {
+  void loop();
+}

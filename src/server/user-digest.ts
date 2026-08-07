@@ -25,6 +25,7 @@ import { groundNotes } from "./note-check";
 import { aggregateSectors, rankSectors, type StockFlow } from "../lib/rotation";
 import { upcomingDisclosureNodes } from "../lib/earnings-calendar";
 import { llmChat, llmModel } from "./llm";
+import { ungroundedNumbers } from "../lib/ask-facts";
 
 const NEWS_WINDOW_HOURS = 24;
 const NEWS_TAKE = 6;
@@ -498,70 +499,114 @@ export async function generateUserDigests(
       continue;
     }
 
-    const raw = await llmChat(USER_DIGEST_SYSTEM, buildUserDigestPrompt(facts), {
-      maxTokens: 900,
-    });
-    const data = parseUserDigestResponse(raw, facts);
-    // 归因逐条核对：这句话里的说法，在它自己的事实里找不找得到依据。
-    // 主体判定管的是「喂进去的料对不对」，这道管的是「写出来的有没有超出料」——
-    // 潞报的那条正是两篇文章各取一半缝出来的（「光」＋「量子」→「光量子赛道」），
-    // 料没错，是写的时候跨条合成了一件没发生的事。出错一律放行，见 note-check。
-    if (data) {
-      await groundNotes(
-        [
-          ...data.portfolio.movers
-            .filter((m) => m.note)
-            .map((m) => ({
-              item: { subject: m.name, facts: m.facts, note: m.note ?? "" },
-              clear: () => {
-                m.note = "";
-              },
-            })),
-          // 板块段现在也有自己的事实（同板块别家公司的当日事），一并核
-          ...data.exposure
-            .filter((e) => e.note)
-            .map((e) => ({
-              item: {
-                subject: e.sector,
-                kind: "sector" as const,
-                facts: e.facts ?? [],
-                note: e.note,
-              },
-              clear: () => {
-                e.note = "";
-              },
-            })),
-        ],
-        `个人复盘 ${u.id.slice(0, 8)}`,
+    try {
+      const raw = await llmChat(USER_DIGEST_SYSTEM, buildUserDigestPrompt(facts), {
+        maxTokens: 900,
+      });
+      const data = parseUserDigestResponse(raw, facts);
+      if (data) {
+        // 数字兜底（8-07 修复）：模型自由文本里的带单位数字必须能在喂给它的语料里找到。
+        // corpus 用 prompt 全文——headline/judgment 越界 → 该用户整体判废；
+        // watchpoints / movers note / exposure note 越界 → 清空该条（宁可留空，不留编造）。
+        const corpus = buildUserDigestPrompt(facts);
+        const badHeadline = ungroundedNumbers(data.headline, corpus);
+        const badJudgment = ungroundedNumbers(data.judgment, corpus);
+        if (badHeadline.length > 0 || badJudgment.length > 0) {
+          console.warn(
+            `[user-digest] 用户 ${u.id.slice(0, 8)} 数字兜底判废：headline ${badHeadline.join("/") || "-"}｜judgment ${badJudgment.join("/") || "-"}`,
+          );
+          stats.rejected++;
+          results.push({
+            userId: u.id,
+            status: "rejected",
+            reason: `自由文本含语料外数字（headline ${badHeadline.join("/") || "-"}｜judgment ${badJudgment.join("/") || "-"}）`,
+          });
+          continue;
+        }
+        data.watchpoints = data.watchpoints.filter(
+          (w) => ungroundedNumbers(w, corpus).length === 0,
+        );
+        for (const m of data.portfolio.movers) {
+          if (m.note && ungroundedNumbers(m.note, corpus).length > 0) m.note = "";
+        }
+        for (const e of data.exposure) {
+          if (e.note && ungroundedNumbers(e.note, corpus).length > 0) e.note = "";
+        }
+      }
+      // 主体判定管的是「喂进去的料对不对」，这道管的是「写出来的有没有超出料」——
+      // 潞报的那条正是两篇文章各取一半缝出来的（「光」＋「量子」→「光量子赛道」），
+      // 料没错，是写的时候跨条合成了一件没发生的事。出错一律放行，见 note-check。
+      if (data) {
+        await groundNotes(
+          [
+            ...data.portfolio.movers
+              .filter((m) => m.note)
+              .map((m) => ({
+                item: { subject: m.name, facts: m.facts, note: m.note ?? "" },
+                clear: () => {
+                  m.note = "";
+                },
+              })),
+            // 板块段现在也有自己的事实（同板块别家公司的当日事），一并核
+            ...data.exposure
+              .filter((e) => e.note)
+              .map((e) => ({
+                item: {
+                  subject: e.sector,
+                  kind: "sector" as const,
+                  facts: e.facts ?? [],
+                  note: e.note,
+                },
+                clear: () => {
+                  e.note = "";
+                },
+              })),
+          ],
+          `个人复盘 ${u.id.slice(0, 8)}`,
+        );
+      }
+      if (!data) {
+        stats.rejected++;
+        results.push({
+          userId: u.id,
+          status: "rejected",
+          reason: `未过校验（非 JSON / 缺段 / 含买卖指令 / 判断非双向）：${raw.slice(0, 120)}`,
+        });
+        continue;
+      }
+
+      const payload = {
+        headline: data.headline,
+        portfolio: data.portfolio,
+        exposure: data.exposure,
+        touched: data.touched,
+        watchpoints: data.watchpoints,
+        judgment: data.judgment,
+        inputHash: hash,
+        model: llmModel(),
+      };
+      await db.userDigest.upsert({
+        where: { userId_tradeDate_market: { userId: u.id, tradeDate, market: "CN" } },
+        create: { userId: u.id, tradeDate, market: "CN", ...payload },
+        update: payload,
+      });
+      stats.created++;
+      results.push({ userId: u.id, status: "created", data });
+    } catch (err) {
+      // per-user 错误隔离（8-07 修复）：单用户 AI 调用失败（429 / 5xx / 超时）不该
+      // 中断整批——其余用户当天仍要拿到复盘。失败计入 rejected 并留日志（绝不裸 catch），
+      // 与「判废」同语义：用户看到的是「今天没有个人复盘」，不会看到半截内容。
+      console.error(
+        `[user-digest] 用户 ${u.id.slice(0, 8)} 生成失败:`,
+        err instanceof Error ? err.message : err,
       );
-    }
-    if (!data) {
       stats.rejected++;
       results.push({
         userId: u.id,
         status: "rejected",
-        reason: `未过校验（非 JSON / 缺段 / 含买卖指令 / 判断非双向）：${raw.slice(0, 120)}`,
+        reason: `生成异常：${err instanceof Error ? err.message : String(err)}`,
       });
-      continue;
     }
-
-    const payload = {
-      headline: data.headline,
-      portfolio: data.portfolio,
-      exposure: data.exposure,
-      touched: data.touched,
-      watchpoints: data.watchpoints,
-      judgment: data.judgment,
-      inputHash: hash,
-      model: llmModel(),
-    };
-    await db.userDigest.upsert({
-      where: { userId_tradeDate_market: { userId: u.id, tradeDate, market: "CN" } },
-      create: { userId: u.id, tradeDate, market: "CN", ...payload },
-      update: payload,
-    });
-    stats.created++;
-    results.push({ userId: u.id, status: "created", data });
   }
 
   return { stats, results };

@@ -28,14 +28,37 @@ const db = new PrismaClient();
  */
 const T = {
   /**
-   * 「多久没去抓过」的上限——判据是入库时刻 createdAt，不是新闻发布时刻。
+   * 「多久没有**关于它**的新资讯入库」的上限——判据是入库时刻 createdAt，不是新闻发布时刻。
    * 实测：王子新材最新发布停在 7-13，但 8-03 04:55 刚抓过 18 条——是这只股没新料，
    * 不是管线没跑。用 publishedAt 判会把所有小盘股天天报成异常。
    */
   staleFetchDays: 2,
+  /**
+   * 陈旧要**成片**才告警：占自选股的比例下限 + 只数下限（两个都要满足）。
+   *
+   * 2026-08-05 实测，这是本脚本第四条「判据自己错」：大普微-UW(301666) 被报
+   * 「3 天没被抓过」。逐层证伪的结果是管线全速在跑——它是 `targetsByNeed` 队列的
+   * **第 1 名**（自选优先档里 bound 最低，127），每轮 ingest（30 分钟）必抓；当场实拉
+   * 源接口返回 20 条、16 条已在库（最近一条 2 小时前入库），**而绑到它的 0 条**。
+   * 因为近期提到它的全是「融资客控盘比例超一成个股（附名单）」「8月4日创业板活跃股
+   * 排行榜」「存储芯片概念下跌3.15%，主力资金净流出134股」这类榜单综述，按归因规则
+   * **正确地**不绑主体（「绑定到它」≠「关于它」）。于是这个数冻在 8-01，管线却没停过。
+   *
+   * 根子上：它走 `NewsEntity` 连接，回答的是「有没有抓到一条**关于它**的资讯」，
+   * 回答不了「有没有去抓它」——后者全站没有任何地方记录（无每股抓取日志）。
+   * 单只陈旧因此不可判，改看**面**：7-30 那次真空转是 5 条补料路径 100% 停摆、
+   * 全部自选股一起陈旧，成片是管线故障的固有形状；单只陈旧几乎总是这只股本身没料。
+   */
+  staleFetchRate: 1 / 3,
+  staleFetchMin: 3,
   /** 个人复盘覆盖率下限（有自选的用户里拿到复盘的比例）。 */
   digestCoverage: 0.8,
-  /** 提醒已读率下限。停留 2.5 秒自动标已读上线后，来过的人应该都被标上。 */
+  /**
+   * 提醒已读率下限。停留 800ms 自动标已读，且 markRead 一次标掉全部未读——
+   * 所以「用户末次**真**访问之前就存在的提醒」应当接近全被标上（8-04、8-05 实测均 15/15）。
+   * 留 0.5 的余量给「打开就秒退（<800ms）」这类正常人类行为。
+   * 分母怎么算见下面 ③ 那段注释——它比这个阈值重要得多。
+   */
   alertReadRate: 0.5,
   /** 真实用户埋点占比下限——低于此说明爬虫又在灌库。 */
   analyticsRealRate: 0.5,
@@ -106,7 +129,7 @@ async function main() {
     db.userDigest.findMany({ where: { tradeDate: localDay(now) }, select: { userId: true } }),
     db.alertEvent.findMany({
       where: { occurredAt: { gte: d30 } },
-      select: { userId: true, kind: true, priority: true, readAt: true, emailedAt: true, title: true, occurredAt: true },
+      select: { userId: true, kind: true, priority: true, readAt: true, emailedAt: true, title: true, occurredAt: true, createdAt: true },
     }),
   ]);
 
@@ -183,30 +206,50 @@ async function main() {
   // ---------- 系统面 ----------
   console.log(`\n# 系统面`);
 
-  // ① 自选股「有没有被抓过」——问的是管线，不是行情
+  // ① 自选股「有没有资讯进来」——问的是管线，不是行情
   const watchedEntityIds = [...new Set(wlAll.map((w) => w.entityId))];
-  const notFetched: { name: string; days: number }[] = [];
+  const stale: { name: string; days: number }[] = [];
+  const never: string[] = [];
+  const seenName = new Set<string>();
   let noFreshNews = 0;
   for (const w of wlAll) {
-    if (notFetched.some((s) => s.name === w.entity.name)) continue;
+    if (seenName.has(w.entity.name)) continue; // 多个用户自选同一只，只数一次
+    seenName.add(w.entity.name);
     const ids = [w.entityId, ...w.entity.relFrom.map((r) => r.toId)];
-    const fetched = fetchedBy.get(ids.find((i) => fetchedBy.has(i)) ?? "");
+    // 孪生实体（COMPANY + STOCK）取**最新**的那份，与 lastPub 同口径。原来用
+    // `ids.find(...)` 拿第一个有值的，会让 COMPANY 的旧时刻压过 STOCK 的新时刻。
+    const fetched = ids.map((i) => fetchedBy.get(i)).filter((x): x is Date => !!x).sort((a, b) => +b - +a)[0];
     const lastPub = ids.map((i) => lastBy.get(i)).filter((x): x is Date => !!x).sort((a, b) => +b - +a)[0];
-    const fetchDays = fetched ? Math.floor((+now - +fetched) / DAY) : 999;
-    if (fetchDays > T.staleFetchDays) notFetched.push({ name: w.entity.name, days: fetchDays });
+    if (!fetched) {
+      never.push(w.entity.name);
+      continue;
+    }
+    const fetchDays = Math.floor((+now - +fetched) / DAY);
+    if (fetchDays > T.staleFetchDays) stale.push({ name: w.entity.name, days: fetchDays });
     else if (lastPub && +now - +lastPub > 7 * DAY) noFreshNews++;
   }
+  const staleList = stale
+    .sort((a, b) => b.days - a.days)
+    .slice(0, 6)
+    .map((s) => `${s.name}(${s.days}天)`)
+    .join("、");
   console.log(
-    `- 自选实体 ${watchedEntityIds.length} 个：超过 ${T.staleFetchDays} 天没被抓过的 ${notFetched.length} 个；` +
-      `抓过但本身近 7 天无新料的 ${noFreshNews} 个（小盘股常态，不告警）`,
+    `- 自选实体 ${watchedEntityIds.length} 个：超过 ${T.staleFetchDays} 天没有新资讯入库的 ${stale.length} 个` +
+      (stale.length > 0 ? `（${staleList}）` : "") +
+      `；有资讯但本身近 7 天无新料的 ${noFreshNews} 个（小盘股常态，不告警）`,
   );
-  if (notFetched.length > 0) {
+  // 「一条资讯都没有」是没有歧义的——这只股压根没进过任何抓取队列（多半是 alive 判据把它当死壳）。
+  if (never.length > 0) {
     warn(
-      `自选股 ${notFetched.length} 只超过 ${T.staleFetchDays} 天没被抓过：${notFetched
-        .sort((a, b) => b.days - a.days)
-        .slice(0, 6)
-        .map((s) => `${s.name}(${s.days}天)`)
-        .join("、")} —— 查 targetsByNeed 的自选优先档、ingest 有没有在跑`,
+      `自选股 ${never.length} 只**从来没有过任何资讯**：${never.slice(0, 6).join("、")}` +
+        ` —— 查 targetsByNeed 的 alive 判据（资金流快照 / 近 30 天一手公告）有没有把它剔掉`,
+    );
+  }
+  // 单只陈旧不可判（见 T.staleFetchRate 注释），成片才是管线空转。
+  if (stale.length >= T.staleFetchMin && stale.length / seenName.size >= T.staleFetchRate) {
+    warn(
+      `自选股 ${stale.length}/${seenName.size} 只超过 ${T.staleFetchDays} 天没有新资讯入库：${staleList}` +
+        ` —— 成片陈旧才是管线空转，查 targetsByNeed 队头与 ingest 日志`,
     );
   }
 
@@ -217,26 +260,66 @@ async function main() {
 
   // ③ 提醒层
   const p = { hi: alertRows.filter((a) => a.priority >= 30).length, lo: alertRows.filter((a) => a.priority < 30).length };
-  // 已读率的分母只算「打开过提醒中心的用户」手上的提醒——从没来过的人当然是未读，
-  // 把他们算进来等于用「没人来」去指控「标记功能坏了」。
-  const visitors = new Set(
-    (
-      await db.analyticsEvent.findMany({
-        where: { type: "view_notifications", createdAt: { gte: d30 }, userId: { not: null } },
-        select: { userId: true },
-      })
-    ).map((v) => v.userId!),
-  );
-  const visited = alertRows.filter((a) => visitors.has(a.userId));
+  // 已读率的分母只算「用户**有机会看到**的提醒」＝ 入库时刻早于该用户末次打开提醒中心。
+  // 收紧过两次，两次都是因为分母混进了「不可能已读」的条目：
+  // ① 从没来过提醒中心的用户手上的提醒——等于用「没人来」去指控「标记功能坏了」；
+  // ② 2026-08-04：末次访问**之后**才产生的提醒——用户还没机会看到它。实测 32 条里
+  //    17 条属于②（tms 末次访问 7-28、之后来了 7 条），把已读率压到 47% 报警；
+  //    剔掉后 15/15 = 100%，功能是好的。这跟「埋点别用 7 天窗口」是同一个形状：
+  //    分母里混进了在被测行为之外产生的存量。
+  // ③ 2026-08-05：`view_notifications` **不等于**「人打开了提醒中心」。这个埋点是在
+  //    /notifications 的服务端组件里 `await` 出去的，所以任何一次服务端渲染都会记一笔，
+  //    包括**不水合**的预取渲染——而 800ms 自动标已读只在真正水合的客户端上跑。
+  //    实测证据：tms 8-05 01:51:03 的三条埋点是 view_entity(.398) → view_notifications(.582)
+  //    → view_home(.635)，**240 毫秒跨三个页面**，人做不到；近 7 天 135 条里 53 条是
+  //    这种「<1s 同批」。而 `AlertEvent.readAt` 全库只被写过 3 次，每次都紧挨着一条
+  //    **孤立**的 view_notifications（swaylq 8-03 06:26:15.788 读 / 06:26:15.835 埋点，
+  //    差 47 毫秒）——即：孤立埋点＝真水合访问，标已读照常工作；同批埋点＝预取，本就不该标。
+  //    所以「末次访问」只认孤立埋点：同用户 ±1 秒内没有其它 view_* 埋点。
+  //    剔掉同批后：15/15 = 100%（不剔是 30 条 50%，正好压在阈值上，明天就会喊狼来了）。
+  // 收紧后判据仍有鉴别力：`inbox.markRead` 不传 id 时把该用户**全部**未读一次标掉
+  // （不分页、不只标当前屏），所以「产生于末次真访问之前却仍未读」只可能是自动标已读真的失效。
+  const BURST_MS = 1000;
+  const views = await db.analyticsEvent.findMany({
+    where: { type: { startsWith: "view_" }, createdAt: { gte: d30 }, userId: { not: null } },
+    select: { id: true, userId: true, type: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
+  const viewsByUser = new Map<string, typeof views>();
+  for (const v of views) {
+    const a = viewsByUser.get(v.userId!) ?? [];
+    a.push(v);
+    viewsByUser.set(v.userId!, a);
+  }
+  const lastVisit = new Map<string, Date>();
+  for (const [uid, list] of viewsByUser) {
+    for (const v of list) {
+      if (v.type !== "view_notifications") continue;
+      const near = list.some(
+        (o) => o.id !== v.id && Math.abs(+o.createdAt - +v.createdAt) <= BURST_MS,
+      );
+      if (near) continue; // 同批 = 预取渲染，没水合过，不算「打开过」
+      const prev = lastVisit.get(uid);
+      if (!prev || v.createdAt > prev) lastVisit.set(uid, v.createdAt);
+    }
+  }
+  const visited = alertRows.filter((a) => {
+    const lv = lastVisit.get(a.userId);
+    return lv !== undefined && a.createdAt <= lv;
+  });
+  const pending = alertRows.filter((a) => {
+    const lv = lastVisit.get(a.userId);
+    return lv !== undefined && a.createdAt > lv;
+  }).length;
   const readRate = visited.length ? visited.filter((a) => a.readAt).length / visited.length : 1;
   console.log(
-    `- 提醒 30 天 ${alertRows.length} 条（逻辑异动 ${p.hi} / 资讯 ${p.lo}）；打开过提醒中心的用户手上 ${visited.length} 条，已读率 ${(readRate * 100).toFixed(0)}%`,
+    `- 提醒 30 天 ${alertRows.length} 条（逻辑异动 ${p.hi} / 资讯 ${p.lo}）；用户真打开过提醒中心后才算数的 ${visited.length} 条，已读率 ${(readRate * 100).toFixed(0)}%（另有 ${pending} 条产生于其末次真访问之后，尚未有机会读）`,
   );
   if (alertRows.length > 0 && p.hi === 0) {
     warn("提醒全是 p10 资讯档，逻辑异动一条都没有 —— 查 detect-crossings 有没有在跑、ThesisDimensionState 是否在更新");
   }
   if (visited.length > 0 && readRate < T.alertReadRate) {
-    warn(`打开过提醒中心的用户，已读率仅 ${(readRate * 100).toFixed(0)}% —— 自动标已读可能失效（验证要用 shot.ts --wait 停够，别用默认 750ms）`);
+    warn(`真打开过提醒中心的用户，已读率仅 ${(readRate * 100).toFixed(0)}% —— 自动标已读可能失效（验证要用 shot.ts --wait 停够，别用默认 750ms；注意这一验证本身会写 readAt，别拿它自己的战果当健康证据）`);
   }
   const crossFresh = await db.thesisDimensionState.count({ where: { lastCrossAt: { gte: d7 } } });
   console.log(`- 维度跨越（近 7 天）${crossFresh} 条`);

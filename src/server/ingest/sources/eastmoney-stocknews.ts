@@ -39,6 +39,7 @@ async function fetchStockNews(name: string, code: string, pageSize = 20): Promis
   const res = await fetch(`${SEARCH}?cb=x&param=${param}`, {
     headers: { "User-Agent": UA, Referer: "https://so.eastmoney.com/" },
     cache: "no-store",
+    signal: AbortSignal.timeout(15000), // 与 eastmoney-report-sweep 的 15s 一致
   });
   if (!res.ok) return [];
   const text = await res.text();

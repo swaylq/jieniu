@@ -59,6 +59,26 @@ export function matchesRisk(
       : !sig.ticker && !r.ticker && r.name === sig.entityName,
   );
 }
+/**
+ * 生命周期「这条旧信号今天是否仍入选」的匹配。按信号类型分流：
+ * - 个股信号（COMPANY）的 dedupeKey 是 **ticker**，必须去 `result.stocks` 按 ticker 找；
+ * - 行业信号（SECTOR）的 dedupeKey 是 **板块名**，才去 `result.sectors` 按名字找。
+ *
+ * 8-07 修复：此前一律拿 `dedupeKey` 去 `sectors` 里找，个股的 ticker 永远匹配不到板块名，
+ * 于是 `posFlowDays3` 恒 0、`stillPassesEarly/passesConfirmed` 恒 false——所有个股信号
+ * 次日必被 `advanceSignal` 误标「资金已转为持续流出，信号失效」且永远无法升级为 CONFIRMED。
+ * metrics 用 `unknown` 是因为 sectors/stocks 各自带具体 metrics 类型，这里只透传。
+ */
+export function todaySignalFor(
+  prev: { entityType: string | null; ticker: string | null; dedupeKey: string },
+  sectors: { sector: string; signalType: string; metrics?: unknown }[],
+  stocks: { ticker: string; signalType: string; metrics?: unknown }[],
+): { signalType: string; metrics?: unknown } | undefined {
+  if (prev.entityType === "COMPANY" && prev.ticker) {
+    return stocks.find((s) => s.ticker === prev.ticker);
+  }
+  return sectors.find((s) => s.sector === prev.dedupeKey);
+}
 
 /**
  * 同一交易日重跑时，上一轮选中、这一轮没选中的 dedupeKey。
@@ -243,7 +263,11 @@ export async function generateRadar(
   for (const p of prev) {
     const prevKey = p.tradeDate.toISOString().slice(0, 10);
     const elapsed = (tradeDays.get(prevKey) ?? 99) - (tradeDays.get(tradeDate) ?? 0);
-    const stillSector = result.sectors.find((s) => s.sector === p.dedupeKey);
+    const today = todaySignalFor(
+      { entityType: p.entityType, ticker: p.ticker, dedupeKey: p.dedupeKey },
+      result.sectors,
+      result.stocks,
+    );
     /**
      * 匹配「这条旧信号今天是不是变成追高风险了」。
      *
@@ -258,7 +282,9 @@ export async function generateRadar(
       result.risks,
     );
     const m = p.metrics as Record<string, number | null>;
-    const nowMetrics = stillSector?.metrics;
+    const nowMetrics = today?.metrics as
+      | Record<string, number | null | undefined>
+      | undefined;
     const adv = advanceSignal(
       {
         signalType: p.signalType as "EARLY" | "CONFIRMED" | "RELATIVE_STRENGTH",
@@ -268,11 +294,11 @@ export async function generateRadar(
       },
       {
         tradeDaysElapsed: elapsed,
-        stillPassesEarly: !!stillSector,
-        passesConfirmed: stillSector?.signalType === "CONFIRMED",
-        posFlowDays3: nowMetrics?.posFlowDays3 ?? (stillSector ? 2 : 0),
+        stillPassesEarly: !!today,
+        passesConfirmed: today?.signalType === "CONFIRMED",
+        posFlowDays3: nowMetrics?.posFlowDays3 ?? (today ? 2 : 0),
         breadthDrop:
-          nowMetrics && typeof m.upShare === "number"
+          nowMetrics && typeof m.upShare === "number" && typeof nowMetrics.upShare === "number"
             ? Math.max(0, m.upShare - nowMetrics.upShare)
             : 0,
         severeCrowding: stillRisk,

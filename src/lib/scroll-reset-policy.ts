@@ -5,8 +5,10 @@
 // tab 也是 query（`?tab=announce`），于是切 tab 也被当成换页，把人从列表深处甩回页首。
 // 给 tab 的 `<Link>` 加 `scroll={false}` 修不掉——那只关掉 Next 自己的滚动，管不到这个组件。
 //
-// 判定就一条：**切 tab 不复位，其余照旧**。切 tab 时用户的注意力就在 tab 条上，页面不该动；
-// 换页（`?page=`）、换实体页（pathname 变）、改搜索词都仍然复位。
+// 判定分三档（2026-07-31 sway 又报「翻页的时候页面又会滚到最上面」后细化）：
+//   切 tab → 留在原地；翻页 → 滚到 tab 条（列表顶部，配合 sticky 的 tab 条正好衔接）；
+//   换实体页 / 改搜索词 → 回整页顶部。
+// 翻页原来也回整页顶部，意味着翻一页就得重新往下滚一大段，这正是 sway 报的那件事。
 
 export type Loc = { pathname: string; search: string };
 
@@ -21,16 +23,27 @@ function canonical(search: string): string {
   return p.toString();
 }
 
+function pageOf(search: string): string {
+  return new URLSearchParams(search).get("page") ?? "";
+}
+
 /**
- * 该不该把内容区滚回顶部。`prev` 为 null 表示首次挂载——那时没有「上一个位置」，也无处可复位。
- * 注意 tab 切换常常同时丢掉 `page`（tab 链接本就回第 1 页），所以判据只看 tab 有没有变，
- * 不能看「差异参数集合是不是恰好等于 {tab}」。
+ * 路由变化后内容区该怎么动：
+ * - `none` —— 留在原地（切 tab；首次挂载也归此类，没有「上一个位置」可言）
+ * - `tabs` —— 滚到 tab 条（翻页：回到列表顶部，而不是整页顶部）
+ * - `top`  —— 回整页顶部（换实体页、改搜索词等）
+ *
+ * 判据顺序有讲究：**先判 tab**。tab 链接本就回第 1 页、会顺带丢掉 `page`，
+ * 若先判 page 就会把「切 tab」误判成「翻页」。
  */
-export function shouldResetScroll(prev: Loc | null, next: Loc): boolean {
-  if (prev === null) return false;
-  if (prev.pathname !== next.pathname) return true;
-  if (tabOf(prev.search) !== tabOf(next.search)) return false; // 切 tab：留在原地
-  return canonical(prev.search) !== canonical(next.search);
+export type ScrollAction = "none" | "tabs" | "top";
+
+export function scrollAction(prev: Loc | null, next: Loc): ScrollAction {
+  if (prev === null) return "none";
+  if (prev.pathname !== next.pathname) return "top";
+  if (tabOf(prev.search) !== tabOf(next.search)) return "none"; // 切 tab：留在原地
+  if (pageOf(prev.search) !== pageOf(next.search)) return "tabs"; // 翻页：回列表顶部
+  return canonical(prev.search) !== canonical(next.search) ? "top" : "none";
 }
 
 /**

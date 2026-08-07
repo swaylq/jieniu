@@ -6,6 +6,7 @@ import { billingRouter } from "~/server/api/routers/billing";
 import { briefRouter } from "~/server/api/routers/brief";
 import { bookmarksRouter } from "~/server/api/routers/bookmarks";
 import { decisionRouter } from "~/server/api/routers/decision";
+import { decisionCardRouter } from "~/server/api/routers/decision-card";
 import { earningsRouter } from "~/server/api/routers/earnings";
 import { entityRouter } from "~/server/api/routers/entity";
 import { feedRouter } from "~/server/api/routers/feed";
@@ -38,6 +39,7 @@ export const appRouter = createTRPCRouter({
   brief: briefRouter,
   bookmarks: bookmarksRouter,
   decision: decisionRouter,
+  decisionCard: decisionCardRouter,
   earnings: earningsRouter,
   entity: entityRouter,
   feed: feedRouter,

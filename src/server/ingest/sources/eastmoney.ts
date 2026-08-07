@@ -50,6 +50,7 @@ export const eastmoneyFastNews: SourceDef = {
         "User-Agent": "Mozilla/5.0 (jieniu-ingest)",
         Referer: "https://kuaixun.eastmoney.com/",
       },
+      signal: AbortSignal.timeout(15000), // 与 eastmoney-report-sweep 的 15s 一致
     });
     if (!res.ok) throw new Error(`eastmoney ${res.status}`);
     const json = (await res.json()) as EmResp;

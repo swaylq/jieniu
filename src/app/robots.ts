@@ -9,7 +9,7 @@ export default function robots(): MetadataRoute.Robots {
       allow: "/",
       // 用户私有 / 无 SEO 价值的路由不放进索引。
       disallow: [
-        "/api/",
+        "/admin",
         "/settings",
         "/profile",
         "/notifications",

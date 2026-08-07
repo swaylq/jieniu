@@ -10,7 +10,7 @@ import { entityTypeLabel } from "~/lib/format";
 import { collapseAnnouncementBursts } from "~/lib/announcements";
 import { groupByMonth, isExpanded, spanSummary } from "~/lib/milestones";
 import { resolveQuoteTicker, type RelationBucket } from "~/lib/entity-graph";
-import { nameWithCode } from "~/lib/watch-label";
+import { nameWithCode, splitNameCode } from "~/lib/watch-label";
 import { ecosystemPeers } from "~/lib/relation-view";
 import { EntityTabs } from "../../_components/entity-tabs";
 import { asStringArray, type ThesisDimension } from "~/lib/thesis";
@@ -54,6 +54,9 @@ import { upcomingDisclosureNodes } from "~/lib/earnings-calendar";
 import { isAShareTicker } from "~/lib/quote";
 import { EventTimeline } from "../../_components/event-timeline-card";
 import { buildEventTimeline } from "~/lib/event-timeline";
+import { DecisionCard } from "./decision-card";
+import { HeaderQuote } from "./header-quote";
+import { buildDecisionCard } from "~/lib/decision-card";
 
 export const dynamic = "force-dynamic";
 
@@ -162,6 +165,8 @@ export default async function EntityPage({
     holding,
     decisions,
     userThesis,
+    priceAlerts,
+    marketInputs,
   ] = await Promise.all([
     getEntityData(id),
     api.entity.newsPage({ id, tab: listTab, page: pageNum }),
@@ -182,6 +187,15 @@ export default async function EntityPage({
     session?.user
       ? api.userThesis.get({ entityId: id })
       : (null as Awaited<ReturnType<typeof api.userThesis.get>>),
+    // 到价提醒：观察卡的「价格条件」那一行要它。**不需要**取行情——触发与否
+    // cron 比价时已经写回这张表（active/triggeredAt），读状态就够，
+    // 不能为了一行状态把外部行情请求拖回关键路径（那是 QuoteCard 走 Suspense 的原因）。
+    session?.user
+      ? api.priceAlert.listByEntity({ entityId: id })
+      : ([] as Awaited<ReturnType<typeof api.priceAlert.listByEntity>>),
+    // 决策卡的市场侧原料（日线/结构化事件/一致预期/解禁/融资），配对两侧合并取。
+    // 必须留在这个 Promise.all 里——单独 await 就是又加一道串行波。
+    api.decisionCard.marketInputs({ id }),
     // 埋点（2026-08-02 复盘）：此前只有 view_news / view_notifications 两种，
     // 于是「用户到底在看哪只股、哪个模块」这个问题根本没有数据可答。匿名的会被 router 丢掉。
     session?.user
@@ -389,7 +403,7 @@ export default async function EntityPage({
     : [];
   const thesisBlock =
     userThesis && myDims.length > 0 ? (
-      <div className="mb-6">
+      <div id="logic" className="mb-6 scroll-mt-20">
         <MyThesisCard
           entityId={id}
           name={displayName}
@@ -401,7 +415,7 @@ export default async function EntityPage({
         />
       </div>
     ) : thesisData ? (
-      <div className="mb-6">
+      <div id="logic" className="mb-6 scroll-mt-20">
         <ThesisCard
           name={displayName}
           data={thesisData}
@@ -414,7 +428,46 @@ export default async function EntityPage({
     ) : entity.type === "COMPANY" || entity.type === "STOCK" ? (
       // 没有 thesis 时**不能不渲染**——那样「有的页有、有的页没有」，用户会以为这只股不支持。
       // 改成占位卡 + 客户端触发按需生成（服务端直接生成会把 SSR 拖 ~16s）。
-      <ThesisPending entityId={id} name={displayName} />
+      <div id="logic" className="scroll-mt-20">
+        <ThesisPending entityId={id} name={displayName} />
+      </div>
+    ) : null;
+
+  /**
+   * 个股决策卡（第一屏）：先给结论，再把它拆成五个各自带依据的模型，最后是「我的条件」。
+   * 判定是纯规则、零 AI，见 `lib/decision-card.ts`。只对**登录用户 + 公司/股票**渲染——
+   * 它讲的是「你」的计划与逻辑，匿名访客那份是空的。
+   *
+   * 信号传的是**未个性化**的全量：个性化（按重点/敏感度/静音过滤）在引擎内部按维度做，
+   * 因为条件完成度那一块要能说清「这条是被你自己的敏感度挡掉的」——先在外面滤一道
+   * 就丢掉了这个信息。展示层仍与「我的投资逻辑」卡对得上：两边用的是同一套阈值。
+   */
+  const decisionCard =
+    session?.user && (entity.type === "COMPANY" || entity.type === "STOCK") ? (
+      <div className="mb-5">
+        <DecisionCard
+          // 卡底那句免责是散文，要的是「中际旭创」而不是「中际旭创(300308)」——
+          // STOCK 的代码是烙在名字里的字符串，句子里带着它读起来像机器写的。
+          name={splitNameCode(entity.name).name}
+          card={buildDecisionCard({
+            dims: myDims,
+            signals: thesisSignals.items,
+            dropped: thesisSignals.dropped,
+            alerts: priceAlerts.map((a) => ({
+              active: a.active,
+              triggeredAt: a.triggeredAt,
+              label: `${a.direction === "above" ? "涨到" : "跌到"} ${a.threshold} 元`,
+            })),
+            bars: marketInputs.bars,
+            events: marketInputs.events,
+            consensus: marketInputs.consensus,
+            unlock: marketInputs.unlock,
+            margin: marketInputs.margin,
+          })}
+          logicHref={`/entity/${id}#logic`}
+          planHref={`/entity/${id}#decision`}
+        />
+      </div>
     ) : null;
   const ecosystemBlock =
     ecosystem.sectors.length > 0 || ecosystem.peers.length > 0 ? (
@@ -495,15 +548,25 @@ export default async function EntityPage({
             </p>
           ) : null}
         </div>
-        <FollowButton
-          entityId={entity.id}
-          loggedIn={!!session?.user}
-          initialFollowing={following}
-        />
+        {/* 名称在左、价格在右，同一行（概念稿的版式）。观察卡搬到第一屏之后，
+            行情卡被顶到一屏半以下，这份紧凑行情把价格留在了首屏。 */}
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <FollowButton
+            entityId={entity.id}
+            loggedIn={!!session?.user}
+            initialFollowing={following}
+          />
+          {quotable ? <HeaderQuote ticker={quoteTicker!} /> : null}
+        </div>
       </div>
 
+      {/* 决策卡横跨整宽、排在两栏网格之上——它是这一页的结论，不属于任何一栏。 */}
+      {decisionCard ? <div className="mt-5">{decisionCard}</div> : null}
+
       {hasRail ? (
-        <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-8">
+        <div
+          className={`grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-8 ${decisionCard ? "mt-0" : "mt-5"}`}
+        >
           {/* 移动端内容层级：原来右栏整块排在主内容**前面**，手机上要先滚过 行情/我的/记分卡/相关
               四张卡（约 1600px）才看得到「投资逻辑」——产品最核心的内容被上下文信息压在下面。
               这里用 display:contents 让 aside 的子卡在移动端直接成为网格项、可各自 order：
@@ -543,12 +606,19 @@ export default async function EntityPage({
                 id="decision"
                 className="divide-line border-brand/25 bg-brand/[0.03] order-2 scroll-mt-20 divide-y rounded-xl border shadow-sm lg:order-none"
               >
-                <div className="flex items-center gap-2 px-4 pt-3 pb-2">
+                {/* 「我的」→「我的计划」，并把「仅自己可见 · 用户自设」明写出来（借自决策卡概念稿）。
+                    这不是措辞美化：这张卡里的数字（成本 / 观察位）与右上角行情、估值那些
+                    平台取来的数字长得一样，不标出处的话用户分不清哪些是自己设的、哪些是解牛给的。
+                    概念稿把每一格都挂了「用户自设」，这里收敛成卡头一处——解牛这张卡本来就整块都是用户的。 */}
+                <div className="flex items-baseline gap-2 px-4 pt-3 pb-2">
                   <span
-                    className="bg-brand h-4 w-1.5 rounded-full"
+                    className="bg-brand mt-0.5 h-4 w-1.5 shrink-0 self-center rounded-full"
                     aria-hidden
                   />
-                  <h3 className="text-ink text-sm font-bold">我的</h3>
+                  <h3 className="text-ink text-sm font-bold">我的计划</h3>
+                  <span className="text-faint ml-auto shrink-0 text-[11px]">
+                    仅自己可见 · 用户自设
+                  </span>
                 </div>
 
                 <div className="px-4 py-3">
@@ -616,7 +686,7 @@ export default async function EntityPage({
           </div>
         </div>
       ) : (
-        <div className="mt-5">
+        <div className={decisionCard ? "" : "mt-5"}>
           {thesisBlock}
           {timelineBlock}
           {catalystBlock}

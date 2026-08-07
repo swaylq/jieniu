@@ -1,11 +1,14 @@
 // 定时任务运行记录（只读）。
 //
-// 现在**不设防**——sway 的决定是「先直接挂着，后续增加超管」。所以：
-//   · 只读，不放任何触发 / 禁用按钮（公网可达的页面上放能改数据的按钮，风险不对等）
-//   · robots noindex
+// 需要登录才能看（未登录 redirect 到 /login?returnTo=/admin/jobs）。仍然只读，
+// 不放任何触发 / 禁用按钮——能改数据的按钮不该出现在任何登录用户都能访问的页面上。
+//   · robots noindex（robots.ts 里也对 /admin 整体 disallow，双保险）
 //   · output 已在 runner 里脱敏（脚本 stdout 里有真实用户邮箱）
-// 超管落地前，不要在本页加任何写操作。
+// 不要在本页加任何写操作。
 
+import { redirect } from "next/navigation";
+
+import { auth } from "~/server/auth";
 import { db } from "~/server/db";
 import { displayCls } from "../../_components/section-head";
 
@@ -45,6 +48,9 @@ function fmt(d: Date | null): string {
 type AlertRow = { id: string; message: string };
 
 export default async function AdminJobsPage() {
+  const session = await auth();
+  if (!session?.user) redirect("/login?returnTo=/admin/jobs");
+
   const [states, runs] = await Promise.all([
     db.jobState.findMany({ orderBy: { key: "asc" } }),
     db.jobRun.findMany({ orderBy: { firedAt: "desc" }, take: 200 }),
