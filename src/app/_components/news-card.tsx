@@ -60,22 +60,31 @@ export function NewsCard({
         unread ? "border-brand/40 ring-brand/40 ring-1" : "border-line/70"
       }`}
     >
-      <div className="text-muted mb-2.5 flex items-center gap-2 text-xs">
-        <span className={tierBadgeClass(n.tier)}>
+      {/* meta 行在移动端会放不下（实测 390px 屏：自然宽 ~405px，可用 326px）。原来是不换行的单行
+          flex，于是每个徽标各自被压扁、在字之间折行——「媒体」竖成两个字、「东方财富·个股资讯」
+          断成两行（sway 2026-08-08 截图）。改成：每块自己绝不折行（`shrink-0 whitespace-nowrap`），
+          放不下就整块换行（`flex-wrap`）。桌面照旧一行，小屏是「元数据一行 + 操作右对齐一行」。 */}
+      <div className="text-muted mb-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        <span className={`${tierBadgeClass(n.tier)} shrink-0 whitespace-nowrap`}>
           {sourceTierLabel(n.tier)}
         </span>
-        <span>{n.source.name}</span>
-        <span aria-hidden>·</span>
+        {/* 来源名是这行里唯一允许被截断的：长到一行装不下时省略号，别把两个字劈开 */}
+        <span className="min-w-0 truncate" title={n.source.name}>
+          {n.source.name}
+        </span>
+        <span aria-hidden className="shrink-0">
+          ·
+        </span>
         <time
           dateTime={published.toISOString()}
           title={published.toLocaleString("zh-CN", { hour12: false })}
-          className="tabular"
+          className="tabular shrink-0 whitespace-nowrap"
         >
           {relativeTime(published)}
         </time>
         {unread ? (
           <span
-            className="bg-brand/10 text-brand rounded-full px-2 py-0.5 text-[11px] font-medium"
+            className="bg-brand/10 text-brand shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap"
             aria-label="未读"
           >
             新
@@ -85,7 +94,7 @@ export function NewsCard({
         {nov.tone === "weak" ? (
           <span
             title={nov.hint}
-            className="border-line text-muted rounded border px-1.5 py-0.5 text-[11px] font-medium"
+            className="border-line text-muted shrink-0 rounded border px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap"
           >
             {novText}
           </span>
