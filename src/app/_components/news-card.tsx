@@ -24,6 +24,7 @@ export type NewsCardItem = {
   source: { name: string };
   event?: { count: number } | null; // 同事件多篇（P4-7），可选
   burstCount?: number; // 同日一手公告轰炸折叠后、当日其余份数（run10），可选
+  reprintCount?: number; // 媒体转载折叠后、被折掉的同稿份数（见 lib/reprint.ts），可选
 };
 
 /**
@@ -137,6 +138,11 @@ export function NewsCard({
       {n.burstCount && n.burstCount > 0 ? (
         <p className="text-muted mt-2 text-xs">
           同日另有 {n.burstCount} 份公告，多为同一事件的程序性文件，已折叠
+        </p>
+      ) : null}
+      {n.reprintCount && n.reprintCount > 0 ? (
+        <p className="text-muted mt-2 text-xs">
+          另有 {n.reprintCount} 条同内容报道（各家媒体转发同一篇稿），已折叠
         </p>
       ) : null}
       <InterpretationPanel newsId={n.id} title={n.title} summary={n.summary} />

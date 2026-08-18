@@ -8,6 +8,7 @@ import { SITE_DESCRIPTION, abs, openGraph, twitter } from "~/lib/seo";
 import { auth } from "~/server/auth";
 import { entityTypeLabel } from "~/lib/format";
 import { collapseAnnouncementBursts } from "~/lib/announcements";
+import { collapseReprints } from "~/lib/reprint";
 import { groupByMonth, isExpanded, spanSummary } from "~/lib/milestones";
 import { resolveQuoteTicker, type RelationBucket } from "~/lib/entity-graph";
 import { nameWithCode, splitNameCode } from "~/lib/watch-label";
@@ -203,14 +204,21 @@ export default async function EntityPage({
       : Promise.resolve({ ok: false as const }),
   ]);
   if (!data) notFound();
-  // 折叠同日一手公告轰炸（定增/重组当天甩十几份程序性文档）——两个 tab 都受益，避免单事件刷屏。
+  // 两道折叠，各管一头：`collapseAnnouncementBursts` 折同日一手公告轰炸（定增/重组当天甩十几份
+  // 程序性文档），`collapseReprints` 折媒体转载（同一篇通稿被十几家媒体改标题转发——sway 2026-08-18
+  // 报的「不同渠道的频准激光上市新闻，内容都一样」）。前者只碰 PRIMARY、后者只碰 MEDIA，互不干涉。
   // 折叠只作用于**当前这一页**：全量条数以库里的 total 为准，见下方分页条。
   // 「研报」tab 例外：同日多家券商发同一主题正是要看的东西（财报后一天十几篇点评），
   // 折叠会把它当轰炸只留一条，反而把清单打残。
   const news =
     tab === "report"
-      ? newsPage.items.map((n) => ({ ...n, burstCount: 0 }))
-      : collapseAnnouncementBursts(newsPage.items);
+      ? newsPage.items.map((n) => ({ ...n, burstCount: 0, reprintCount: 0 }))
+      : collapseReprints(
+          collapseAnnouncementBursts(newsPage.items),
+          // 代表条挑「标题点到本页这只股」的那条：一簇转载里常混着早报，
+          // 露出来的必须是说清这件事的那篇。见 lib/reprint.ts。
+          data.entity,
+        );
   const { entity, groups } = data;
   // 行情 ticker：STOCK 用自己的、COMPANY 用其发行股票(stocks 桶)；SECTOR/PERSON 无行情
   // （见 resolveQuoteTicker——不再从全部关系桶抓，否则 SECTOR 会把成分股行情当板块行情，run 61 修）。

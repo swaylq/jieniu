@@ -5,6 +5,7 @@ import { type Metadata } from "next";
 import { api } from "~/trpc/server";
 import { auth } from "~/server/auth";
 import { NewsCard } from "../_components/news-card";
+import { collapseReprints } from "~/lib/reprint";
 import { AddWatchButton } from "../_components/add-watch-sheet";
 import { displayCls, primaryBtn } from "../_components/section-head";
 import { abs, openGraph, twitter } from "~/lib/seo";
@@ -64,7 +65,10 @@ export default async function FeedPage() {
     );
   }
 
-  const { items } = await api.feed.myFeed();
+  const { items: rawItems } = await api.feed.myFeed();
+  // 同一篇通稿被十几家媒体转发时，自选流会被一件事刷满一屏（见 lib/reprint.ts）。
+  // 这里不传 subject——自选流跨多只股，没有「本页主体」可用，退回「非早报 → 重要性 → 最新」挑代表。
+  const items = collapseReprints(rawItems);
 
   return (
     <main className="mx-auto max-w-2xl p-4 lg:max-w-4xl">
