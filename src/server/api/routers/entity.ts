@@ -23,6 +23,12 @@ import { dedupeSectorMembers, type SectorMember } from "~/lib/sector-members";
 import { dedupeSearchResults } from "~/lib/search";
 import { classifyStockQuery, normalizeStockName } from "~/lib/add-stock";
 import { REPORT_EVENT_TYPE } from "~/lib/research-reports";
+import {
+  SUBJECT_AUTHORITATIVE_KINDS,
+  isFeedOwnItem,
+  subjectTokens,
+  type SubjectEntity,
+} from "~/lib/news-subject";
 import { isSeedableStock } from "~/lib/universe";
 import { qualifyStoredSignal, type EvidenceGrade } from "~/lib/evidence";
 import type { SourceLevel } from "~/lib/evidence-source";
@@ -649,52 +655,130 @@ export const entityRouter = createTRPCRouter({
       z.object({
         id: z.string(),
         tab: z.enum(["news", "announce", "report"]).default("news"),
+        /**
+         * 「资讯」tab 的口径（2026-08-18）：`own` 只留这家公司自己的事，`all` 是原来的全量。
+         * 「公告 / 研报」两个 tab 不受影响——它们本来就只收主体明确的体裁。
+         */
+        scope: z.enum(["all", "own"]).default("all"),
         page: z.number().min(1).max(500).default(1),
         perPage: z.number().min(10).max(100).default(40),
       }),
     )
     .query(async ({ ctx, input }) => {
       const base = { entities: { some: { entityId: input.id } } };
+      // 一家公司的**全部身份**：COMPANY 与它 ISSUES 出来的 STOCK 是两个实体，
+      // 名字/别名/代码分散在两侧（COMPANY 无 ticker，STOCK 名字带代码后缀），判主体要合起来看。
+      const self = await ctx.db.entity.findUnique({
+        where: { id: input.id },
+        select: {
+          name: true,
+          shortName: true,
+          aliases: true,
+          ticker: true,
+          relFrom: {
+            where: { type: "ISSUES" as const },
+            select: {
+              to: {
+                select: { name: true, shortName: true, aliases: true, ticker: true },
+              },
+            },
+          },
+          relTo: {
+            where: { type: "ISSUES" as const },
+            select: {
+              from: {
+                select: { name: true, shortName: true, aliases: true, ticker: true },
+              },
+            },
+          },
+        },
+      });
+      const identities: SubjectEntity[] = self
+        ? [
+            self,
+            ...self.relFrom.map((r) => r.to),
+            ...self.relTo.map((r) => r.from),
+          ]
+        : [];
+      /**
+       * 「自有」的 SQL 表达，与 `isFeedOwnItem` 一一对应：标题命中任一别名 **或** 来源体裁权威。
+       * 别名两种写法都放进来（`subjectTokens` 会转半角，而库里的标题可能是全角「粤高速Ａ」），
+       * 免得这类名字在 own 口径下被整只筛没。
+       */
+      const tokens = [
+        ...new Set(
+          identities
+            .flatMap((e) => [
+              ...subjectTokens(e),
+              e.name,
+              e.shortName ?? "",
+              ...(e.aliases ?? []),
+            ])
+            .map((t) => t.trim())
+            .filter((t) => t.length >= 2),
+        ),
+      ];
+      const ownWhere = {
+        ...base,
+        OR: [
+          { source: { kind: { in: [...SUBJECT_AUTHORITATIVE_KINDS] } } },
+          ...tokens.map((t) => ({
+            title: { contains: t, mode: "insensitive" as const },
+          })),
+        ],
+      };
+      const newsWhere = input.scope === "own" ? ownWhere : base;
       const where =
         input.tab === "announce"
           ? { ...base, tier: "PRIMARY" as const }
           : input.tab === "report"
             ? { ...base, eventType: REPORT_EVENT_TYPE }
-            : base;
-      const [total, announceTotal, reportTotal, items] = await Promise.all([
-        ctx.db.newsItem.count({ where: base }),
-        ctx.db.newsItem.count({ where: { ...base, tier: "PRIMARY" } }),
-        ctx.db.newsItem.count({
-          where: { ...base, eventType: REPORT_EVENT_TYPE },
-        }),
-        ctx.db.newsItem.findMany({
-          where,
-          orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
-          skip: (input.page - 1) * input.perPage,
-          take: input.perPage,
-          select: {
-            id: true,
-            title: true,
-            url: true,
-            summary: true,
-            brief: true,
-            tier: true,
-            importance: true,
-            publishedAt: true,
-            source: { select: { name: true } },
-            event: { select: { count: true } },
-          },
-        }),
-      ]);
+            : newsWhere;
+      const [total, ownTotal, announceTotal, reportTotal, items] =
+        await Promise.all([
+          ctx.db.newsItem.count({ where: base }),
+          ctx.db.newsItem.count({ where: ownWhere }),
+          ctx.db.newsItem.count({ where: { ...base, tier: "PRIMARY" } }),
+          ctx.db.newsItem.count({
+            where: { ...base, eventType: REPORT_EVENT_TYPE },
+          }),
+          ctx.db.newsItem.findMany({
+            where,
+            orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
+            skip: (input.page - 1) * input.perPage,
+            take: input.perPage,
+            select: {
+              id: true,
+              title: true,
+              url: true,
+              summary: true,
+              brief: true,
+              tier: true,
+              importance: true,
+              publishedAt: true,
+              source: { select: { name: true, kind: true } },
+              event: { select: { count: true } },
+            },
+          }),
+        ]);
       const shown =
         input.tab === "announce"
           ? announceTotal
           : input.tab === "report"
             ? reportTotal
-            : total;
+            : input.scope === "own"
+              ? ownTotal
+              : total;
       return {
-        items,
+        // `own=false` ＝ 标题没点到这家公司、来源体裁也不权威，也就是「别人家的事，正文里提了它一句」。
+        // 卡片据此打「仅提及」角标；口径与上面 own 那道 where 同源（见 lib/news-subject）。
+        items: items.map(({ source, ...n }) => ({
+          ...n,
+          source: { name: source.name },
+          own: isFeedOwnItem({ title: n.title, sourceKind: source.kind }, identities),
+        })),
         newsTotal: total,
+        ownTotal,
         announceTotal,
         reportTotal,
         page: input.page,

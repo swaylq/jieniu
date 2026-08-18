@@ -6,7 +6,7 @@
 // 给 tab 的 `<Link>` 加 `scroll={false}` 修不掉——那只关掉 Next 自己的滚动，管不到这个组件。
 //
 // 判定分三档（2026-07-31 sway 又报「翻页的时候页面又会滚到最上面」后细化）：
-//   切 tab → 留在原地；翻页 → 滚到 tab 条（列表顶部，配合 sticky 的 tab 条正好衔接）；
+//   切 tab → 留在原地；翻页 / 切「本公司·全部」 → 滚到 tab 条（列表顶部，配合 sticky 的 tab 条正好衔接）；
 //   换实体页 / 改搜索词 → 回整页顶部。
 // 翻页原来也回整页顶部，意味着翻一页就得重新往下滚一大段，这正是 sway 报的那件事。
 
@@ -27,6 +27,11 @@ function pageOf(search: string): string {
   return new URLSearchParams(search).get("page") ?? "";
 }
 
+/** 「资讯」tab 里的「本公司 / 全部」开关（2026-08-18）：与翻页同类——换的是同一个列表的内容。 */
+function scopeOf(search: string): string {
+  return new URLSearchParams(search).get("scope") ?? "";
+}
+
 /**
  * 路由变化后内容区该怎么动：
  * - `none` —— 留在原地（切 tab；首次挂载也归此类，没有「上一个位置」可言）
@@ -43,6 +48,9 @@ export function scrollAction(prev: Loc | null, next: Loc): ScrollAction {
   if (prev.pathname !== next.pathname) return "top";
   if (tabOf(prev.search) !== tabOf(next.search)) return "none"; // 切 tab：留在原地
   if (pageOf(prev.search) !== pageOf(next.search)) return "tabs"; // 翻页：回列表顶部
+  // 切「本公司 / 全部」同理：换的是同一个列表的内容，回列表顶部而不是整页顶部
+  // （开关就画在 tab 条下面，弹回页首等于把人从刚点的那个控件旁边甩走）。
+  if (scopeOf(prev.search) !== scopeOf(next.search)) return "tabs";
   return canonical(prev.search) !== canonical(next.search) ? "top" : "none";
 }
 

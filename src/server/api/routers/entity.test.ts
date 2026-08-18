@@ -265,23 +265,64 @@ describe("entityRouter.milestones", () => {
 });
 
 describe("entityRouter.newsPage", () => {
-  it("按 tier 直接分页取公告（不是在资讯里筛），并返回两个 tab 的总数", async () => {
-    const rows = [{ id: "n1", title: "回购进展", tier: "PRIMARY" }];
-    const findMany = vi.fn().mockResolvedValue(rows);
-    const count = vi
+  // 判「这条是不是这家公司自己的事」要拿它的全部身份（COMPANY 与它 ISSUES 的 STOCK 是两个实体，
+  // 名字/代码分散在两侧），所以 newsPage 会先取一次实体。
+  const ENTITY = {
+    name: "国盾量子",
+    shortName: null,
+    aliases: [],
+    ticker: null,
+    relFrom: [
+      {
+        to: {
+          name: "国盾量子(688027)",
+          shortName: null,
+          aliases: [],
+          ticker: "688027",
+        },
+      },
+    ],
+    relTo: [],
+  };
+  const entityDb = () => ({ findUnique: vi.fn().mockResolvedValue(ENTITY) });
+  /** count 的调用顺序：资讯总数 → 自有总数 → 公告总数 → 研报总数 */
+  const counts = (all: number, own: number, ann: number, rep: number) =>
+    vi
       .fn()
-      .mockResolvedValueOnce(352) // 资讯总数
-      .mockResolvedValueOnce(240) // 公告总数
-      .mockResolvedValueOnce(18); // 研报总数
+      .mockResolvedValueOnce(all)
+      .mockResolvedValueOnce(own)
+      .mockResolvedValueOnce(ann)
+      .mockResolvedValueOnce(rep);
+
+  it("按 tier 直接分页取公告（不是在资讯里筛），并返回各 tab 的总数", async () => {
+    const rows = [
+      {
+        id: "n1",
+        title: "回购进展",
+        tier: "PRIMARY",
+        source: { name: "巨潮资讯·公告", kind: "official-filing" },
+      },
+    ];
+    const findMany = vi.fn().mockResolvedValue(rows);
     const res = await makeCaller({
-      newsItem: { findMany, count },
+      newsItem: { findMany, count: counts(352, 300, 240, 18) },
+      entity: entityDb(),
     }).newsPage({ id: "c1", tab: "announce", page: 3, perPage: 40 });
 
     expect(res.newsTotal).toBe(352);
+    expect(res.ownTotal).toBe(300);
     expect(res.announceTotal).toBe(240);
     expect(res.page).toBe(3);
     expect(res.pages).toBe(6); // ceil(240/40)
-    expect(res.items).toEqual(rows);
+    expect(res.items).toEqual([
+      {
+        id: "n1",
+        title: "回购进展",
+        tier: "PRIMARY",
+        source: { name: "巨潮资讯·公告" },
+        own: true, // 一手公告：来源体裁已定主体，标题不带公司名也算自有
+      },
+    ]);
 
     const arg = findMany.mock.calls[0]?.[0] as {
       where: { tier?: string };
@@ -295,36 +336,69 @@ describe("entityRouter.newsPage", () => {
     expect(arg.orderBy).toEqual([{ publishedAt: "desc" }, { id: "desc" }]);
   });
 
-  it("资讯 tab 不加 tier 过滤，页数按资讯总数算", async () => {
+  it("资讯 tab 默认全量口径：不加 tier、不加主体过滤，页数按资讯总数算", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
-    const count = vi
-      .fn()
-      .mockResolvedValueOnce(90)
-      .mockResolvedValueOnce(30)
-      .mockResolvedValueOnce(12);
-    const res = await makeCaller({ newsItem: { findMany, count } }).newsPage({
-      id: "c1",
-      perPage: 40,
-    });
-    const arg = findMany.mock.calls[0]?.[0] as { where: { tier?: string } };
+    const res = await makeCaller({
+      newsItem: { findMany, count: counts(90, 40, 30, 12) },
+      entity: entityDb(),
+    }).newsPage({ id: "c1", perPage: 40 });
+    const arg = findMany.mock.calls[0]?.[0] as {
+      where: { tier?: string; OR?: unknown };
+    };
     expect(arg.where.tier).toBeUndefined();
+    expect(arg.where.OR).toBeUndefined();
     expect(res.pages).toBe(3); // ceil(90/40)
     // 研报数随每次取页返回——一致预期卡靠它决定给不给「看研报」入口
     expect(res.reportTotal).toBe(12);
   });
 
+  it("scope=own：标题命中任一身份 或 来源体裁权威，页数按自有总数算", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const res = await makeCaller({
+      newsItem: { findMany, count: counts(90, 40, 30, 12) },
+      entity: entityDb(),
+    }).newsPage({ id: "c1", scope: "own", perPage: 40 });
+    const arg = findMany.mock.calls[0]?.[0] as {
+      where: { OR: { title?: { contains: string }; source?: unknown }[] };
+    };
+    const titles = arg.where.OR.flatMap((c) =>
+      c.title ? [c.title.contains] : [],
+    );
+    // COMPANY 与 STOCK 两侧的名字/代码都要进 where，缺一侧就会把那一半资讯筛掉
+    expect(titles).toContain("国盾量子");
+    expect(titles).toContain("688027");
+    expect(arg.where.OR.some((c) => c.source)).toBe(true);
+    expect(res.pages).toBe(1); // ceil(40/40)
+  });
+
+  it("媒体稿标题没点名 → own=false，卡片据此打「仅提及」", async () => {
+    const findMany = vi.fn().mockResolvedValue([
+      {
+        id: "n1",
+        title: "A股最大“肉签”诞生！中一签最高赚55.65万元",
+        tier: "MEDIA",
+        source: { name: "东方财富·个股资讯", kind: "json-api" },
+      },
+      {
+        id: "n2",
+        title: "国盾量子获纳入上证科创板50成份指数",
+        tier: "MEDIA",
+        source: { name: "东方财富·个股资讯", kind: "json-api" },
+      },
+    ]);
+    const res = await makeCaller({
+      newsItem: { findMany, count: counts(90, 40, 30, 12) },
+      entity: entityDb(),
+    }).newsPage({ id: "c1" });
+    expect(res.items.map((i) => i.own)).toEqual([false, true]);
+  });
+
   it("研报 tab 按 eventType 取（不按源），页数按研报总数算", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
-    const count = vi
-      .fn()
-      .mockResolvedValueOnce(90) // 资讯
-      .mockResolvedValueOnce(30) // 公告
-      .mockResolvedValueOnce(71); // 研报
-    const res = await makeCaller({ newsItem: { findMany, count } }).newsPage({
-      id: "c1",
-      tab: "report",
-      perPage: 40,
-    });
+    const res = await makeCaller({
+      newsItem: { findMany, count: counts(90, 40, 30, 71) },
+      entity: entityDb(),
+    }).newsPage({ id: "c1", tab: "report", perPage: 40 });
     const arg = findMany.mock.calls[0]?.[0] as {
       where: { tier?: string; eventType?: string };
     };
@@ -337,9 +411,10 @@ describe("entityRouter.newsPage", () => {
   it("没有任何资讯时页数仍为 1（不出现 0 页）", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
     const count = vi.fn().mockResolvedValue(0);
-    const res = await makeCaller({ newsItem: { findMany, count } }).newsPage({
-      id: "c1",
-    });
+    const res = await makeCaller({
+      newsItem: { findMany, count },
+      entity: entityDb(),
+    }).newsPage({ id: "c1" });
     expect(res.pages).toBe(1);
   });
 });

@@ -8,6 +8,21 @@ import {
 const loc = (pathname: string, search = ""): Loc => ({ pathname, search });
 
 describe("shouldResetScroll — 换页从头看，切 tab 别把人甩回页首（sway 直报 ②）", () => {
+  it("切「本公司 / 全部」滚到列表顶部，不弹回整页顶部", () => {
+    expect(
+      scrollAction(
+        loc("/entity/x", "tab=news"),
+        loc("/entity/x", "tab=news&scope=all"),
+      ),
+    ).toBe("tabs");
+    expect(
+      scrollAction(
+        loc("/entity/x", "tab=news&scope=all"),
+        loc("/entity/x", "tab=news"),
+      ),
+    ).toBe("tabs");
+  });
+
   it("切 tab 不复位", () => {
     expect(
       scrollAction(loc("/entity/x", "tab=news"), loc("/entity/x", "tab=announce")),

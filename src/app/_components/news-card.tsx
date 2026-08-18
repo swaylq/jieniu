@@ -25,6 +25,7 @@ export type NewsCardItem = {
   event?: { count: number } | null; // 同事件多篇（P4-7），可选
   burstCount?: number; // 同日一手公告轰炸折叠后、当日其余份数（run10），可选
   reprintCount?: number; // 媒体转载折叠后、被折掉的同稿份数（见 lib/reprint.ts），可选
+  mentionOnly?: boolean; // 只是被正文提到、主体是别家（见 lib/news-subject 的 isFeedOwnItem），可选
 };
 
 /**
@@ -98,6 +99,17 @@ export function NewsCard({
             className="border-line text-muted shrink-0 rounded border px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap"
           >
             {novText}
+          </span>
+        ) : null}
+        {/* 「仅提及」：标题没点到这家公司——多半是别人家的事，正文里把它列成客户/同行提了一句。
+            国盾量子页上那一屏频准激光 IPO 报道就是这一类（sway 2026-08-18）。不删只标：
+            产业链消息有时正是要看的，但得让人一眼看出「这条主角不是它」。 */}
+        {n.mentionOnly ? (
+          <span
+            title="标题没点到这家公司——多半是别家的事，正文里顺带提了它一句"
+            className="border-line text-muted shrink-0 rounded border border-dashed px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap"
+          >
+            仅提及
           </span>
         ) : null}
         <span className="ml-auto flex shrink-0 items-center gap-3">

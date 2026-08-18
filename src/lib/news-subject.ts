@@ -133,6 +133,29 @@ export function isOwnFact(row: FactCandidate, entities: SubjectEntity[]): boolea
 }
 
 /**
+ * 浏览流版的「自有」判据（个股页「资讯」tab 的「本公司 / 全部」开关）。
+ *
+ * 与 `isOwnFact` 同一条主判据（标题点名 或 来源体裁权威），但**去掉了扇出闸**
+ * （`boundEntityCount <= 2`）。两个消费者的错误代价不对称：
+ *   · 归因（`isOwnFact`）：多算一条 = 模型据此编出一句因果，是**假话**，宁可留空；
+ *   · 浏览（这里）：多留一条 = 列表里多一条本来就能在「公告」tab 看到的公告，代价很小，
+ *     而少留一条 = 用户在自己公司的页面上看不到自己公司的消息。
+ * 另一层理由是可对齐：这条判据要在 SQL 侧原样表达一遍（标题 LIKE 任一别名 OR 来源 kind 权威）
+ * 才能做服务端分页与计数，而「这条资讯绑了几家公司」在 Prisma 的 where 里表达不出来——
+ * 让内存判据与 SQL 判据一致，好过让开关的数字和列表对不上。
+ *
+ * 判 `mention`（只是提到）时同样用它：返回 false ＝ 标题没点名、来源也不权威，
+ * 也就是「这条是别人家的事，只是正文里提了它一句」。
+ */
+export function isFeedOwnItem(
+  row: { title: string; sourceKind?: string | null },
+  entities: SubjectEntity[],
+): boolean {
+  if (entities.some((e) => titleNamesSubject(row.title, e))) return true;
+  return !!row.sourceKind && SUBJECT_AUTHORITATIVE_KINDS.has(row.sourceKind);
+}
+
+/**
  * 从候选资讯里挑出「主体是这家公司」的那些标题，保序去重、可截断。
  * `entities` 传这家公司的**全部身份**（COMPANY + 它发行的 STOCK 那对孪生实体），
  * 因为名字/别名/代码分散在两侧（COMPANY 无 ticker，STOCK 名字带代码后缀）。

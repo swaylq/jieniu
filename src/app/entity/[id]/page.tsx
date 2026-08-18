@@ -14,6 +14,7 @@ import { resolveQuoteTicker, type RelationBucket } from "~/lib/entity-graph";
 import { nameWithCode, splitNameCode } from "~/lib/watch-label";
 import { ecosystemPeers } from "~/lib/relation-view";
 import { EntityTabs } from "../../_components/entity-tabs";
+import { NewsScopeSwitch } from "../../_components/news-scope-switch";
 import { asStringArray, type ThesisDimension } from "~/lib/thesis";
 import { normalizeUserDimensions } from "~/lib/user-thesis";
 import { FollowButton } from "./_follow-button";
@@ -126,7 +127,7 @@ export default async function EntityPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string; page?: string }>;
+  searchParams: Promise<{ tab?: string; page?: string; scope?: string }>;
 }) {
   const { id } = await params;
   const sp = await searchParams;
@@ -140,6 +141,13 @@ export default async function EntityPage({
   const pageNum = Math.max(1, Number(sp.page) || 1);
   const listTab =
     tab === "announce" ? "announce" : tab === "report" ? "report" : "news";
+  /**
+   * 「资讯」tab 的口径，**默认只看本公司**（2026-08-18）。绑定是召回导向的（个股资讯源按名字
+   * 全文搜索，摘要里的顺带提及也绑），自己没消息的日子会被别人家的大新闻整屏刷掉——
+   * sway 报的国盾量子页最近 40 条里只有 3 条是它自己的事。`?scope=all` 一键回全量，
+   * 两个数字都画在开关上，见 `NewsScopeSwitch`。
+   */
+  const scope: "own" | "all" = sp.scope === "all" ? "all" : "own";
 
   /**
    * 取数刻意压成「一次 `auth()` + 一个 `Promise.all`」。
@@ -170,7 +178,7 @@ export default async function EntityPage({
     marketInputs,
   ] = await Promise.all([
     getEntityData(id),
-    api.entity.newsPage({ id, tab: listTab, page: pageNum }),
+    api.entity.newsPage({ id, tab: listTab, scope, page: pageNum }),
     api.entity.milestones({ id, months: 12 }),
     api.entity.scorecard({ id }),
     api.entity.thesis({ id }),
@@ -272,7 +280,11 @@ export default async function EntityPage({
       ? "暂无公告"
       : tab === "report"
         ? "暂无收录的机构研报"
-        : "暂无相关资讯";
+        : scope === "own" && newsPage.newsTotal > 0
+          ? // 自有为空但全量有货：别只说「暂无」，把出口指出来——这只股确实没有自己的消息，
+            // 但有一堆「提到它」的行业动态，那正是用户下一步想看的。
+            "本公司暂无自有资讯——上面切到「全部」，可看只在正文里提到本公司的行业动态"
+          : "暂无相关资讯";
 
   // 关系去重扁平化，供右栏「相关」卡片使用
   const relatedFlat = Array.from(
@@ -342,10 +354,17 @@ export default async function EntityPage({
               </details>
             ))}
           </div>
-        ) : listItems.length === 0 ? (
-          <p className="text-muted text-sm">{emptyMsg}</p>
         ) : (
           <>
+            {/* 口径开关画在列表之上、空态之前——自有为 0 时它正是唯一的出口 */}
+            {tab === "news" ? (
+              <NewsScopeSwitch
+                basePath={`/entity/${id}`}
+                scope={scope}
+                ownTotal={newsPage.ownTotal}
+                allTotal={newsPage.newsTotal}
+              />
+            ) : null}
             {tab === "report" ? (
               <p className="text-muted mb-3 text-xs leading-relaxed">
                 券商研报在这里是
@@ -354,24 +373,42 @@ export default async function EntityPage({
                 也不代表解牛观点。
               </p>
             ) : null}
-            <ul className="space-y-3">
-              {listItems.map((n) => (
-                <NewsCard key={n.id} n={n} />
-              ))}
-            </ul>
-            <Pager
-              basePath={`/entity/${id}`}
-              params={{ tab }}
-              page={newsPage.page}
-              pages={newsPage.pages}
-              total={
-                tab === "announce"
-                  ? newsPage.announceTotal
-                  : tab === "report"
-                    ? newsPage.reportTotal
-                    : newsPage.newsTotal
-              }
-            />
+            {listItems.length === 0 ? (
+              <p className="text-muted text-sm">{emptyMsg}</p>
+            ) : (
+              <>
+                <ul className="space-y-3">
+                  {listItems.map((n) => (
+                    <NewsCard
+                      key={n.id}
+                      n={{
+                        ...n,
+                        // 「仅提及」只在全量口径下打标：本公司口径里全是自有，打了是噪声。
+                        mentionOnly:
+                          tab === "news" && scope === "all" && !n.own,
+                      }}
+                    />
+                  ))}
+                </ul>
+                <Pager
+                  basePath={`/entity/${id}`}
+                  params={
+                    tab === "news" && scope === "all" ? { tab, scope } : { tab }
+                  }
+                  page={newsPage.page}
+                  pages={newsPage.pages}
+                  total={
+                    tab === "announce"
+                      ? newsPage.announceTotal
+                      : tab === "report"
+                        ? newsPage.reportTotal
+                        : scope === "own"
+                          ? newsPage.ownTotal
+                          : newsPage.newsTotal
+                  }
+                />
+              </>
+            )}
           </>
         )}
       </div>

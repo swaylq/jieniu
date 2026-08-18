@@ -4,6 +4,7 @@ import {
   subjectTokens,
   titleNamesSubject,
   isOwnFact,
+  isFeedOwnItem,
   pickSubjectFacts,
 } from "./news-subject";
 
@@ -202,5 +203,50 @@ describe("pickSubjectFacts — 只留主体是它的那些", () => {
       { title: "国盾量子：第三件事" },
     ];
     expect(pickSubjectFacts(rows, twin, 2)).toHaveLength(2);
+  });
+});
+
+// 浏览流口径（个股页「资讯」tab 的「本公司 / 全部」开关）。同一批现场夹具，
+// 换成 isFeedOwnItem：与 isOwnFact 同判据，但不看扇出（理由见实现处注释）。
+describe("isFeedOwnItem — 个股资讯流的「本公司」口径", () => {
+  const twin = [
+    GUODUN,
+    { name: "国盾量子", shortName: null, aliases: [], ticker: null },
+  ];
+
+  it("标题点名 → 自有", () => {
+    expect(
+      isFeedOwnItem(
+        { title: "国盾量子：签订量子保密通信网络建设合同", sourceKind: "json-api" },
+        twin,
+      ),
+    ).toBe(true);
+  });
+
+  it("频准激光那批报道 → 仅提及（它只是被列举的客户）", () => {
+    for (const title of MENTION_ONLY) {
+      expect(isFeedOwnItem({ title, sourceKind: "json-api" }, twin)).toBe(false);
+    }
+  });
+
+  it("一手公告 / 结构化事件 / 研报：来源体裁已定主体，标题不带公司名也算自有", () => {
+    for (const kind of ["official-filing", "fund-flow", "report"]) {
+      expect(
+        isFeedOwnItem({ title: "关于回购公司股份进展的公告", sourceKind: kind }, twin),
+      ).toBe(true);
+    }
+  });
+
+  it("不看扇出——同一条公告绑到第二家也照样留在浏览流里（与 isOwnFact 的分野）", () => {
+    const row = { title: "关于某公司股票上市交易的公告", sourceKind: "official-filing" };
+    expect(isFeedOwnItem(row, twin)).toBe(true);
+    // 归因口径把它挡掉：多算一条 = 模型据此编一句因果，代价不对称
+    expect(isOwnFact({ ...row, boundEntityCount: 6 }, twin)).toBe(false);
+  });
+
+  it("代码点名也算（媒体稿常只写代码）", () => {
+    expect(
+      isFeedOwnItem({ title: "688027 获纳入科创50", sourceKind: "json-api" }, twin),
+    ).toBe(true);
   });
 });
