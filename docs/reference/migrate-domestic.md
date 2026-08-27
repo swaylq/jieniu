@@ -52,10 +52,17 @@
 - [x] 证书：`ApplyCertificate`（apex+www，free，HTTP-01，status OK，ESA 托管自动续期）；已删 snapshot 上传证书与 apex-only 冗余证书。线上 wire 证书 SAN=apex+www、notAfter 2026-11-25 07:03（自动续）。
 - [x] 真链路（自动部分）：`https://jieniu.club`/`www` 200、静态 HIT、scheduler `ingest`/`backfill-announcements`/`daily-digest`/`alert-generate` 全部 ok（**无 OpenRouter 403**，daily-digest 587s LLM 全程跑完 → 国内出网正常）。
 
+登录态无缝迁移（2026-08-27 已上线、逻辑级验证全过，commit `ac7face`）：
+
+- 会话是 JWT、两端同一把 AUTH_SECRET，cookie 只认域名；用一次性令牌握手绕过。4 个文件：`src/lib/session-migrate.ts`（常量）、`src/middleware.ts`（老域名页面 → `/api/auth/migrate-start`）、`src/app/api/auth/migrate-start/route.ts`（老域名已登录签发 60s 令牌）、`src/app/api/auth/migrate/route.ts`（新域名消费重签 30 天 cookie）。
+- **回跳地址必须钉死 NEW_ORIGIN**：nginx 回源下 Next 把 origin 探成 `localhost:3838`，从 `req.url` 推导会 303 到 `https://localhost:3838/...` 打不开。
+- 已验证：伪造老域名会话 → migrate-start 302 带 token → migrate 303 落新域名页 + 30 天 cookie 可解码同 sub；垃圾 token 400；未登录直跳首页；真实老域名 middleware 302 正常。
+- 坑：Next 序列化 `SameSite=lax` 是小写；undici fetch 测 middleware 会覆盖 Host，得用 `curl -H Host:`。
+
 待办（E/F，sway）：
 
 - [ ] **sway 真交互验证**：邮箱 OTP 真发（登录收码）、问解牛对话、移动端/PWA、头像显示。
-- [ ] 稳定后旧域名 `jieniu.swaylab.ai` → 301 `https://jieniu.club`。
+- [ ] 旧域名 `jieniu.swaylab.ai` → 301 `https://jieniu.club`。**注意**：301 放边缘（Caddy/nginx redir）会绕过上面的登录握手 → 老域名 cookie 带不过去、用户得重登一次；要保登录态就让老域名继续回源到应用、由 middleware 做带握手的 302 跳转，过一段再硬 301。（等 sway 定）
 - [ ] ECS 重启不自拉起（web nohup、scheduler pm2 `disabled`）——要 `pm2 startup`/systemd 再明确要求。
 
 ## 注意
