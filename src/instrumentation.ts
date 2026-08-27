@@ -52,9 +52,17 @@ export function register() {
     process.env.OPENROUTER_ASK_API_KEY !== process.env.OPENROUTER_API_KEY;
   const askLine = `｜问解牛 → ${askModel}${askKeyOwn ? "（专用 key）" : ""}`;
 
+  /**
+   * 截图识别跑在哪个视觉模型上（2026-08-27）。与问解牛同理：候选链会**静默**降级
+   * （terra → gemini → qwen，见 server/vision-model.ts），启动先把打算用哪档打出来
+   * （真降级了另有 `[vision] 降级` 一行）。默认值刻意与 vision-model.ts 重复一份，免互相 import。
+   */
+  const visionModel = process.env.OPENROUTER_VISION_MODEL ?? "openai/gpt-5.6-terra";
+  const visionLine = `｜截图识别 → ${visionModel}`;
+
   if (missing.length === 0) {
     console.log(
-      `[boot] ✓ 密钥齐全：AI + 邮件可用${smsLine}${askLine}${weakAuth ? " ｜ ⚠ AUTH_SECRET 是弱值（含空格/非 base64），说明没走 scripts/start-prod.sh" : ""}`,
+      `[boot] ✓ 密钥齐全：AI + 邮件可用${smsLine}${askLine}${visionLine}${weakAuth ? " ｜ ⚠ AUTH_SECRET 是弱值（含空格/非 base64），说明没走 scripts/start-prod.sh" : ""}`,
     );
     return;
   }

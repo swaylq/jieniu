@@ -57,6 +57,11 @@ export const env = createEnv({
      */
     OPENROUTER_ASK_MODEL: z.string().optional(),
     OPENROUTER_ASK_API_KEY: z.string().optional(),
+    /**
+     * 持仓截图识别专属视觉模型（2026-08-27）。缺省 openai/gpt-5.6-terra（实测视觉可用），
+     * 候选链与兜底见 `src/server/vision-model.ts`——注意 deepseek 无视觉，兜底链里没有它。
+     */
+    OPENROUTER_VISION_MODEL: z.string().optional(),
   },
 
   /**
@@ -87,6 +92,7 @@ export const env = createEnv({
     OPENROUTER_MODEL: process.env.OPENROUTER_MODEL,
     OPENROUTER_ASK_MODEL: process.env.OPENROUTER_ASK_MODEL,
     OPENROUTER_ASK_API_KEY: process.env.OPENROUTER_ASK_API_KEY,
+    OPENROUTER_VISION_MODEL: process.env.OPENROUTER_VISION_MODEL,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

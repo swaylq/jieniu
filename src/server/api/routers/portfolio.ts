@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { nameWithCode } from "~/lib/watch-label";
 
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
@@ -7,6 +8,16 @@ import { rollUpHoldingChange } from "~/lib/portfolio-change";
 import { propagateImpact } from "~/lib/impact";
 import { parseAppointmentView } from "~/lib/disclosure";
 import { upcomingCatalysts, type CatalystRow } from "~/lib/catalyst-window";
+import { rateLimit } from "~/lib/rate-limit";
+import { decodeImageDataUrl } from "~/server/avatar-store";
+import { extractHoldingsFromImage } from "~/server/vision";
+import { classifyStockQuery, normalizeStockName } from "~/lib/add-stock";
+import { resolveCodeByName, ensureStockEntities } from "~/server/stocks";
+import { fetchQuote } from "~/server/quote";
+import { isSeedableStock } from "~/lib/universe";
+import { buildImportPatch, namesRoughlyMatch } from "~/lib/holding-import";
+import type { VisionRow } from "~/lib/vision-parse";
+import type { PrismaClient } from "../../../../generated/prisma";
 
 const num = z.number().finite().nullable().optional();
 
@@ -375,4 +386,188 @@ export const portfolioRouter = createTRPCRouter({
       });
       return { ok: true, status: input.status };
     }),
+
+  /**
+   * 截图识别持仓（2026-08-27，Blackie 提需求）：券商 App 持仓页截图 → 视觉模型 → 待确认草稿行。
+   *
+   * **绝不写用户的自选**——写入走用户确认后的 importBatch；这里唯一的写副作用是
+   * `ensureStockEntities` 幂等补实体主数据（全站共享、与自助加股同源），不是用户数据。
+   *
+   * 隐私铁律：截图字节只在内存里过一遍发给视觉模型——不落盘、不进日志，
+   * 错误消息里也绝不含图片内容（tRPC 报错路径可能带 input，这里 catch 后重抛干净消息）。
+   */
+  recognizeScreenshot: protectedProcedure
+    .input(z.object({ dataUrl: z.string().max(6_000_000) }))
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.session.user.id;
+      // 视觉模型比文本贵一个量级，限流必须有（同 /api/ask/stream 的思路）。
+      if (!rateLimit(`vision:recognize:${userId}`, 5, 60_000)) {
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: "识别太频繁了，歇一分钟再试。",
+        });
+      }
+      const buf = decodeImageDataUrl(input.dataUrl);
+      if (!buf) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "图片格式不支持，换 PNG / JPEG 截图试试。",
+        });
+      }
+      let run;
+      try {
+        run = await extractHoldingsFromImage(buf);
+      } catch (e) {
+        console.error("[vision] 识别失败：", e instanceof Error ? e.message : e);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "识别服务暂时不可用，稍后再试。",
+        });
+      }
+      const rows = await Promise.all(
+        run.extract.rows.map((r) => resolveScreenshotRow(ctx.db, userId, r)),
+      );
+      // 不同写法的行可能解析到同一只票（模型偶尔把合计行也吐出来），按 entityId 去重留第一个。
+      const seen = new Set<string>();
+      const deduped = rows.filter((r) => {
+        if (r.kind !== "ok") return true;
+        if (seen.has(r.entityId)) return false;
+        seen.add(r.entityId);
+        return true;
+      });
+      return {
+        rows: deduped,
+        skipped: run.extract.skipped,
+        model: run.model,
+        degraded: run.degraded,
+      };
+    }),
+
+  /**
+   * 截图导入的写入端（确认表点「导入」后）：数组版 portfolio.upsert。
+   *
+   * 合并语义：已存在的行**只写截图里真有的字段 + status=HOLDING，已有的值一个不动**——
+   * upsert 的 update 分支会把没传的字段清成 null（add-watch-sheet 注释防过的坑），
+   * 批量导入对已持仓标的再来一遍全量写，等于把用户手录的成本价抹掉。
+   */
+  importBatch: protectedProcedure
+    .input(
+      z.object({
+        rows: z
+          .array(z.object({ entityId: z.string(), costBasis: num, shares: num }))
+          .min(1)
+          .max(50),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.session.user.id;
+      const ids = input.rows.map((r) => r.entityId);
+      let created = 0;
+      let updated = 0;
+      await ctx.db.$transaction(async (tx) => {
+        // 草稿行是识别时解析出来的，但确认期间实体可能被清——先整体验一遍，别半截入库。
+        const found = await tx.entity.count({ where: { id: { in: ids } } });
+        if (found !== new Set(ids).size) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "有标的已失效，请重新识别后再导入。",
+          });
+        }
+        for (const r of input.rows) {
+          const nums = sanitizeHoldingNumbers(r);
+          const patch = buildImportPatch(nums);
+          const key = { userId_entityId: { userId, entityId: r.entityId } };
+          const existing = await tx.watchlist.findUnique({
+            where: key,
+            select: { entityId: true },
+          });
+          if (existing) {
+            await tx.watchlist.update({ where: key, data: patch });
+            updated++;
+          } else {
+            await tx.watchlist.create({
+              data: { userId, entityId: r.entityId, ...patch },
+            });
+            created++;
+          }
+        }
+      });
+      return { created, updated };
+    }),
 });
+
+/** 识别结果里一行的三种归宿：锚定成功 / 暂不支持（港美股基金等）/ 解析失败。 */
+type ScreenshotRow =
+  | {
+      kind: "ok";
+      entityId: string;
+      name: string;
+      ticker: string;
+      match: "matched" | "guessed";
+      shares: number | null;
+      costBasis: number | null;
+      /** 该标的已在用户自选里时的现况（确认表标「已在持仓/观察」用），不在为 null。 */
+      existing: { status: string; costBasis: number | null; shares: number | null } | null;
+    }
+  | { kind: "unsupported"; name: string; reason: string }
+  | { kind: "failed"; name: string; message: string };
+
+/**
+ * 把一行识别结果锚定到库内实体。复用自助加股的成熟管线
+ * （classify → 东财解析 → 行情校验 → 剔 ST/基金 → 幂等建实体），
+ * 但**不调 entity.addStock**——它会顺手把标的写进自选，确认前不能有用户数据的写副作用。
+ */
+async function resolveScreenshotRow(
+  db: Pick<PrismaClient, "entity" | "entityRelation" | "watchlist">,
+  userId: string,
+  row: VisionRow,
+): Promise<ScreenshotRow> {
+  // 代码优先：截图带的 6 位代码最可靠；代码不合法/没有则退回名称解析。
+  const byCode = row.code ? classifyStockQuery(row.code) : { kind: "invalid" as const };
+  let code: string | null = null;
+  let viaNameOnly = false;
+  if (byCode.kind === "code") {
+    code = byCode.code;
+  } else {
+    const byName = classifyStockQuery(row.name);
+    if (byName.kind !== "name") {
+      return { kind: "unsupported", name: row.name, reason: "不是沪深京 A 股个股" };
+    }
+    code = await resolveCodeByName(byName.name);
+    viaNameOnly = true;
+    if (!code) {
+      // 模型被要求把港美股放进 skipped，漏过来的会倒在这里——按「暂不支持」呈给用户更体面。
+      return row.code
+        ? { kind: "unsupported", name: row.name, reason: "不是沪深京 A 股代码" }
+        : { kind: "failed", name: row.name, message: "没找到这个名称对应的 A 股" };
+    }
+  }
+  const quote = await fetchQuote(code);
+  if (!quote) {
+    return { kind: "failed", name: row.name, message: `拉不到 ${code} 的行情` };
+  }
+  const name = normalizeStockName(quote.name);
+  if (!name || !isSeedableStock(name)) {
+    return { kind: "unsupported", name: row.name, reason: "ST / 退市 / 指数 / 基金类暂不收录" };
+  }
+  const { companyId } = await ensureStockEntities(db, name, code, {
+    source: "screenshot-import",
+    addedBy: userId,
+  });
+  const existing = await db.watchlist.findUnique({
+    where: { userId_entityId: { userId, entityId: companyId } },
+    select: { status: true, costBasis: true, shares: true },
+  });
+  return {
+    kind: "ok",
+    entityId: companyId,
+    name,
+    ticker: code,
+    // 代码直中且名字对得上 = matched；只凭名称解析、或名字对不上（模型可能认错代码）
+    // = guessed，确认表里标黄请用户核对——交叉核对是防认错代码的最后一道闸。
+    match: !viaNameOnly && namesRoughlyMatch(row.name, name) ? "matched" : "guessed",
+    shares: row.shares,
+    costBasis: row.cost,
+    existing,
+  };
+}

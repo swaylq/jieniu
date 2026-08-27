@@ -12,6 +12,7 @@ import { UserAvatar } from "../_components/user-avatar";
 import { getViewerAvatar } from "~/server/viewer-avatar";
 import { NewsCard } from "../_components/news-card";
 import { SectionHead, primaryBtn } from "../_components/section-head";
+import { ImportHoldingsButton } from "../_components/import-holdings-sheet";
 
 export const dynamic = "force-dynamic";
 
@@ -69,10 +70,15 @@ export default async function ProfilePage() {
       </div>
 
       <section className="mt-8">
-        <SectionHead title="我的持仓" hint={`${holdings.length}`} />
+        <SectionHead
+          title="我的持仓"
+          hint={`${holdings.length}`}
+          action={<ImportHoldingsButton />}
+        />
         {holdings.length === 0 ? (
           <p className="rounded-xl border border-line bg-surface p-4 text-sm text-muted shadow-sm">
-            还没有持仓。在个股页点「记为持仓」录入成本 / 仓位，解牛会围绕它监控你的投资逻辑。
+            还没有持仓。点右上「截图导入」拍张券商持仓页截图，或在个股页点「记为持仓」录入成本
+            / 仓位，解牛会围绕它监控你的投资逻辑。
           </p>
         ) : (
           <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
