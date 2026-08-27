@@ -2,6 +2,7 @@ import { decode, encode } from "next-auth/jwt";
 import { NextResponse } from "next/server";
 
 import {
+  NEW_ORIGIN,
   SESSION_COOKIE,
   SESSION_MAX_AGE,
   sanitizeNextPath,
@@ -34,8 +35,10 @@ export async function GET(req: Request) {
     maxAge: SESSION_MAX_AGE,
   });
 
+  // 回跳地址钉死用 NEW_ORIGIN，别从 req.url 推导——
+  // 回源走 nginx 时 Next 会把 origin 探成 localhost:3838，重定向会落到打不开的地址。
   const res = NextResponse.redirect(
-    new URL(sanitizeNextPath(url.searchParams.get("next")), url),
+    new URL(sanitizeNextPath(url.searchParams.get("next")), NEW_ORIGIN),
     303,
   );
   res.cookies.set(SESSION_COOKIE, sessionToken, {
