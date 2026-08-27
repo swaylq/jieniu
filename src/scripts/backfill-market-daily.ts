@@ -18,8 +18,8 @@ function arg(name: string, dflt: number): number {
 async function main() {
   const limit = arg("limit", 500);
   const days = arg("days", 60);
-  const concurrency = arg("concurrency", 3);
-  const paceMs = arg("pace", 120);
+  const concurrency = arg("concurrency", 1);
+  const paceMs = arg("pace", 400);
   const minDays = arg("minDays", Math.min(days, 40));
   const t0 = Date.now();
 

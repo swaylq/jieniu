@@ -4,12 +4,13 @@ import path from "node:path";
 import { JOBS } from "./jobs";
 
 describe("JOBS 声明自检", () => {
-  it("正好 12 条，key 唯一", () => {
+  it("正好 13 条，key 唯一", () => {
     // 第 10 条是机会雷达（2026-07-31 新增）：逐日行情回补 + 信号生成
     // 第 11 条是盘前简报（2026-07-31 新增）：08:15 覆盖隔夜海外
     // 第 12 条是机构痕迹（2026-08-27 新增）：19:10 收龙虎榜机构/北向席位与大宗
-    expect(JOBS).toHaveLength(12);
-    expect(new Set(JOBS.map((j) => j.key)).size).toBe(12);
+    // 第 13 条是逐日行情刷新（2026-08-27 新增）：每 30 分钟一个小分片，撞封即停、下轮续上
+    expect(JOBS).toHaveLength(13);
+    expect(new Set(JOBS.map((j) => j.key)).size).toBe(13);
   });
 
   it("每一步引用的脚本文件都真实存在", () => {

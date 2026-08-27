@@ -363,15 +363,15 @@ export const JOBS: JobDef[] = [
         name: "逐日行情回补",
         // days=8 只刷最近几天（历史日收盘后不变）；minDays 给大数=全市场都过一遍
         script: "src/scripts/backfill-market-daily.ts",
-        // 并发 8 无节流会触发新浪按 IP 封禁（2026-08-27 实测复现：全量跑 0/5501 成功，
-        // 单条随后返回 HTTP 456「已被新浪安全部门封禁」）。降到 3 + 每请求 120ms 节流；
-        // 一轮跑不完也没关系——目标排序改成「最新一根日线最旧的排最前」，多轮会接力推进。
+        // 只跑一个小分片。全量刷新已经挪到 `market-daily-refill`（每 30 分钟一轮，
+        // 见下面那条任务）——新浪 2026-08-24 前后收紧了封禁阈值，一轮打 5500 只必被封。
+        // 这里留一个分片是为了让雷达生成前尽量补上最缺的那批。
         args: [
-          "--limit=6000",
+          "--limit=800",
           "--days=8",
           "--minDays=99999",
-          "--concurrency=3",
-          "--pace=120",
+          "--concurrency=1",
+          "--pace=400",
         ],
         env: { SKIP_ENV_VALIDATION: "1", NODE_ENV: "development" },
         timeoutMs: 30 * 60_000,
@@ -497,6 +497,55 @@ export const JOBS: JobDef[] = [
             threshold: 3,
             message:
               "机构痕迹的东财数据中心接口连续取不到——查 datacenter-web 可达性与 reportName 是否变更",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    /**
+     * 逐日行情刷新（小分片接力）。
+     *
+     * 为什么是「每 30 分钟一个小分片」而不是「每天一次全量」：
+     * 新浪按 IP 封禁，2026-08-24 前后把阈值收紧了——8-22/8-23 那两轮 5353 只 / 89s
+     * （约 55 次/秒）是通的，8-27 实测并发 3 + 120ms 节流（约 15 次/秒）跑到第 300 只就被封，
+     * 封禁自解需 5~60 分钟。**具体门槛试不出来**，每试错一次的代价就是一次封禁。
+     *
+     * 所以不猜参数，改成自适应：每轮只跑一个有界分片，撞到封禁立刻干净停下，
+     * 半小时后下一轮从「最新一根日线最旧的那批」续上（`backfillMarketDaily` 的排序保证接力）。
+     * 就算每轮只成功 150 只，48 轮/天也够覆盖 5500 只；门槛放松时每轮自然拿得更多。
+     *
+     * 这条任务的健康度**不看单轮成功数**（被封是常态），看 `remaining` 是不是在往下走。
+     */
+    key: "market-daily-refill",
+    title: "逐日行情刷新（小分片接力）",
+    schedule: { kind: "interval", everySec: 1800, jitterSec: 240 },
+    heavy: false,
+    steps: [
+      {
+        name: "逐日行情分片回补",
+        script: "src/scripts/backfill-market-daily.ts",
+        args: [
+          "--limit=1200",
+          "--days=8",
+          "--minDays=99999",
+          "--concurrency=1",
+          "--pace=400",
+        ],
+        env: { SKIP_ENV_VALIDATION: "1", NODE_ENV: "development" },
+        timeoutMs: 25 * 60_000,
+        baselineChecks: [
+          {
+            /**
+             * 盯「还缺多少」有没有比上一轮变多。绝对阈值在这里没用：
+             * 每天开盘后全市场都会缺一天，remaining 本来就会周期性冲高。
+             */
+            id: "market-daily-not-converging",
+            metric: "remaining",
+            op: "riseGt",
+            delta: 1500,
+            message:
+              "逐日行情的缺口比上一轮多了 1500 只以上——接力没在推进，查是不是长期处于封禁态",
           },
         ],
       },

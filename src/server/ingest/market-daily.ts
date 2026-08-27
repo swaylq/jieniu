@@ -194,8 +194,13 @@ export async function backfillMarketDaily(
   // 并发默认从 6 降到 3，并加逐请求节流：2026-08-27 实测，全市场 5501 只以并发 8
   // 无节流打新浪，会触发**按 IP 封禁**（HTTP 456 +「已被新浪安全部门封禁」页，
   // 自解封 5~60 分钟）。8-24 起生产上天天 failed=5500 就是这么来的，连续四天没人看出来。
-  const concurrency = opts.concurrency ?? 3;
-  const paceMs = opts.paceMs ?? 120;
+  // 2026-08-27 实测：并发 3 + 120ms 节流（约 15 次/秒）跑到第 ~300 只仍被封。
+  // 而 8-22/8-23 那两轮 5353 只 / 89s（约 55 次/秒）是通的——**新浪在 8-24 前后收紧了阈值**，
+  // 具体门槛试不出来（每试错一次就是 5~60 分钟封禁）。
+  // 所以不再靠猜参数：默认压到 1 并发 + 400ms（约 2.5 次/秒），并让调度侧用
+  // 「小分片 + 半小时一轮」接力——撞封就干净停下，下一轮从最旧的那批续上。
+  const concurrency = opts.concurrency ?? 1;
+  const paceMs = opts.paceMs ?? 400;
   const minDays = opts.minDays ?? Math.min(days, 40);
 
   // 排序口径：**最新一根日线最旧的排最前**，其次才是总天数最少的。
