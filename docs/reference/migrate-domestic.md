@@ -62,7 +62,8 @@
 待办（E/F，sway）：
 
 - [ ] **sway 真交互验证**：邮箱 OTP 真发（登录收码）、问解牛对话、移动端/PWA、头像显示。
-- [ ] 旧域名 `jieniu.swaylab.ai` → 301 `https://jieniu.club`。**注意**：301 放边缘（Caddy/nginx redir）会绕过上面的登录握手 → 老域名 cookie 带不过去、用户得重登一次；要保登录态就让老域名继续回源到应用、由 middleware 做带握手的 302 跳转，过一段再硬 301。（等 sway 定）
+- [x] 登录态迁移上线；**sway 拍板「保登录态过渡」**：老域名继续回源到应用、middleware 带握手 302 跳新域名（已生效）。
+- [ ] 过渡期后硬 301：Caddy 边缘 `redir https://jieniu.club{uri} 301`（等 sway 真交互验证完、说「切」再动）。
 - [ ] ECS 重启不自拉起（web nohup、scheduler pm2 `disabled`）——要 `pm2 startup`/systemd 再明确要求。
 
 ## 注意
