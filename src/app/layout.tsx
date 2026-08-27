@@ -28,6 +28,8 @@ import {
   websiteJsonLd,
   organizationJsonLd,
   jsonLdScript,
+  ICP_BEIAN,
+  ICP_BEIAN_URL,
 } from "~/lib/seo";
 
 export const metadata: Metadata = {
@@ -141,6 +143,16 @@ export default async function RootLayout({
                 className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] focus:outline-none md:pb-0"
               >
                 {children}
+                <footer className="px-4 pb-2 pt-6 text-center md:pb-8">
+                  <a
+                    href={ICP_BEIAN_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-ink/60 transition-colors hover:text-ink"
+                  >
+                    {ICP_BEIAN}
+                  </a>
+                </footer>
               </div>
               <TabBar />
               </div>

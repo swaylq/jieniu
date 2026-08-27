@@ -8,6 +8,10 @@ export const SITE_URL = "https://jieniu.swaylab.ai";
 export const SITE_NAME = "解牛";
 export const SITE_TAGLINE = "聚焦式一手财经资讯 + 大师视角解读";
 
+/** 工信部 ICP 备案号（jieniu.club）。依法需在站点底部展示并链接到备案系统。 */
+export const ICP_BEIAN = "沪ICP备2021025171号-5";
+export const ICP_BEIAN_URL = "https://beian.miit.gov.cn";
+
 /** 首页 / 默认描述：关键词自然融入，控制在 ~110 字以内（利于摘要完整展示）。 */
 export const SITE_DESCRIPTION =
   "解牛是聚焦式 A股投研工具：覆盖全 A股，一手公告与重磅资讯及时收录，" +
