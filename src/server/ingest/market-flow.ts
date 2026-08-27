@@ -13,7 +13,25 @@ import { parseFlowRows, type StockFlow } from "../../lib/rotation";
  * 相对导入（不用 `~` 别名）：让 `src/scripts/*.ts` 走 tsx 也能引用。
  */
 
-const API = "https://push2.eastmoney.com/api/qt/clist/get";
+/**
+ * 主机按序轮换，**`push2delay` 在前**（2026-08-27 复盘实测）。
+ *
+ * `push2.eastmoney.com` 对本节点不是「间歇封锁」，是基本打不通：直接返回空响应体
+ * （curl 报 `Empty reply from server`，不是 HTTP 错误码）。JobRun 全量统计——近 14 天
+ * 每天约 46 轮 ingest，`fetched>0` 的只有 0~6 轮（8-16/22/23 整天 0 轮），成功率约 6%。
+ * 于是 `EntitySignal(kind="flow")` 实际一天只刷新两三次、钟点随机，而首页 `quietFacts`
+ * 直接把它的 label（「主力净流入 X 亿」）摆给用户看——用户看到的是隔了几小时甚至隔夜的数。
+ *
+ * 同一台机器上 `push2delay.eastmoney.com` 3/3 可达，`total=5904`、`f62`/`f184` 字段齐全，
+ * 与 `push2` 同数据（延时行情，对「昨日/今日主力净流入」这种日频信号没有区别）。
+ * `seed-universe.ts` / `seed-industries.ts` 早就因为同一个原因改用了 `push2delay`，
+ * 只有这里漏了——所以对齐，不是发明新路子。
+ *
+ * 仍保留 `push2` 作为第二顺位：真正想防的是「某个域名哪天黑掉、一个月没人发现」，
+ * 单主机就是那个失败模式本身。
+ */
+const HOSTS = ["push2delay.eastmoney.com", "push2.eastmoney.com"];
+const PATH = "/api/qt/clist/get";
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 // 深主板 / 创业板 / 沪主板 / 科创板 / 北交所
@@ -47,8 +65,10 @@ async function fetchPage(
 ): Promise<{ rows: StockFlow[]; total: number; rawCount: number } | null> {
   for (let i = 0; i < attempts; i++) {
     try {
+      // 每次重试换一个主机：一台被封时下一次立刻走另一台，而不是把 4 次全砸在同一台上。
+      const host = HOSTS[i % HOSTS.length]!;
       const url =
-        `${API}?pn=${page}&pz=${PAGE_SIZE}&po=1&np=1&fltt=2&invt=2&fid=f3` +
+        `https://${host}${PATH}?pn=${page}&pz=${PAGE_SIZE}&po=1&np=1&fltt=2&invt=2&fid=f3` +
         `&fs=${encodeURIComponent(FS)}&fields=${FIELDS}&ut=b2884a393a59ad64002292a3e90d46a5`;
       const res = await fetch(url, {
         headers: { "User-Agent": UA, Referer: "https://quote.eastmoney.com" },
@@ -130,7 +150,14 @@ export async function populateMarketFlow(
   const idByCode = new Map(stocks.map((s) => [s.ticker!, s.id]));
 
   const { rows: all, total, failedPages } = await fetchAllFlows();
-  if (failedPages > 0)
+  // 「第一页就没取到」和「中间掉了几页」是两回事，日志必须分得开：前者整轮 upsert=0、
+  // 资金流快照原地不动，后者只是少覆盖几十只。此前两种都印同一句「N 页取不到」，
+  // 于是连着一个月每轮 upsert=0 也没人看出来（2026-08-27 复盘）。
+  if (all.length === 0)
+    console.error(
+      `[market-flow] 首页取不到，整轮没采到任何数据——资金流快照没有刷新（主机全挂：${HOSTS.join(" / ")}）`,
+    );
+  else if (failedPages > 0)
     console.error(
       `[market-flow] ${failedPages} 页取不到（东财间歇封锁）——本轮覆盖 ${all.length}/${total}`,
     );

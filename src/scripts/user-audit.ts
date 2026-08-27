@@ -349,11 +349,23 @@ async function main() {
 
   // ⑤ 埋点健康
   // 只看近 24 小时：7 天窗口会把改动前的存量算进来，永远报警（8-03 实测踩过）。
+  //
+  // 这一条只查「匿名流量灌库」（evAll > 500 才判），**不查「今天没人来」**。
+  // 2026-08-26 实测过一次，免得下一轮又查：近 14 天只有 6 天有埋点
+  // （8-12: 4、8-13: 2、8-18: 53、8-19: 8、8-20: 14、8-24: 4），其余 8 天整天 0 条，
+  // 登录态占比每天都是 100%。也就是说**多数日子本来就没有登录用户打开过页面**，
+  // 「近 24 小时 0 条」是这个体量的常态，不是埋点坏了。要判「埋点是不是断了」得看
+  // 有访问的日子还有没有埋点，靠单日 0 判不出来——所以只把最近一条的时间打出来当旁证。
   const d1 = new Date(now.getTime() - DAY);
   const evAll = await db.analyticsEvent.count({ where: { createdAt: { gte: d1 } } });
   const evReal = await db.analyticsEvent.count({ where: { createdAt: { gte: d1 }, userId: { not: null } } });
   const rate = evAll ? evReal / evAll : 1;
-  console.log(`- 近 24 小时埋点 ${evAll} 条，其中登录态 ${evReal} 条（${(rate * 100).toFixed(1)}%）`);
+  const lastEvent = await db.analyticsEvent.findFirst({
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+  const lastEventAgo = lastEvent ? `，最近一次访问 ${localDay(lastEvent.createdAt)}` : "，从未有过访问";
+  console.log(`- 近 24 小时埋点 ${evAll} 条，其中登录态 ${evReal} 条（${(rate * 100).toFixed(1)}%）${lastEventAgo}`);
   if (evAll > 500 && rate < T.analyticsRealRate) {
     warn(`埋点里 ${(100 - rate * 100).toFixed(0)}% 是匿名流量 —— 浏览类埋点的登录态过滤可能失效`);
   }
@@ -368,6 +380,34 @@ async function main() {
   const ingestLagMin = freshest ? Math.round((+now - +freshest.createdAt) / 60000) : 99999;
   console.log(`- 最近一条资讯入库 ${ingestLagMin} 分钟前`);
   if (ingestLagMin > 180) warn(`资讯已 ${ingestLagMin} 分钟没有新入库 —— 查 ingest 任务与外网连通性`);
+
+  // ⑧ 资金流快照是否在刷新
+  //
+  // 为什么单独判：`EntitySignal(kind="flow")` 由 ingest 每轮（30 分钟）重采全市场，
+  // 它的 label（「主力净流入 X 亿」）**直接摆在首页 quietFacts 上给用户看**，同时还是
+  // `targetsByNeed` 判「这只股还活着」的主证据——它不刷新，用户看到隔夜的数，
+  // 而新加的自选股会因为「不在快照里 = 不算活」被踢出补料队列，永远抓不到资讯。
+  //
+  // 而它坏掉的时候一声不响：`fetchAllFlows` 首页失败就返回空，upsert=0，ingest 退出码
+  // 照样是 0。2026-08-27 复盘查 JobRun 才发现，近 14 天每天约 46 轮里只有 0~6 轮采到东西
+  // （`push2.eastmoney.com` 对本机基本不通），也就是这个快照实际一天只刷新两三次、
+  // 已经这样至少一个月。
+  //
+  // 阈值 180 分钟：跟上面「资讯入库」同一口径，是 30 分钟节拍的 6 倍余量。
+  // 注意别放宽到 6 小时——8-27 当天实测滞后 4.4 小时，6 小时就漏了。
+  const flowSig = await db.entitySignal.findFirst({
+    where: { kind: "flow" },
+    orderBy: { asOf: "desc" },
+    select: { asOf: true },
+  });
+  const flowLagMin = flowSig ? Math.round((+now - +flowSig.asOf) / 60000) : 99999;
+  console.log(`- 资金流快照 ${flowSig ? `${flowLagMin} 分钟前刷新` : "从来没有过"}`);
+  if (flowLagMin > 180) {
+    warn(
+      `资金流快照已 ${flowLagMin} 分钟没刷新 —— 首页「主力净流入」在给用户看隔夜数，` +
+        `且新加自选会被判成死壳抓不到资讯；查 ingest 日志里的 [market-flow] 行`,
+    );
+  }
 
   console.log(`\n# 结论`);
   if (alerts.length === 0) {
