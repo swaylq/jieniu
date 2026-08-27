@@ -363,17 +363,40 @@ export const JOBS: JobDef[] = [
         name: "逐日行情回补",
         // days=8 只刷最近几天（历史日收盘后不变）；minDays 给大数=全市场都过一遍
         script: "src/scripts/backfill-market-daily.ts",
-        args: ["--limit=6000", "--days=8", "--minDays=99999", "--concurrency=8"],
+        // 并发 8 无节流会触发新浪按 IP 封禁（2026-08-27 实测复现：全量跑 0/5501 成功，
+        // 单条随后返回 HTTP 456「已被新浪安全部门封禁」）。降到 3 + 每请求 120ms 节流；
+        // 一轮跑不完也没关系——目标排序改成「最新一根日线最旧的排最前」，多轮会接力推进。
+        args: [
+          "--limit=6000",
+          "--days=8",
+          "--minDays=99999",
+          "--concurrency=3",
+          "--pace=120",
+        ],
         env: { SKIP_ENV_VALIDATION: "1", NODE_ENV: "development" },
         timeoutMs: 30 * 60_000,
         checks: [
+          {
+            /**
+             * 被封禁要单独喊。**不能只盯 failed**：被封时整轮立刻中止，
+             * failed 反而很小（后面的股根本没打），拿 failed 当阈值会在最严重的那天沉默——
+             * 2026-08-24~27 连挂四天没人发现，就是因为告警文案把「IP 被封」和
+             * 「接口变更」混成了一句话。
+             */
+            id: "market-daily-banned",
+            metric: "banned",
+            op: "gte",
+            threshold: 1,
+            message:
+              "本机 IP 被新浪封禁（HTTP 456），本轮已中止。自解封 5~60 分钟；不要原地重跑，先确认并发与节流参数没被改回去",
+          },
           {
             id: "market-daily-failed",
             metric: "failed",
             op: "gt",
             threshold: 400,
             message:
-              "逐日行情有 400 只以上取不到——新浪限流或接口变更，当天的雷达信号会缺料",
+              "逐日行情有 400 只以上取不到（且未触发封禁）——查新浪接口是否变更",
           },
         ],
       },
@@ -433,6 +456,47 @@ export const JOBS: JobDef[] = [
             delta: 20,
             message:
               "「刚刚启动」的次日资金反转率比上次高 20 个百分点以上——主力资金估算口径可能变了或数据源出了问题",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    /**
+     * 机构痕迹采集（龙虎榜机构专用席位 / 龙虎榜北向专用席位 / 大宗交易机构专用）。
+     *
+     * **为什么不并进 15:50 那个雷达任务**：龙虎榜与大宗都是盘后出的，交易所侧约 18:00
+     * 才稳定。15:50 去抓只会抓到昨天的，然后第二天再抓一次——白跑一轮还看不出问题。
+     *
+     * **为什么是独立任务而不是挂在 30 分钟一轮的 ingest 里**：这三张表是 T+1 的日频数据，
+     * 一天抓一次就够；挂进 ingest 等于每天多打 48 倍的无效请求。
+     *
+     * 默认回补最近 3 个自然日，幂等 upsert——昨晚那轮没跑成，今晚自动补上。
+     */
+    key: "institutional-trace",
+    title: "机构痕迹（龙虎榜机构席位 / 北向席位 / 大宗）",
+    schedule: { kind: "daily", atCST: "19:10", jitterSec: 300 },
+    heavy: false,
+    steps: [
+      {
+        name: "采集机构痕迹",
+        script: "src/scripts/ingest-institutional-trace.ts",
+        args: ["--days=3"],
+        env: { SKIP_ENV_VALIDATION: "1", NODE_ENV: "development" },
+        timeoutMs: 10 * 60_000,
+        checks: [
+          {
+            /**
+             * 判据盯的是**源取不到**，不是「今天没有痕迹」——后者是合法输出
+             * （周末、以及没人上榜的日子本来就是 0 行）。三个源 × 3 天共 9 次取数，
+             * 挂掉 3 次以上说明是接口问题不是行情问题。
+             */
+            id: "inst-trace-source-down",
+            metric: "failedSources",
+            op: "gte",
+            threshold: 3,
+            message:
+              "机构痕迹的东财数据中心接口连续取不到——查 datacenter-web 可达性与 reportName 是否变更",
           },
         ],
       },

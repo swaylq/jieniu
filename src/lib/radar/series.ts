@@ -16,6 +16,12 @@ export type RadarBar = {
   netAmount: number | null; // 主力净额（元）
   netRatio: number | null; // 主力净额 / 成交额
   turnoverRate: number | null; // 换手率 %
+  /**
+   * 超大单净额（元）。新浪同一个接口的 `r0_net`——2026-08-27 之前解析器直接丢弃了它。
+   * 主力 = 超大单 + 大单，所以「大单净额」= `netAmount - netAmountXl`。
+   * 回填未到位的历史行为空；判据要能容忍缺失。
+   */
+  netAmountXl?: number | null;
   /** 前复权四价（腾讯 fqkline）。回填未到位时为空——判据要能容忍缺失 */
   open?: number | null;
   high?: number | null;

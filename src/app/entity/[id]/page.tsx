@@ -37,6 +37,9 @@ import { NewsCard } from "../../_components/news-card";
 import { Pager } from "../../_components/pager";
 import { NewsScorecard } from "../../_components/news-scorecard";
 import { SignalStrip } from "../../_components/signal-strip";
+import { FundFlowCard } from "../../_components/fund-flow-card";
+import { InstitutionalTraceCard } from "../../_components/institutional-trace-card";
+import { buildFundFlowCard } from "~/lib/fund-flow";
 import { ConsensusCard } from "../../_components/consensus-card";
 import { parseConsensusDetail } from "~/lib/consensus";
 import { reportsTabHref } from "~/lib/research-reports";
@@ -525,6 +528,20 @@ export default async function EntityPage({
   // 否则整块不渲染（避免只剩一个空的 mb-6 占位 div 在美股页留一道空隙）。
   // 一致预期从信号条里拆出来单独成卡（分歧度比例条 + EPS 预期）——数据早在库里，
   // 此前只渲染了一行 label。拆分在页面层做，SignalStrip 本身不改。
+  /**
+   * 资金卡。**不发任何新请求**——原料就是 `marketInputs` 已经取回来的 80 根日线，
+   * 横截面分位也已经在同一个 procedure 的 `Promise.all` 里算好了。
+   * 所以这张卡对页面的取数延迟是零，不违反「取数只许一道波」。
+   */
+  const fundCard = buildFundFlowCard({
+    bars: marketInputs.bars,
+    marketPct: marketInputs.marketPct,
+  });
+  // 本地日历日在服务端算好再传下去：组件里 `new Date()` 会按渲染机器的时区走，
+  // 而 `toISOString()` 取日历日会把 8/6 写成 8/5（「时间戳无时区」那条教训）。
+  const nowCst = new Date();
+  const todayIso = `${nowCst.getFullYear()}-${`${nowCst.getMonth() + 1}`.padStart(2, "0")}-${`${nowCst.getDate()}`.padStart(2, "0")}`;
+
   const consensusRaw = entitySignals.find((s) => s.kind === "consensus");
   const consensusParsed = consensusRaw
     ? parseConsensusDetail(consensusRaw.detail)
@@ -638,6 +655,20 @@ export default async function EntityPage({
                 />
               </div>
             ) : null}
+            {fundCard ? (
+              <div className="order-1 lg:order-none">
+                <FundFlowCard
+                  card={fundCard}
+                  today={todayIso}
+                  entityId={id}
+                  hasTraces={marketInputs.traces.length > 0}
+                />
+              </div>
+            ) : null}
+            {/* 机构痕迹：全市场每天只有约 50 只股会亮，没有行就整块不渲染（组件自己判空）。 */}
+            <div className="order-1 lg:order-none">
+              <InstitutionalTraceCard traces={marketInputs.traces} />
+            </div>
             {otherSignals.length > 0 ? (
               <div className="order-1 lg:order-none">
                 <SignalStrip signals={otherSignals} />

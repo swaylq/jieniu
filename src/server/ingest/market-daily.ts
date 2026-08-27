@@ -27,19 +27,44 @@ const REFRESH_DAYS = 3;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * 新浪的封禁页。**HTTP 456 + 一段中文 HTML**，不是 429、也不是空响应。
+ *
+ * 2026-08-27 实测原文：「你的 IP 存在异常访问(例如: 爬虫/攻击/探测 等), 已被新浪安全部门封禁。
+ * 停止异常访问一段时间后(5~60分钟)会自动解封」。
+ *
+ * 这条必须单独识别，理由是它把整轮的语义改了：被封之后**后面每一只都会失败**，
+ * 继续打 5000 次不但白跑 19 分钟，还会把封禁时间续上。所以识别到就整轮中止。
+ */
+const BAN_STATUS = 456;
+export function looksBanned(status: number, body: string): boolean {
+  return status === BAN_STATUS || /拒绝访问|安全部门封禁/.test(body.slice(0, 400));
+}
+
+export type FlowFetch =
+  | { kind: "ok"; rows: DailyFlow[] }
+  /** 源明确说这只股没有数据（退市/美股代码/新股未满一天） */
+  | { kind: "empty" }
+  /** 取不到：超时、网络错、非 200——重试用尽仍失败 */
+  | { kind: "miss" }
+  /** 本机 IP 被源封禁，整轮该停 */
+  | { kind: "banned" };
+
+/**
  * 取一只股最近 `days` 个交易日的资金流。
  *
- * 返回 `null` = **取不到**（被限流/网络错/源返回错误对象），返回 `[]` = 源明确说没有数据。
- * 两者必须分开——混成一个会把"被限流"记成"这只股没历史"，静默留下永久空洞。
+ * 三种失败必须分开，混成一个 null 就没法排查（2026-08-24~27 那次就是这么静默了四天）：
+ *  · `empty`  = 源说没有这只股的数据 → 正常，别当故障
+ *  · `miss`   = 单次取不到 → 计入失败数，下轮再补
+ *  · `banned` = IP 被封 → **整轮立刻停**，继续打只会延长封禁
  */
-export async function fetchStockDailyFlow(
+export async function fetchStockDailyFlowResult(
   ticker: string,
   days = 60,
   backoffMs = 500,
   attempts = 3,
-): Promise<DailyFlow[] | null> {
+): Promise<FlowFetch> {
   const symbol = tickerToSymbol(ticker);
-  if (!symbol) return null;
+  if (!symbol) return { kind: "empty" };
   for (let i = 0; i < attempts; i++) {
     try {
       const res = await fetch(
@@ -50,20 +75,40 @@ export async function fetchStockDailyFlow(
           signal: AbortSignal.timeout(12000),
         },
       );
+      const text = (await res.text()).trim();
+      if (looksBanned(res.status, text)) return { kind: "banned" };
       if (res.ok) {
-        const text = (await res.text()).trim();
-        // 新浪限流时回空串、代码不存在时回 `{"__ERROR":3}`——都不是"没有历史"
+        // 代码不存在时回 `{"__ERROR":3}`——**重试没用**，这只股新浪本来就没有数据
+        // （143 只零行的退市壳/美股代码全落在这里）。判成 empty 而不是 miss，
+        // 它们才不会年复一年地把失败数顶到告警线上。
+        if (text.includes("__ERROR")) return { kind: "empty" };
         if (text.startsWith("[")) {
-          const rows = parseSinaMoneyFlow(JSON.parse(text));
-          if (rows.length > 0) return rows;
+          const rows = parseSinaMoneyFlow(JSON.parse(text) as unknown);
+          if (rows.length > 0) return { kind: "ok", rows };
+          return { kind: "empty" };
         }
+        // 限流时回空串——这个要重试
       }
     } catch {
       // 交给下面的退避重试；用尽仍失败由调用方计入 failed
     }
     if (i < attempts - 1) await sleep(backoffMs * (i + 1));
   }
-  return null;
+  return { kind: "miss" };
+}
+
+/**
+ * 兼容旧签名：拿不到一律 null。新代码请用 `fetchStockDailyFlowResult`——
+ * 它能区分「被封」和「这只股没数据」，而这两件事的处理方式完全相反。
+ */
+export async function fetchStockDailyFlow(
+  ticker: string,
+  days = 60,
+  backoffMs = 500,
+  attempts = 3,
+): Promise<DailyFlow[] | null> {
+  const r = await fetchStockDailyFlowResult(ticker, days, backoffMs, attempts);
+  return r.kind === "ok" ? r.rows : null;
 }
 
 function dateOf(day: string): Date {
@@ -87,6 +132,9 @@ export async function saveDailyFlow(
     amount: r.amount,
     netAmount: r.netAmount,
     netRatio: r.netRatio,
+    // 超大单净额：新浪响应里一直有 `r0_net`，2026-08-27 前解析器丢弃了它。
+    // 存量行是 null，靠 backfill 补——判据一律容忍缺失，不拿 0 冒充。
+    netAmountXl: r.netAmountXl,
     turnoverRate: r.turnoverRate,
   }));
   await db.marketDaily.createMany({ data, skipDuplicates: true });
@@ -101,6 +149,7 @@ export async function saveDailyFlow(
         amount: d.amount,
         netAmount: d.netAmount,
         netRatio: d.netRatio,
+        netAmountXl: d.netAmountXl,
         turnoverRate: d.turnoverRate,
       },
     });
@@ -114,6 +163,12 @@ export type BackfillResult = {
   failed: number;
   rows: number;
   remaining: number;
+  /** 源明确说「这只股没有数据」的只数（退市/美股代码），**不是故障**，别计入 failed 的告警。 */
+  empty: number;
+  /** 本机 IP 被新浪封禁而中止。true 时 `failed` 没有诊断意义——后面的股根本没打。 */
+  banned: boolean;
+  /** 因为封禁中止而没轮到的只数。 */
+  skipped: number;
 };
 
 /**
@@ -129,15 +184,28 @@ export async function backfillMarketDaily(
     limit: number;
     days?: number;
     concurrency?: number;
+    /** 每个 worker 两次请求之间的间隔（毫秒）。默认 120——见并发那条注释。 */
+    paceMs?: number;
     minDays?: number;
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<BackfillResult> {
   const days = opts.days ?? 60;
-  const concurrency = opts.concurrency ?? 6;
+  // 并发默认从 6 降到 3，并加逐请求节流：2026-08-27 实测，全市场 5501 只以并发 8
+  // 无节流打新浪，会触发**按 IP 封禁**（HTTP 456 +「已被新浪安全部门封禁」页，
+  // 自解封 5~60 分钟）。8-24 起生产上天天 failed=5500 就是这么来的，连续四天没人看出来。
+  const concurrency = opts.concurrency ?? 3;
+  const paceMs = opts.paceMs ?? 120;
   const minDays = opts.minDays ?? Math.min(days, 40);
 
-  // 按「已有天数」升序挑最缺的；一次 SQL 完成，不把 5500 只股拉进内存排序
+  // 排序口径：**最新一根日线最旧的排最前**，其次才是总天数最少的。
+  //
+  // 为什么不是原来的「按已有天数升序」：日常刷新跑的是 `minDays=99999`（全市场都过一遍），
+  // 于是每轮都从同一批总天数最少的股开始——而那批恰好是 143 只零行的退市壳
+  // （000003 PT金田A、000015 PT中浩A、000024 招商地产…，新浪本来就没有它们的数据）。
+  // 一旦某轮中途被封禁中止，下一轮又从这批尸体重新开始，**永远推进不到活股**。
+  // 改成按 `max(tradeDate)` 升序后，昨天没补到的股天然排在前面，多轮之间能接力。
+  // NULLS FIRST 保留：真的一行都没有的新股仍要优先补。
   const targets = await db.$queryRawUnsafe<
     { id: string; ticker: string; have: bigint }[]
   >(
@@ -147,7 +215,7 @@ export async function backfillMarketDaily(
       WHERE e.type = 'STOCK' AND e.ticker IS NOT NULL
       GROUP BY e.id, e.ticker
      HAVING count(m.id) < $1
-      ORDER BY count(m.id) ASC, e.ticker ASC
+      ORDER BY max(m."tradeDate") ASC NULLS FIRST, count(m.id) ASC, e.ticker ASC
       LIMIT $2`,
     minDays,
     opts.limit,
@@ -163,22 +231,31 @@ export async function backfillMarketDaily(
 
   let ok = 0;
   let failed = 0;
+  let empty = 0;
   let rows = 0;
   let done = 0;
+  let banned = false;
   const queue = [...targets];
 
   async function worker() {
     for (;;) {
+      // 被封之后每一只都会失败，继续打只是白跑十几分钟、还会把封禁时间续上。
+      if (banned) return;
       const t = queue.shift();
       if (!t) return;
-      const flows = await fetchStockDailyFlow(t.ticker, days);
-      if (flows === null) failed++;
-      else {
-        rows += await saveDailyFlow(db, t.id, t.ticker, flows);
-        ok++;
+      const r = await fetchStockDailyFlowResult(t.ticker, days);
+      if (r.kind === "banned") {
+        banned = true;
+        return;
       }
+      if (r.kind === "ok") {
+        rows += await saveDailyFlow(db, t.id, t.ticker, r.rows);
+        ok++;
+      } else if (r.kind === "empty") empty++;
+      else failed++;
       done++;
       if (done % 50 === 0) opts.onProgress?.(done, targets.length);
+      if (paceMs > 0) await sleep(paceMs);
     }
   }
   await Promise.all(
@@ -189,6 +266,9 @@ export async function backfillMarketDaily(
     attempted: targets.length,
     ok,
     failed,
+    empty,
+    banned,
+    skipped: banned ? targets.length - done : 0,
     rows,
     // 报「还缺多少」而不是「跑了多少」——被杀的进程没有 exit code 可看，
     // 判完成只能看业务量

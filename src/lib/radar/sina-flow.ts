@@ -24,6 +24,13 @@ export type DailyFlow = {
   netRatio: number; // 主力净额 / 成交额
   amount: number | null; // 成交额（元），反推不出时为 null
   turnoverRate: number | null; // 换手率 %
+  /**
+   * 超大单净额（元）。新浪 `r0_net`——**这个字段一直在响应里，2026-08-27 之前被丢弃了**。
+   * 捡回来等于白拿 200 个交易日的超大单历史；大单 = `netAmount - netAmountXl`。
+   * 交叉验证（600183 生益科技 8-27）：新浪 r0_net 25.66 亿 ↔ 东财 f66 超大单 25.04 亿，
+   * 同一个概念、阈值略不同（东财超大单门槛是 ≥50 万股**或** 100 万元）。
+   */
+  netAmountXl: number | null;
 };
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -63,6 +70,7 @@ export function parseSinaMoneyFlow(json: unknown): DailyFlow[] {
       amount:
         Math.abs(netRatio) >= MIN_RATIO ? Math.abs(netAmount / netRatio) : null,
       turnoverRate: turnover === null ? null : turnover / 100,
+      netAmountXl: num(r.r0_net),
     });
   }
   return out.sort((a, b) => a.day.localeCompare(b.day));

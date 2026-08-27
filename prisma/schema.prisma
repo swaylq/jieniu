@@ -123,6 +123,7 @@ model Entity {
   priceAlerts   PriceAlert[]
   signals       EntitySignal[]
   marketDaily   MarketDaily[]
+  instTraces    InstitutionalTrace[]
 
   @@index([type])
 }
@@ -606,6 +607,11 @@ model MarketDaily {
   netAmount    Float?
   /// 主力净额 ÷ 成交额
   netRatio     Float?
+  /// 超大单净额（元）。新浪同一个接口的 `r0_net`，2026-08-27 前解析器丢弃了它。
+  /// 主力 = 超大单 + 大单，所以大单净额 = netAmount - netAmountXl，不必另存一列。
+  /// **中小单净额恒等于 -netAmount**（成交必然一买一卖，四档之和为 0），
+  /// 是镜像不是独立信息，因此不存、前台也不摆成第二条证据。
+  netAmountXl  Float?
   /// 换手率 %
   turnoverRate Float?
   /// 前复权四价（腾讯 fqkline）。未复权的 `close` 保留不动——它是新浪原始口径，
@@ -665,4 +671,36 @@ model OpportunitySignal {
   @@unique([dedupeKey, tradeDate])
   @@index([status, tradeDate])
   @@index([entityId])
+}
+
+/// 机构痕迹：交易所**真实披露**的席位级买卖，与 `MarketDaily.netAmount` 那种分档估算严格分开。
+///
+/// 为什么单独一张表而不是塞进 `EntitySignal`：`EntitySignal` 是 `@@unique([entityId, kind])`
+/// 的单行 upsert，每天覆盖、零历史（`MarketDaily` 当初就是为这个原因新建的）。
+/// 而这一层的价值恰恰在「哪天亮过」——连续几天有机构席位买入才是信号，单日只是一个事件。
+///
+/// 覆盖面天生很窄（2026-08-27 实测：全市场 5900 只里，龙虎榜有机构专用席位的每天 35~69 只、
+/// 大宗买方是机构专用的每天 9~22 只），所以它是**事件流**不是全市场面板：
+/// 个股页只在当天有行时才渲染。
+model InstitutionalTrace {
+  id         String   @id @default(cuid())
+  entityId   String
+  /// 冗余代码：采集按代码走，唯一键用它比 entityId 稳（实体可能重建）
+  ticker     String
+  tradeDate  DateTime @db.Date
+  /// lhb_inst = 龙虎榜机构专用席位 | lhb_hsgt = 龙虎榜北向专用席位 | block_inst = 大宗交易机构专用
+  kind       String
+  /// 净买入额（元），正=净买入。大宗中买卖双方都是机构专用时为 0（金额有信息，方向没有）
+  netAmount  Float
+  buyAmount  Float
+  sellAmount Float
+  /// kind 专属：龙虎榜的买卖席位数 / 北向的席位名 / 大宗的笔数与成交额加权折溢价
+  detail     Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  entity     Entity   @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@unique([ticker, tradeDate, kind])
+  @@index([tradeDate, kind])
+  @@index([entityId, tradeDate])
 }

@@ -4,6 +4,7 @@ import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
 import { parseConsensusDetail } from "~/lib/consensus";
 import { OPERATING_DAYS, type CardEvent } from "~/lib/decision-card";
 import type { RadarBar } from "~/lib/radar/series";
+import type { Trace as InstTrace } from "~/lib/institutional-trace";
 // 配对解析复用 `earnings` 里那份（`Thesis` 挂 COMPANY、行情/信号挂 STOCK 的同一套规则），
 // 不另写一份——两份迟早会漂。
 import { resolvePair } from "~/server/api/routers/earnings";
@@ -23,6 +24,8 @@ import { resolvePair } from "~/server/api/routers/earnings";
 
 /** 趋势模型要 20 日动量 + 60 日均线，取 80 根留出停牌/缺口的余量。 */
 const BAR_LIMIT = 80;
+/** 机构痕迹回看窗口（自然日）。够覆盖一个月的上榜记录，又不至于把半年前的旧事摆出来。 */
+const TRACE_DAYS = 45;
 
 export const decisionCardRouter = createTRPCRouter({
   marketInputs: publicProcedure
@@ -36,10 +39,12 @@ export const decisionCardRouter = createTRPCRouter({
           consensus: null,
           unlock: null,
           margin: null,
+          marketPct: null as number | null,
+          traces: [] as InstTrace[],
         };
 
       const since = new Date(Date.now() - OPERATING_DAYS * 86_400_000);
-      const [rawBars, links, signals] = await Promise.all([
+      const [rawBars, links, signals, pctRows, traceRows] = await Promise.all([
         ctx.db.marketDaily.findMany({
           where: { entityId: { in: pair.ids } },
           orderBy: { tradeDate: "desc" },
@@ -51,6 +56,7 @@ export const decisionCardRouter = createTRPCRouter({
             amount: true,
             netAmount: true,
             netRatio: true,
+            netAmountXl: true,
             turnoverRate: true,
           },
         }),
@@ -81,6 +87,46 @@ export const decisionCardRouter = createTRPCRouter({
           select: { kind: true, detail: true, asOf: true },
           orderBy: { asOf: "desc" },
         }),
+        // 今日「主力净额 ÷ 成交额」在**全市场**的横截面分位。
+        //
+        // 为什么必须是分位而不是金额：2026-08-27 实测，同一天同一只股，新浪与东财给的
+        // 主力净额中位数差 50.9%、最大 163.7%（天孚通信 +15.47 亿 vs +0.08 亿），
+        // 而两边成交额只差 1%。金额跨源不可比，分位在同一个源内部才有意义。
+        //
+        // 一条 SQL、走 `MarketDaily(tradeDate)` 索引，实测 4–6ms（冷启 74ms，样本 5330 只），
+        // 所以它留在这个 `Promise.all` 里不另起一道波。
+        ctx.db.$queryRawUnsafe<{ below: number; total: number }[]>(
+          `WITH me AS (
+             SELECT "netRatio" AS r, "tradeDate" AS d FROM "MarketDaily"
+             WHERE "entityId" = ANY($1::text[]) AND "netRatio" IS NOT NULL
+             ORDER BY "tradeDate" DESC LIMIT 1
+           )
+           SELECT count(*) FILTER (WHERE m."netRatio" < me.r)::float AS below,
+                  count(*)::float AS total
+           FROM "MarketDaily" m JOIN me ON m."tradeDate" = me.d
+           WHERE m."netRatio" IS NOT NULL`,
+          pair.ids,
+        ),
+        // 机构痕迹（交易所真实披露的席位级买卖）。取最近 `TRACE_DAYS` 天——
+        // 这一层每天只对全市场 0.8% 的股票亮，绝大多数股票绝大多数日子是空的，
+        // 所以查得到就渲染、查不到整块不渲染，不留空态占位。
+        ctx.db.institutionalTrace.findMany({
+          where: {
+            entityId: { in: pair.ids },
+            tradeDate: { gte: new Date(Date.now() - TRACE_DAYS * 86_400_000) },
+          },
+          orderBy: [{ tradeDate: "desc" }, { kind: "asc" }],
+          take: 30,
+          select: {
+            ticker: true,
+            tradeDate: true,
+            kind: true,
+            netAmount: true,
+            buyAmount: true,
+            sellAmount: true,
+            detail: true,
+          },
+        }),
       ]);
 
       // 日线按交易日升序（`radar/series` 的约定），配对两侧同一天各有一行时只留一行。
@@ -97,6 +143,7 @@ export const decisionCardRouter = createTRPCRouter({
           amount: r.amount,
           netAmount: r.netAmount,
           netRatio: r.netRatio,
+          netAmountXl: r.netAmountXl,
           turnoverRate: r.turnoverRate,
         });
       }
@@ -128,9 +175,29 @@ export const decisionCardRouter = createTRPCRouter({
         consensus: parsed ? { ...parsed, asOf: consensusRow!.asOf } : null,
         unlock: parseUnlock(pick("unlock")?.detail),
         margin: parseMargin(pick("margin")?.detail),
+        marketPct: crossSectionPct(pctRows[0]),
+        traces: traceRows.map((t) => ({
+          ticker: t.ticker,
+          tradeDate: isoDay(t.tradeDate),
+          kind: t.kind as InstTrace["kind"],
+          netAmount: t.netAmount,
+          buyAmount: t.buyAmount,
+          sellAmount: t.sellAmount,
+          detail: (t.detail ?? {}) as Record<string, unknown>,
+        })),
       };
     }),
 });
+
+/**
+ * 横截面分位 0..100。样本 ≤1 返回 null——**不返回 50**：50 在评分里是「中性」的合法值，
+ * 但直接摆给用户看就是把「没数据」说成「排中间」，那是编。
+ * 分母用 `total - 1`，与 `radar/series.percentileRank` 的秩归一口径一致。
+ */
+function crossSectionPct(row: { below: number; total: number } | undefined) {
+  if (!row || !(row.total > 1)) return null;
+  return Math.max(0, Math.min(100, (row.below / (row.total - 1)) * 100));
+}
 
 /** `tradeDate` 是 `@db.Date`，本地时区取日历日（走 UTC 会把 8/6 写成 8/5）。 */
 function isoDay(d: Date): string {
