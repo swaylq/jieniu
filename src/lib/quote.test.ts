@@ -8,6 +8,7 @@ import {
   parseTencentQuote,
   parseValuation,
   parseTencentValuation,
+  parseEastmoneyTicks,
   hasValuation,
   isAShareTicker,
 } from "./quote";
@@ -218,5 +219,62 @@ describe("hasValuation", () => {
     expect(hasValuation(parseValuation(null))).toBe(false);
     expect(hasValuation(parseValuation({ f168: 0 }))).toBe(true); // 有换手率
     expect(hasValuation(parseValuation({ f167: 668 }))).toBe(true); // 有 PB
+  });
+});
+
+
+describe("parseTencentQuote 的最高/最低（新浪 403 之后腾讯是主源）", () => {
+  it("reads high/low from fields 33/34", () => {
+    // 腾讯串：[1]名称 [3]现价 [4]昨收 [5]今开 [33]最高 [34]最低
+    const f = Array<string>(35).fill("0");
+    f[0] = "1"; f[1] = "贵州茅台"; f[3] = "1297.50"; f[4] = "1299.56"; f[5] = "1302.80";
+    f[33] = "1303.00"; f[34] = "1291.20";
+    const q = parseTencentQuote(`v_sh600519="${f.join("~")}";`);
+    expect(q?.high).toBe(1303);
+    expect(q?.low).toBe(1291.2);
+  });
+
+  it("keeps high/low as NaN when the fields are absent, so the UI still shows 「—」", () => {
+    // 短串（老测试用例的长度）：33/34 位根本不存在，不能变成 Number("") 的 0，
+    // 否则个股页会把「最高」显示成 0.00，比空着更误导。
+    const q = parseTencentQuote('v_sh688981="1~中芯国际~688981~88.00~80.00~86.00~x~x";');
+    expect(q?.price).toBe(88);
+    expect(Number.isNaN(q!.high)).toBe(true);
+    expect(Number.isNaN(q!.low)).toBe(true);
+  });
+});
+
+describe("parseEastmoneyTicks (指数概览条的主源)", () => {
+  const wrap = (diff: unknown[]) => ({ rc: 0, data: { total: diff.length, diff } });
+
+  it("keys rows by 市场前缀.代码 and takes fltt=2 的十进制价格", () => {
+    const ticks = parseEastmoneyTicks(
+      wrap([
+        { f2: 3941.39, f3: -0.97, f12: "000001", f13: 1, f14: "上证指数" },
+        { f2: 4370.2, f3: -0.6, f12: "GC00Y", f13: 101, f14: "COMEX黄金" },
+      ]),
+    );
+    expect(ticks.size).toBe(2);
+    expect(ticks.get("1.000001")?.price).toBe(3941.39);
+    expect(ticks.get("1.000001")?.changePct).toBeCloseTo(-0.97, 5);
+    expect(ticks.get("101.GC00Y")?.name).toBe("COMEX黄金");
+  });
+
+  it("drops 停牌/未开盘 的 \"-\" 与非正价格，而不是把它们渲染成 0.00", () => {
+    const ticks = parseEastmoneyTicks(
+      wrap([
+        { f2: "-", f3: "-", f12: "HSTECH", f13: 124, f14: "恒生科技指数" },
+        { f2: 0, f3: 0, f12: "000300", f13: 1, f14: "沪深300" },
+        { f2: 26099.77, f3: -1.03, f12: "NDX", f13: 100, f14: "纳斯达克" },
+      ]),
+    );
+    expect([...ticks.keys()]).toEqual(["100.NDX"]);
+  });
+
+  it("returns an empty map for a shaped-but-empty or malformed payload", () => {
+    expect(parseEastmoneyTicks(wrap([])).size).toBe(0);
+    expect(parseEastmoneyTicks({ rc: 0, data: null }).size).toBe(0);
+    expect(parseEastmoneyTicks(null).size).toBe(0);
+    expect(parseEastmoneyTicks("boom").size).toBe(0);
   });
 });

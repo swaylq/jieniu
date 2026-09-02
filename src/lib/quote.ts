@@ -221,18 +221,56 @@ export function parseSinaIndex(
   return { price, changePct };
 }
 
-/** 腾讯：v_xxx="1~名称~代码~现价~昨收~今开~..."; */
+/**
+ * 腾讯：`v_xxx="1~名称~代码~现价~昨收~今开~…~[33]最高~[34]最低~…"`。
+ *
+ * 最高/最低在第 33、34 位。这里原本传 NaN，个股页的「最高/最低」两格就永远是「—」——
+ * 腾讯只是备源时不明显，2026-09-02 起新浪对国内机房 403、腾讯成了主源，这两格必须有数。
+ * 字段缺失仍传 NaN（而不是 `Number("")` 的 0），UI 才会照旧显示「—」而不是「0.00」。
+ */
 export function parseTencentQuote(raw: string): Quote | null {
   const payload = /="([^"]*)"/.exec(raw)?.[1] ?? "";
   if (!payload) return null;
   const f = payload.split("~");
   if (f.length < 6) return null;
-  return toQuote(
-    f[1] ?? "",
-    Number(f[3] ?? ""),
-    Number(f[4] ?? ""),
-    Number(f[5] ?? ""),
-    NaN,
-    NaN,
-  );
+  const num = (i: number) => (f[i] ? Number(f[i]) : NaN);
+  return toQuote(f[1] ?? "", num(3), num(4), num(5), num(33), num(34));
+}
+
+/** 东财 `ulist.np/get` 批量行情的一条：`secid` 形如 `1.000001` / `113.rbm`。 */
+export type EastmoneyTick = {
+  secid: string;
+  name: string;
+  price: number;
+  changePct: number;
+};
+
+/**
+ * 解析东财 `ulist.np/get?fltt=2` 的批量行情 → `secid → 行情`。
+ *
+ * `fltt=2` 让价格与涨跌幅直接是十进制，不用再按 `f1`（小数位）缩放——省掉一处极易搞错的换算。
+ * 停牌 / 未开盘的品种东财返回 `"-"`，`Number("-")` 是 NaN，这里连同价格 ≤0 的一起丢掉，
+ * 调用方按「没有这一条」处理，而不是渲染成 0.00。
+ */
+export function parseEastmoneyTicks(json: unknown): Map<string, EastmoneyTick> {
+  const out = new Map<string, EastmoneyTick>();
+  const diff = (json as { data?: { diff?: unknown } } | null)?.data?.diff;
+  if (!Array.isArray(diff)) return out;
+  for (const row of diff) {
+    const r = row as Record<string, unknown>;
+    const code = typeof r.f12 === "string" ? r.f12 : "";
+    const market = typeof r.f13 === "number" ? r.f13 : NaN;
+    if (!code || !Number.isFinite(market)) continue;
+    const price = Number(r.f2);
+    const changePct = Number(r.f3);
+    if (!Number.isFinite(price) || price <= 0) continue;
+    if (!Number.isFinite(changePct)) continue;
+    out.set(`${market}.${code}`, {
+      secid: `${market}.${code}`,
+      name: typeof r.f14 === "string" ? r.f14 : "",
+      price,
+      changePct,
+    });
+  }
+  return out;
 }
