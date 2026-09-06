@@ -12,6 +12,7 @@ import { watchEntityLabel } from "~/lib/watch-label";
 import {
   PRIMARY_NAV,
   NOTIFICATION_NAV,
+  INTERNATIONAL_SITE,
   isNavActive,
   type NavIconKey,
 } from "~/lib/nav";
@@ -23,6 +24,7 @@ import {
   UserIcon,
   SearchIcon,
   ChevronDownIcon,
+  GlobeIcon,
 } from "./icons";
 import { LogoMark } from "./logo";
 import { HoverPrefetchLink } from "./hover-prefetch-link";
@@ -248,6 +250,22 @@ export function Sidebar({
       </div>
 
       <div className="shrink-0 border-t border-sb-line px-3.5 py-2.5">
+        {/* 国际版入口。放底部而不是上面「工作台」那组：那一组全是站内路由，
+            混一条外链进去，active 高亮和返回键的行为都会对不上。高度按侧栏的
+            垂直预算压到 ~26px（每一像素都是从持仓窗口里拿的）。 */}
+        <a
+          href={INTERNATIONAL_SITE.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={INTERNATIONAL_SITE.title}
+          className="mb-1.5 flex items-center gap-2.5 rounded-lg px-3 py-[5px] text-[12.5px] font-medium leading-tight text-sb-muted transition-colors hover:bg-sb-2 hover:text-sb-ink"
+        >
+          <GlobeIcon className="h-[16px] w-[16px] shrink-0 opacity-90" />
+          {INTERNATIONAL_SITE.label}
+          <span aria-hidden className="ml-auto text-[10px] text-sb-faint">
+            美股 · EN ↗
+          </span>
+        </a>
         {/* 外观 / 配色两个开关并作一行——原来上下两行光标签就吃掉 ~46px，全还给持仓窗口。
             两个按钮各自带 aria-label，去掉文字标签不影响可达性。 */}
         <div className="mb-1 flex items-center justify-between px-1">

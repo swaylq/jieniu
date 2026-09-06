@@ -16,6 +16,8 @@ import { Sidebar } from "./_components/sidebar";
 import { CommandPaletteProvider } from "./_components/command-palette";
 import { Logo } from "./_components/logo";
 import { AskJieniu } from "./_components/ask-jieniu";
+import { GlobeIcon } from "./_components/icons";
+import { INTERNATIONAL_SITE } from "~/lib/nav";
 import { ScrollReset } from "./_components/scroll-reset";
 import {
   SITE_URL,
@@ -122,6 +124,17 @@ export default async function RootLayout({
                   <Logo />
                 </Link>
                 <div className="flex items-center gap-3">
+                  {/* 国际版入口的移动端对应位（桌面在侧栏底部）。移动端没有侧栏，
+                      不挂这一个就等于手机上完全没有入口。 */}
+                  <a
+                    href={INTERNATIONAL_SITE.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={INTERNATIONAL_SITE.title}
+                    className="flex rounded-md p-2 text-muted transition-colors hover:text-brand"
+                  >
+                    <GlobeIcon className="h-5 w-5" />
+                  </a>
                   <ColorblindToggle />
                   <ThemeToggle />
                   {session?.user ? (
@@ -143,7 +156,17 @@ export default async function RootLayout({
                 className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] focus:outline-none md:pb-0"
               >
                 {children}
-                <footer className="px-4 pb-2 pt-6 text-center md:pb-8">
+                <footer className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-4 pb-2 pt-6 text-center md:pb-8">
+                  {/* 移动端顶栏那个入口只有一个地球图标，认不出是什么；这里给一次带文字的。
+                      桌面上跟侧栏那条重复，重复的代价比手机上没人找得到小。 */}
+                  <a
+                    href={INTERNATIONAL_SITE.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-ink/60 transition-colors hover:text-ink"
+                  >
+                    {INTERNATIONAL_SITE.label} · 美股英文站 ↗
+                  </a>
                   <a
                     href={ICP_BEIAN_URL}
                     target="_blank"

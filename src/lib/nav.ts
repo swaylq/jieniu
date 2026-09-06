@@ -38,6 +38,19 @@ export const NOTIFICATION_NAV: NavItem = {
   short: "提醒",
 };
 
+/**
+ * 国际版入口（美股英文站）。它是**另一个站点**——独立仓库、独立数据库、独立域名，
+ * 所以是外链而不是路由：不进 `PRIMARY_NAV`（那几项都走客户端路由、都要参与 active 判定），
+ * 也不占移动端 tab-bar 的格子（4 个已经排满，挤第 5 个会把标签压到看不清）。
+ * 入口只挂两处：桌面侧栏底部、移动端顶栏右上角。
+ */
+export const INTERNATIONAL_SITE = {
+  href: "https://jieniu-en.swaylab.ai/",
+  label: "International",
+  /** 读屏与悬停提示：只给一个英文单词的话，没人知道点过去是什么。 */
+  title: "International — 美股英文站（新标签页打开）",
+} as const;
+
 /** 当前路径是否命中该导航项：首页只认精确 `/`，其余按前缀。 */
 export function isNavActive(pathname: string, href: string): boolean {
   return href === "/" ? pathname === "/" : pathname.startsWith(href);
