@@ -15,6 +15,9 @@ import { rollUpHoldingChange } from "../lib/portfolio-change";
 import { briefingStats } from "../lib/briefing";
 import { upcomingCatalysts, type CatalystRow } from "../lib/catalyst-window";
 import { parseAppointmentView } from "../lib/disclosure";
+// 停摆判据要知道哪些任务是「用户在固定钟点等的」。JOBS 是线上唯一配置来源，
+// 且只 import 类型、无副作用，直接读它比在这儿抄一份钟点表可靠。
+import { JOBS } from "../scheduler/jobs";
 
 const db = new PrismaClient();
 
@@ -64,6 +67,20 @@ const T = {
   analyticsRealRate: 0.5,
   /** 「空屏用户」占比上限：四卡全 0 且没有静默日兜底可显示的。 */
   emptyScreenRate: 0.2,
+  /**
+   * OpenRouter 余额下限（美元）。低于它就该充钱了，不是等它归零。
+   * 8-31 实测这条 key 一天烧掉 13.8 美元，30 美元≈两天——足够在下一份日报出来之前
+   * 把钱充上，又不至于长期挂着一条「钱还很多」的红字。
+   */
+  creditFloorUsd: 30,
+  /**
+   * 盘前简报的截止时刻＝ A 股开盘（北京时间）。晚于它落库的那份等于没有：
+   * 用户上午打开首页看到的仍是昨天的收盘复盘。
+   * 09-01 实测晚了 28 分钟而 `JobRun.status` 是 ok，所以这条只能靠产物时刻判，
+   * 判不出来的话 ⑨ 永远看不见它。跟 `schedule.ts` 里 `untilCST: "09:20"` 的补跑截止
+   * 是两回事：那个管「还值不值得再试」，这个管「用户到底有没有按时拿到」。
+   */
+  preopenDeadlineCST: "09:30",
 };
 
 const DAY = 86400000;
@@ -80,8 +97,60 @@ function localDay(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/**
+ * 报告开头必须说清「这份体检查的是哪个库」，并在查错库时喊出来。
+ *
+ * 2026-09-07 的教训，也是这个脚本上线以来最贵的一次：8-27 解牛国内上线，生产整体搬到
+ * 阿里云 ECS（jieniu.club → 47.99.195.191:3838 → 该机 PostgreSQL），本机 Mac 只剩一份
+ * 数据库副本和一个还在跑的 scheduler。而 cron 的提示词里把 `DATABASE_URL` 写死成
+ * `postgresql://mac@localhost:5432/jieniu`——于是**连续 11 天，每天的报告都在体检一个
+ * 没有任何用户访问的副本**：它报「18 个用户、复盘 100% 覆盖、AUDIT_OK」，同一天线上
+ * 真库的 `daily-digest` 失败、一个用户首页没有复盘，一个字都没报出来。
+ *
+ * 判据本身一条没错，错的是数据源——而报告里没有任何一行能让人看出来。所以补两件事：
+ *
+ *   1) 开头无条件打印库的身份（host/库名/用户数）。查错库这件事从此在每份报告的第一屏。
+ *   2) 判「这台机器在不在给用户提供服务」：本机 3838 端口没有 `next start` 在跑，
+ *      就说明这个库不可能是用户打开网页时读的那个。这个判据**不依赖用户流量**——
+ *      靠「多久没埋点」是判不出来的，19 个用户的产品本来就常有整周零访问
+ *      （实测近 14 天只 6 天有埋点），阈值定多少都会误报或漏报。
+ */
+async function auditDataSource(): Promise<void> {
+  const raw = process.env.DATABASE_URL ?? "";
+  let where = "(DATABASE_URL 未设置)";
+  try {
+    const u = new URL(raw);
+    // 只取 host/port/库名——口令绝不进日志。
+    where = `${u.hostname}:${u.port || "5432"}${u.pathname}`;
+  } catch {
+    /* 解析不了就照上面的兜底文案 */
+  }
+  const users = await db.user.count();
+  console.log(`- 体检的库：${where}｜用户 ${users} 人`);
+
+  const port = process.env.JIENIU_PORT ?? "3838";
+  let serving = false;
+  try {
+    const ctl = AbortSignal.timeout(4000);
+    const r = await fetch(`http://127.0.0.1:${port}/`, { signal: ctl });
+    serving = r.status < 500;
+  } catch {
+    serving = false;
+  }
+  if (!serving) {
+    warn(
+      `本机 :${port} 上没有解牛在跑，所以这个库几乎不可能是用户真正读的那个 —— ` +
+        `生产在阿里云 ECS（见 docs/reference/deploy.md）。正确跑法：` +
+        `ssh aliyun-main 'cd /home/ubuntu/jieniu && set -a && . /etc/jieniu/env && set +a && ` +
+        `SKIP_ENV_VALIDATION=1 ./node_modules/.bin/tsx src/scripts/user-audit.ts'。` +
+        `在本机副本上跑出来的「一切正常」不能代表任何一个真实用户`,
+    );
+  }
+}
+
 async function main() {
   console.log(`# 用户呈现数据复盘 · ${localDay(now)} ${now.toTimeString().slice(0, 5)}\n`);
+  await auditDataSource();
 
   const users = await db.user.findMany({
     select: { id: true, email: true, phone: true, alertEmail: true },
@@ -344,6 +413,19 @@ async function main() {
     );
     if (cov < T.digestCoverage) {
       warn(`${lastRun.tradeDate} 的个人复盘只覆盖 ${got.length}/${cohort.length} —— 查 generateUserDigests 的 skipped/rejected 原因`);
+    } else if (got.length < cohort.length) {
+      // 比例阈值（0.8）拦不住「19 个人里漏 1 个」——18/19 = 95%，它一声不吭。
+      // 可对那 1 个人来说，今天首页就是没有复盘，这是实打实的用户可见缺失。
+      // 2026-09-07：`cmsaeery` 的模型输出被截断判废，覆盖 18/19，④ 全程沉默；
+      // 当天能报出来只是因为 ⑨ 撞上了 job 的 fail 状态——而那条连坐现在已经修掉了
+      // （generate-market-digest.ts：少数判废不再让整个 job 失败），
+      // 少了这一条，同样的事下次就彻底无人知晓。
+      // 点名到人，不是只报个比例：读报告的人要能直接去看这个用户的首页。
+      const missing = cohort.map((c) => c.userId).filter((id) => !got.some((g) => g.userId === id));
+      warn(
+        `${lastRun.tradeDate} 有 ${missing.length} 个用户没拿到个人复盘（${missing.map((id) => id.slice(0, 8)).join("、")}）—— ` +
+          `他们今天首页那块是空的；原因看 daily-digest 那轮输出里的「判废」行`,
+      );
     }
   }
 
@@ -409,6 +491,321 @@ async function main() {
     );
   }
 
+  // ⑨ 今天这一趟定时任务到底成没成 —— 查**运行**，不查产物
+  //
+  // 为什么必须单列：④ 只查「最近一次 `UserDigest.tradeDate`」的覆盖率，而某天整体失败时
+  // 那天根本不会出现在 UserDigest 里，于是**被第二天的成功盖掉，永远查不到**。
+  // 8-22 实测：当天全绿 AUDIT_OK，可 08-20 的 daily-digest 其实 exit 1（1 份个人复盘被
+  // grounding 判废 → 按设计不放宽校验 → 整个 job 失败 → 第二步「生成提醒并发信」连坐跳过，
+  // 当天那封邮件没发，15 条积压到次日）。近 30 天 24 次跑里失败 2 次 + 超时 1 次，一次都没报过。
+  // 8-28 又复现且严重得多：OpenRouter 余额耗尽，daily-digest 15 秒就 402 失败，
+  // 18 个用户当天**一份个人复盘都没有**，审计照旧输出 AUDIT_OK。
+  //
+  // 这一条跟本脚本前几次「判据自己错」是**反**方向：不是喊狼来了，是该喊没喊，所以是收紧。
+  // 排除 running（正在跑的不算失败）；skipped 是调度器自己判的不该跑，也不算。
+  const todayDigests = await db.userDigest.count({ where: { tradeDate: localDay(now) } });
+  const lastDigestRun = await db.jobRun.findFirst({
+    where: { jobKey: "daily-digest" },
+    orderBy: { firedAt: "desc" },
+    select: { firedAt: true, status: true },
+  });
+  console.log(
+    `- 今天个人复盘 ${todayDigests} 份；daily-digest 最近一次 ` +
+      `${lastDigestRun ? `${localDay(lastDigestRun.firedAt)} ${lastDigestRun.firedAt.toTimeString().slice(0, 5)} ${lastDigestRun.status}` : "从来没跑过"}`,
+  );
+  const badRuns = await db.jobRun.findMany({
+    where: { firedAt: { gte: d1 }, status: { notIn: ["ok", "running", "skipped"] } },
+    orderBy: { firedAt: "desc" },
+    select: { jobKey: true, status: true, firedAt: true, output: true },
+  });
+  // 补跑成功的失败**不告警**——这是 2026-09-02 实测的第五条「判据自己错」。
+  //
+  // 当天 preopen-brief 08:14 首跑 125 秒超时 fail，08:32 补跑 45 秒成功，简报 08:33 落库，
+  // 距 09:30 开盘还有 57 分钟——用户该看见的东西一样也没少。而 `schedule.ts` 的补跑窗口
+  // （`retry: { everySec: 900, untilCST: "09:20" }`）正是 8-31 那次 402 之后专门造出来
+  // 兜这种情况的。首跑失败就报 ⚠，等于这个机制**每次正常工作都要拉一次警报**，
+  // 而它按设计就该时不时被触发——典型的天天喊狼来了。
+  //
+  // 「补跑成功」的口径：同一个 jobKey、同一个北京日历日、在这次失败**之后**有一轮 ok。
+  // 三个条件都必要：跨天的成功是明天那一趟，压不住今天丢的那份；失败之前的成功更无关。
+  // 鉴别力没丢——没有补跑窗口的任务（daily-digest 15:40 那趟）失败后当天不会再有 ok 轮，
+  // 照旧 ⚠，8-28 那次 18 个用户没复盘仍然报得出来。
+  const sameDayRuns = await db.jobRun.findMany({
+    where: { firedAt: { gte: d1 }, status: "ok", jobKey: { in: badRuns.map((r) => r.jobKey) } },
+    select: { jobKey: true, firedAt: true },
+  });
+  for (const r of badRuns) {
+    // 失败原因取 output 里第一行带「失败:」的——脚本约定把死因写在那儿，比 exitCode 有信息量
+    const reason = (r.output ?? "").split("\n").find((l) => l.includes("失败:"))?.trim() ?? "";
+    const at = r.firedAt.toTimeString().slice(0, 5);
+    const rescue = sameDayRuns
+      .filter(
+        (o) => o.jobKey === r.jobKey && +o.firedAt > +r.firedAt && localDay(o.firedAt) === localDay(r.firedAt),
+      )
+      .sort((a, b) => +a.firedAt - +b.firedAt)[0];
+    if (rescue) {
+      const gapMin = Math.round((+rescue.firedAt - +r.firedAt) / 60000);
+      console.log(
+        `- ${r.jobKey} ${at} 首跑失败，${gapMin} 分钟后 ${rescue.firedAt.toTimeString().slice(0, 5)} 补跑成功` +
+          `（补跑机制生效，不算事故）${reason ? ` —— 首跑死因：${reason.slice(0, 120)}` : ""}`,
+      );
+      continue;
+    }
+    warn(
+      `${r.jobKey} ${at} ${r.status}` +
+        (reason ? ` —— ${reason.slice(0, 180)}` : "") +
+        `（当天之后没有任何一轮成功）` +
+        (r.jobKey === "daily-digest"
+          ? `（今天个人复盘 ${todayDigests} 份；第二步「生成提醒并发信」被连坐跳过 = 当天提醒邮件没发出去）`
+          : ""),
+    );
+  }
+
+  // ⑨b 盘前简报**赶没赶上开盘** —— 查产物 + 查截止时刻，不只查 exit code
+  //
+  // 2026-09-02 复盘时逐日拉产物才发现：09-01 的盘前简报 09:58 才落库，比 09:30 开盘晚
+  // 28 分钟，而那一跑 `JobRun.status` 是 **ok**——⑨ 只看运行成没成，对它完全无感。
+  // 根因是调度器 05:58 到 09:54 断了 236 分钟（`ingest` 卡在 running 再没写完，
+  // 恢复后 7 个任务同一秒补火），preopen-brief 顺延到 09:58 才跑。
+  // 后果实测得到：`briefRouter.today` 的优先级是「当天 close > 当天 preopen > 最近一条」，
+  // 所以那天早上 09:58 之前首屏挂的是 08-31 的**收盘**复盘——正是 7-31 张楚寒
+  //「昨晚美股的信息没 update 上去」那条反馈，盘前简报这个功能本身就是为它造的。
+  //
+  // 跟 ⑨ 是**互补**而不是重复：⑨ 抓「跑挂了」，这条抓「跑成了但太晚，用户看的还是昨天那份」。
+  // 迟到的盘前简报等于没有，所以判据是截止时刻而不是「有没有」。
+  //
+  // 为什么不挂交易日历：这个任务 08-07 上线以来 27 天**每天**都跑、每天都出产物，
+  // 周六周日一样有（08-15、08-16、08-22、08-23、08-29、08-30 都在库里），
+  // 三次缺口全是真故障（08-08、08-31 的 402、09-01 的调度器停摆）。
+  // 所以「每天都该有一份」是实测出来的现状，不需要再判是不是交易日。
+  const preopenToday = await db.marketDigest.findFirst({
+    where: { tradeDate: localDay(now), market: "CN", session: "preopen" },
+    select: { createdAt: true },
+  });
+  const openAt = new Date(now);
+  const [oh, om] = T.preopenDeadlineCST.split(":").map(Number);
+  openAt.setHours(oh ?? 9, om ?? 30, 0, 0);
+  if (+now < +openAt) {
+    // 还没到开盘——这时候「没有」是正常的，不是故障。手工在早上跑本脚本会走到这里。
+    console.log(`- 盘前简报：现在还没到 ${T.preopenDeadlineCST} 开盘，不判`);
+  } else if (!preopenToday) {
+    warn(
+      `今天没有盘前简报（MarketDigest ${localDay(now)}/CN/preopen 不存在）` +
+        ` —— 整个上午首页挂的是昨天的收盘复盘，隔夜美股按定义没进去`,
+    );
+  } else {
+    const lateMin = Math.round((+preopenToday.createdAt - +openAt) / 60000);
+    console.log(
+      `- 盘前简报 ${preopenToday.createdAt.toTimeString().slice(0, 5)} 落库` +
+        `（${lateMin <= 0 ? `早于 ${T.preopenDeadlineCST} 开盘 ${-lateMin} 分钟` : `晚于开盘 ${lateMin} 分钟`}）`,
+    );
+    if (lateMin > 0) {
+      warn(
+        `盘前简报 ${preopenToday.createdAt.toTimeString().slice(0, 5)} 才落库，比 ${T.preopenDeadlineCST} 开盘晚 ${lateMin} 分钟` +
+          ` —— 开盘后才到的盘前简报没有意义，那之前首页给用户看的是昨天的收盘复盘。` +
+          `查调度器那段时间有没有停摆（JobRun 时间轴空档 / 卡住的 running 行）`,
+      );
+    }
+  }
+
+  // ⑨c 调度器自己停摆 —— 卡在 running 再也没写完的轮次
+  //
+  // 09-01 那 236 分钟的空档，现场只留下一条证据：`ingest` 05:58 那行 status 一直是
+  // running、`finishedAt` 永远为空。⑨ 明确排除了 running（「正在跑的不算失败」），
+  // 于是这条唯一的线索正好从判据里漏出去，当天审计一个字都没报。
+  //
+  // 阈值 2 小时：全库最长的单步超时是 preopen-brief 的 30 分钟，跑得最久的
+  // market-daily-refill 实测 626 秒（约 10.5 分钟）。超过 2 小时还 running 的只可能是
+  // 进程没了。实测全库只有 2 行满足，正是 08-31 16:32 和 09-01 05:58 两次故障，
+  // 平时为 0——不会天天响。窗口跟其余判据一样限 24 小时，故障当天报一次，过后自动闭嘴。
+  //
+  // 2026-09-03 补：检测本身是对的（当天真抓到 09-02 18:30 那次 288 分钟停摆），
+  // 但原来那句话把读报告的人指向了两个死胡同——「查 pm2」「查机器有没有休眠」。
+  // 实测两个都是好的：机器 33 天没重启、pmset 日志里整天没有一条 Sleep；
+  // 调度器自己在重启时就把这次停摆认出来并处理了（错误日志原文：
+  // 「backfill-announcements 的 runningAt 卡了 288 分钟，判定死锁并释放」）。
+  // 于是一整个会话花在重建「停了多久、恢复没有、用户丢没丢东西」——而这三件事
+  // 审计手里就有数据可以直接算出来。所以下面改成自己把它们算完再说话：
+  //
+  //   1) 停摆区间＝这行卡住的 firedAt →（时间上）下一条 JobRun 的 firedAt。
+  //      没有下一条＝**现在还躺着**，这是唯一需要立刻动手的分支，措辞要重。
+  //   2) 恢复了就说清楚几点恢复的。这类停摆靠调度器重启自愈，事后再喊「去查 pm2」
+  //      只会让人查到一个健康的进程，然后怀疑判据在乱报。
+  //   3) **区间里压没压到 `kind: "daily"` 的钟点**——这才是「用户有没有丢东西」。
+  //      interval 类（ingest/backfill-*/market-daily-refill）停几轮只是资讯旧几小时，
+  //      恢复后照常补；daily 类是用户在固定钟点等的产物，错过就是那天没有。
+  //      两次实测正好是这条判据的两端：09-01 停在 05:58–09:54，压到 brief-morning
+  //      07:20 和 preopen-brief 08:15，用户整个上午看的是前一天的收盘复盘；
+  //      09-02 停在 18:30–23:18，六个 daily 钟点（03:10/04:30/07:20/08:15/15:40/15:50）
+  //      一个都没压到，用户端零损失。同样是「288 分钟」，代价差着一个数量级，
+  //      报告不该用同一句话说这两件事。
+  //      钟点直接从 `scheduler/jobs.ts` 的 JOBS 读——那是线上唯一配置来源，
+  //      在这儿抄一份钟点表迟早会跟真配置对不上。
+  const stuckRuns = await db.jobRun.findMany({
+    where: { firedAt: { gte: d1, lt: new Date(+now - 2 * 3600_000) }, status: "running" },
+    select: { jobKey: true, firedAt: true },
+  });
+  /** 卡住但调度器没停的轮次——只记一行，不告警。判据见下面那段注释。 */
+  const orphanRows: string[] = [];
+  for (const s of stuckRuns) {
+    const next = await db.jobRun.findFirst({
+      where: { firedAt: { gt: s.firedAt } },
+      orderBy: { firedAt: "asc" },
+      select: { firedAt: true },
+    });
+    const endedAt = next?.firedAt ?? now;
+    const gapMin = Math.round((+endedAt - +s.firedAt) / 60000);
+    // 钟点要带日期。窗口常常落在昨天（判据看的是近 24 小时），只打 HH:MM 的话
+    // 「19:08 到 19:19 停摆」在一份标着今天的报告里读起来就是今天——09-07 实测被这么误读过。
+    const stamp = (d: Date) =>
+      (localDay(d) === localDay(now) ? "" : `${localDay(d).slice(5)} `) + d.toTimeString().slice(0, 5);
+    const from = stamp(s.firedAt);
+    const to = stamp(endedAt);
+
+    // 区间里被跳过的 daily 钟点。跨天的停摆也要算对，所以逐天推锚点而不是只比钟点字符串。
+    //
+    // 光「压到钟点」还不能算用户丢了东西：调度器一重启就会把错过的轮次补火（09-02 那次
+    // 23:18:59 一秒内连开五个）。所以每个被压到的锚点还要再问一句「当天补上没有」——
+    // 口径跟 ⑨ 的补跑窗口一致：同 jobKey、同北京日历日、锚点之后有一轮 ok。
+    // 实测就是靠这一步把 09-02 从「跳过 institutional-trace 19:10」修正成
+    //「晚了 248 分钟补上」——它 23:18 那轮是 ok 的，用户拿到了，只是晚。
+    // 少了这步，任何跨过任意一个 daily 钟点的停摆都会报「用户没拿到」，
+    // 而补火机制每正常工作一次就被算成一次事故。
+    const missed: string[] = [];
+    const late: string[] = [];
+    /** 被压到的锚点里，补跑落地得最晚的那个晚了多少分钟。停摆判据要用它。 */
+    let lateMaxMin = 0;
+    // 推锚点必须按**日历日**走，不能拿 firedAt 当游标加一天：那样游标会一直带着停摆
+    // 开始的时刻（比如 22:00），`+d <= +endedAt` 在跨午夜时第二天就直接不成立，
+    // 于是 22:00 → 次日 09:00 这种停摆报「一个 daily 钟点都没压到」——而这恰恰是
+    // 最该喊的形状（整夜没跑，早报 07:20 和盘前简报 08:15 全丢）。
+    // 09-03 写这段时就是这么错的，靠拿四个区间过一遍才看出来：同日的三个都对，
+    // 唯独跨午夜那个静默。所以游标在这儿先归零到当天 00:00。
+    const firstDay = new Date(s.firedAt);
+    firstDay.setHours(0, 0, 0, 0);
+    const lastDay = new Date(endedAt);
+    lastDay.setHours(0, 0, 0, 0);
+    for (const j of JOBS) {
+      if (j.schedule.kind !== "daily") continue;
+      const [jh, jm] = j.schedule.atCST.split(":").map(Number);
+      for (const d = new Date(firstDay); +d <= +lastDay; d.setDate(d.getDate() + 1)) {
+        const anchor = new Date(d);
+        anchor.setHours(jh ?? 0, jm ?? 0, 0, 0);
+        if (+anchor <= +s.firedAt || +anchor >= +endedAt) continue;
+        const dayEnd = new Date(anchor);
+        dayEnd.setHours(23, 59, 59, 999);
+        const caughtUp = await db.jobRun.findFirst({
+          where: {
+            jobKey: j.key,
+            status: "ok",
+            firedAt: { gt: anchor, lte: dayEnd },
+          },
+          orderBy: { firedAt: "asc" },
+          select: { firedAt: true },
+        });
+        if (caughtUp) {
+          const lateMin = Math.round((+caughtUp.firedAt - +anchor) / 60000);
+          lateMaxMin = Math.max(lateMaxMin, lateMin);
+          late.push(
+            `${j.key}（${j.schedule.atCST} → ${caughtUp.firedAt.toTimeString().slice(0, 5)}，晚 ${lateMin} 分钟）`,
+          );
+        } else {
+          missed.push(`${j.key} ${j.schedule.atCST}`);
+        }
+        break;
+      }
+    }
+    const cost = missed.length
+      ? `窗口里这些用户在固定钟点等的产物当天再没补上：${missed.join("、")} —— 那天这些用户是真没拿到`
+      : late.length
+        ? `窗口压到了 ${late.join("、")}，但恢复后当天都补跑成功了，用户拿到了、只是晚；` +
+          `其余只停了 interval 类，资讯旧了约 ${Math.round(gapMin / 60)} 小时`
+        : `窗口里没有任何 daily 任务的钟点（只停了 interval 类），用户端只是资讯旧了约 ${Math.round(gapMin / 60)} 小时，没丢产物`;
+
+    // 一行卡在 running ≠ 调度器停摆 —— 2026-09-07 实测的第六条「判据自己错」，而且是
+    // 这个脚本迄今最吵的一次：一天报了 5 条「停摆」，5 条全是假的。
+    //
+    // 反证一眼就成立：`backfill-signals` 10:18 那轮卡住了，可 `ingest` 10:19 照常起跑、
+    // 跑满 437 秒还写下了 fail，`market-daily-refill` 10:33 跑完 ok——进程活得好好的。
+    // 真实原因是本机当天重启了 3 次（10:27:36 开机，日志里同刻是 `FATAL: the database
+    // system is shutting down` + DNS ENOTFOUND），Postgres 在任务中途被拉走，
+    // 那句写「done」的 `jobRun.update()` 失败，状态行就永远停在 running 了。
+    // 调度器随后自己释放死锁（「runningAt 卡了 70 分钟，判定死锁并释放」）让任务恢复，
+    // 但从不回填那一行——lessons.md 里那条「自愈清了锁却不回填状态行」说的就是它。
+    //
+    // 而原来的算法拿「下一条 JobRun 的 firedAt」当停摆终点，于是算出来的是**任务间的正常
+    // 节奏**，不是停摆时长：今天五条分别是 1 / 10 / 11 / 12 / 42 分钟。「停摆 1 分钟」
+    // 这种话本身就自相矛盾——进程真没了，下一个任务不可能一分钟后起跑。
+    //
+    // 所以改成两个条件择一才算停摆，其余只在系统面记一行：
+    //   1) 空档 ≥ 60 分钟。实测正常相邻间隔 p50 8–10 分钟、p95 26–30、线上 7 天最大 37；
+    //      两次真停摆是 236 和 288 分钟。60 分钟落在两者之间、离两边都远。
+    //   2) 或者窗口压到了 daily 钟点——短而刁的停摆（比如 20 分钟正好压住早报 07:20）
+    //      用户照样丢东西，鉴别力不能只交给时长。
+    const STALL_MIN_GAP_MIN = 60;
+    //
+    // 「压到了 daily 钟点」这个条件必须写成**当天没补上，或补上但晚太多**，不能写成
+    // `late.length > 0`。补火机制按设计就会把错过的轮次立刻重放，09-07 19:08 那次
+    // `institutional-trace` 只晚了 9 分钟——按 late 一有就报，等于这个机制每正常工作
+    // 一次就拉一次警报，跟 lessons.md 里「补跑成功不该告警」是同一条。
+    // 晚 60 分钟以上才算用户真受影响（对照：09-02 那次晚了 248 分钟）。
+    const isStall =
+      !next || gapMin >= STALL_MIN_GAP_MIN || missed.length > 0 || lateMaxMin >= STALL_MIN_GAP_MIN;
+    if (!isStall) {
+      orphanRows.push(`${s.jobKey} ${from}`);
+      continue;
+    }
+
+    warn(
+      next
+        ? `调度器 ${from} 到 ${to} 停摆 ${gapMin} 分钟（现场证据：${s.jobKey} ${from} 那轮卡在 running 再没写完），` +
+            `${to} 已自行恢复、之后一直正常。${cost}。` +
+            `不用再查 pm2 或休眠——这类停摆靠调度器重启时的死锁释放自愈，事后查只会查到一个健康的进程`
+        : `⛔ 调度器从 ${from} 起停摆 ${gapMin} 分钟，到现在**还没恢复**（${s.jobKey} 那轮卡在 running，之后再没有任何任务起跑）` +
+            ` —— 立刻看 pm2 jieniu-scheduler，按 docs/reference/deploy.md 用 scripts/start-scheduler.sh 拉起来。${cost}`,
+    );
+  }
+
+  if (orphanRows.length > 0) {
+    console.log(
+      `- ${orphanRows.length} 轮任务的状态行永远停在 running（${orphanRows.join("、")}）——` +
+        `调度器没停、后面的任务照常起跑，是死锁自愈时没回填这一行。不影响用户`,
+    );
+  }
+
+  // ⑩ AI 供应商没钱了 —— 静默降级，job 照样 exit 0
+  //
+  // `backfill-signals` 对每条新闻单独 try/catch：402 只打一行 `✗ … openrouter 402` 就继续，
+  // 整轮 status 仍是 ok。8-28 实测那一轮 150 条新闻**全部** 402、证据一条没抽出来，
+  // 而 ⑨ 看不见它（status=ok），④⑦⑧ 也看不见（产物是别的管线写的）。
+  //
+  // 匹配串必须带上下文：裸 `402` 会撞上别的任务输出里的耗时「(402s)」——
+  // market-daily-refill 和 opportunity-radar 都打这个格式，实测会误报。
+  const day1Runs = await db.jobRun.findMany({
+    where: { firedAt: { gte: d1 } },
+    select: { jobKey: true, output: true },
+  });
+  const creditHits = day1Runs.filter((r) => /openrouter 402|more credits|insufficient credit/i.test(r.output ?? ""));
+  if (creditHits.length > 0) {
+    const jobs = [...new Set(creditHits.map((r) => r.jobKey))];
+    warn(
+      `近 24 小时 ${creditHits.length} 次运行撞上 OpenRouter 402 余额不足（${jobs.join("、")}）` +
+        ` —— 充值前所有 AI 环节都在静默降级：收盘复盘、证据抽取、机会雷达。查余额：` +
+        `secret exec OPENROUTER_API_KEY -- sh -c 'curl -s -H "Authorization: Bearer $OPENROUTER_API_KEY" https://openrouter.ai/api/v1/credits'`,
+    );
+  }
+
+  // ⑪ 余额还剩多少 —— 把事后报警补成事前报警
+  //
+  // ⑩ 只在**已经**烧穿之后才响：8-28、8-31 两次都是先丢了用户当天的东西
+  // （8-28 一份个人复盘都没有；8-31 整个上午没有盘前简报），第二天早上才知道。
+  // 余额是提前一周就能看见的数，没有理由等它归零。
+  //
+  // 要 key 才查得到，所以做成**可选**：cron 里给这个脚本套上
+  // `secret exec OPENROUTER_API_KEY -- env DATABASE_URL=… npx tsx …` 就生效。
+  // 没套时打一行「未查」而不是静默跳过——否则这条判据哪天失效了没人看得出来。
+  await reportCredits();
+
   console.log(`\n# 结论`);
   if (alerts.length === 0) {
     console.log("AUDIT_OK —— 今天没有需要动手的项");
@@ -416,6 +813,46 @@ async function main() {
     for (const a of alerts) console.log(`⚠ ${a}`);
   }
   await db.$disconnect();
+}
+
+/**
+ * OpenRouter 余额。网络故障 / 没 key 都只打一行，绝不让体检脚本挂掉——
+ * 这是只读体检，任何一条判据都不该有能力阻断其余判据。
+ */
+async function reportCredits(): Promise<void> {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) {
+    console.log("- OpenRouter 余额：未查（本次运行没有 OPENROUTER_API_KEY）");
+    return;
+  }
+  try {
+    const r = await fetch("https://openrouter.ai/api/v1/credits", {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!r.ok) {
+      console.log(`- OpenRouter 余额：查不到（HTTP ${r.status}）`);
+      return;
+    }
+    const j = (await r.json()) as { data?: { total_credits?: number; total_usage?: number } };
+    const credits = j.data?.total_credits;
+    const used = j.data?.total_usage;
+    if (typeof credits !== "number" || typeof used !== "number") {
+      console.log("- OpenRouter 余额：查不到（返回体没有 total_credits/total_usage）");
+      return;
+    }
+    const left = credits - used;
+    console.log(`- OpenRouter 余额 ${left.toFixed(2)} 美元（已充 ${credits} / 已用 ${used.toFixed(2)}）`);
+    if (left < T.creditFloorUsd) {
+      warn(
+        `OpenRouter 余额只剩 ${left.toFixed(2)} 美元（低于 ${T.creditFloorUsd} 的下限，约两天用量）` +
+          ` —— 烧穿之后所有 AI 环节静默降级：收盘复盘、盘前简报、证据抽取、机会雷达。` +
+          ` 充值：https://openrouter.ai/settings/credits`,
+      );
+    }
+  } catch (e) {
+    console.log(`- OpenRouter 余额：查不到（${e instanceof Error ? e.message : String(e)}）`);
+  }
 }
 
 void main();

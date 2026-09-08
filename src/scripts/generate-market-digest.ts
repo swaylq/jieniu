@@ -85,8 +85,30 @@ async function main() {
     if (r.status === "created") console.log(`  · ${r.userId.slice(0, 8)}… ${r.data!.headline}`);
     if (r.status === "rejected") console.error(`  ✗ ${r.userId.slice(0, 8)}… ${r.reason}`);
   }
+  // 判废**不放宽校验**（不入库、原因照打），但也不该由它决定整个 job 的成败。
+  //
+  // 2026-09-07 实测这条 throw 的真实代价：`cmsaeery` 那份模型输出被截断（JSON 断在
+  // `{"n`）→ 判废 1 → 这里 throw → 进程 exit 1 → `daily-digest` 的第二步
+  // 「生成提醒并发信」被调度器连坐跳过 → 当天那封每日邮件一封没发。而那封信的骨架是
+  // 市场复盘、**每天都发**（见 alert-mailer.ts），跟这一个用户毫无关系。
+  // 近 21 天 daily-digest 失败 4 次（08-20 / 08-28 / 09-05 / 09-07），全是这个形状。
+  // 8-22 就把这条连坐写进了 user-audit.ts 的注释，写下来不等于修好——今天还在踩。
+  //
+  // 而且这多半是**瞬时**的：09-07 原样重跑一次，19 个用户全过、判废 0，
+  // 那份被截断的输出一次重试就好了。
+  //
+  // 所以退出码只反映「这一趟是不是整体坏了」：
+  //   一个都没生成出来（模型挂了 / 提示词坏了 / 余额没了）→ 非 0，后面的步骤不该跑；
+  //   多数人拿到了、个别人判废 → 打一行 ✗ 然后 exit 0，别让 18 个人替 1 个人受过。
+  // 少数判废不会因此变得无人知晓：user-audit.ts 的 ④ 会点名「谁今天没有复盘」。
+  if (stats.rejected > 0 && stats.created === 0) {
+    throw new Error(`${stats.rejected} 个用户的个人复盘全部被判废、一份都没生成——见上方原因，不要放宽校验`);
+  }
   if (stats.rejected > 0) {
-    throw new Error(`有 ${stats.rejected} 个用户的个人复盘被判废——见上方原因，不要放宽校验`);
+    console.error(
+      `[digest] ✗ ${stats.rejected}/${stats.users} 个用户的个人复盘被判废（其余 ${stats.created} 份已生成）——` +
+        `见上方原因，不要放宽校验。这些用户今天首页没有个人复盘`,
+    );
   }
 }
 
