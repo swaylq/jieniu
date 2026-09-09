@@ -816,43 +816,88 @@ async function main() {
 }
 
 /**
- * OpenRouter 余额。网络故障 / 没 key 都只打一行，绝不让体检脚本挂掉——
- * 这是只读体检，任何一条判据都不该有能力阻断其余判据。
+ * OpenRouter 余额。这条判据是 8-28 / 8-31 两次「余额烧穿→全线 AI 静默降级」之后补的
+ * **事前**预警；JobRun 非 ok 和 402 那两条只能在用户已经拿到降级产物之后才亮。
+ *
+ * 所以它自己不许静默失灵。09-09 实测：报告里印了一行「查不到（fetch failed）」，
+ * 结论仍然是 AUDIT_OK —— 余额真要是只剩 5 美元，那天照样什么都不会说。
+ * 同一时刻手工连测 10 次全部 200，说明那是一次偶发抖动，不是墙也不是 key 坏了。
+ *
+ * 现在的口径：失败重试 3 次；3 次都不成才认，并且认了就要 warn ——
+ * 「这条预警今天没跑成」本身就是要告诉人的事，不能只印一行灰字。
+ * 401/403 不重试：那是 key 被吊销或额度被封，重试一百次也是同一个答案，直接报。
+ * 依然绝不让脚本挂掉：整段包在 try 里，任何一条判据都不该有能力阻断其余判据。
  */
 async function reportCredits(): Promise<void> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) {
     console.log("- OpenRouter 余额：未查（本次运行没有 OPENROUTER_API_KEY）");
+    warn(
+      "体检没拿到 OPENROUTER_API_KEY，余额下限这条事前预警本次没跑 —— " +
+        "余额烧穿会让收盘复盘、盘前简报、证据抽取全线静默降级（8-28、8-31 各出过一次）。" +
+        "正确跑法见 docs/reference/deploy.md：在 ECS 上 `set -a && . /etc/jieniu/env && set +a` 之后再跑。",
+    );
     return;
   }
-  try {
-    const r = await fetch("https://openrouter.ai/api/v1/credits", {
-      headers: { Authorization: `Bearer ${key}` },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!r.ok) {
-      console.log(`- OpenRouter 余额：查不到（HTTP ${r.status}）`);
-      return;
-    }
-    const j = (await r.json()) as { data?: { total_credits?: number; total_usage?: number } };
-    const credits = j.data?.total_credits;
-    const used = j.data?.total_usage;
-    if (typeof credits !== "number" || typeof used !== "number") {
-      console.log("- OpenRouter 余额：查不到（返回体没有 total_credits/total_usage）");
-      return;
-    }
-    const left = credits - used;
-    console.log(`- OpenRouter 余额 ${left.toFixed(2)} 美元（已充 ${credits} / 已用 ${used.toFixed(2)}）`);
-    if (left < T.creditFloorUsd) {
-      warn(
-        `OpenRouter 余额只剩 ${left.toFixed(2)} 美元（低于 ${T.creditFloorUsd} 的下限，约两天用量）` +
-          ` —— 烧穿之后所有 AI 环节静默降级：收盘复盘、盘前简报、证据抽取、机会雷达。` +
-          ` 充值：https://openrouter.ai/settings/credits`,
+
+  const attempts = 3;
+  let lastErr = "";
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      const r = await fetch("https://openrouter.ai/api/v1/credits", {
+        headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (r.status === 401 || r.status === 403) {
+        console.log(`- OpenRouter 余额：查不到（HTTP ${r.status}）`);
+        warn(
+          `OpenRouter 认证失败（HTTP ${r.status}）—— key 被吊销或额度被封，不是网络问题。` +
+            " 这把 key 一停，收盘复盘、盘前简报、证据抽取、机会雷达全线静默降级。" +
+            " 查账号：https://openrouter.ai/settings/keys",
+        );
+        return;
+      }
+      if (!r.ok) {
+        lastErr = `HTTP ${r.status}`;
+        if (i < attempts) continue;
+        break;
+      }
+      const j = (await r.json()) as { data?: { total_credits?: number; total_usage?: number } };
+      const credits = j.data?.total_credits;
+      const used = j.data?.total_usage;
+      if (typeof credits !== "number" || typeof used !== "number") {
+        console.log("- OpenRouter 余额：查不到（返回体没有 total_credits/total_usage）");
+        warn(
+          "OpenRouter 余额接口返回体里没有 total_credits/total_usage —— 对方改了字段名，" +
+            "余额下限这条事前预警从此形同虚设，得照新字段改这段代码。",
+        );
+        return;
+      }
+      const left = credits - used;
+      console.log(
+        `- OpenRouter 余额 ${left.toFixed(2)} 美元（已充 ${credits} / 已用 ${used.toFixed(2)}）` +
+          (i > 1 ? `（第 ${i} 次尝试才通）` : ""),
       );
+      if (left < T.creditFloorUsd) {
+        warn(
+          `OpenRouter 余额只剩 ${left.toFixed(2)} 美元（低于 ${T.creditFloorUsd} 的下限，约两天用量）` +
+            ` —— 烧穿之后所有 AI 环节静默降级：收盘复盘、盘前简报、证据抽取、机会雷达。` +
+            ` 充值：https://openrouter.ai/settings/credits`,
+        );
+      }
+      return;
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e);
     }
-  } catch (e) {
-    console.log(`- OpenRouter 余额：查不到（${e instanceof Error ? e.message : String(e)}）`);
   }
+
+  console.log(`- OpenRouter 余额：查不到（${attempts} 次都失败，最后一次 ${lastErr}）`);
+  warn(
+    `OpenRouter 余额连查 ${attempts} 次都没成（最后一次：${lastErr}）—— 余额下限这条事前预警本次没跑成。` +
+      ` 它是 8-28、8-31 两次「余额烧穿→全线 AI 静默降级」之后补的唯一事前预警，` +
+      ` 停一天就等于那天没人看着钱。手工确认：` +
+      `secret exec OPENROUTER_API_KEY -- sh -c 'curl -s -H "Authorization: Bearer $OPENROUTER_API_KEY" https://openrouter.ai/api/v1/credits'`,
+  );
 }
 
 void main();
