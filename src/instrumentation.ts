@@ -1,8 +1,9 @@
 /**
  * 启动自检（Next.js instrumentation hook，进程起来时跑一次）。
  *
- * 生产的密钥不在 `.env` 里，只在 `secret` store 里，靠 `scripts/start-prod.sh`
- * 的 `secret exec` 注入。若绕过脚本直接 `npm run start`，这些 key 会**静默**丢失：
+ * 本机共用 API 密钥由 `scripts/start-prod.sh` 的 `secret exec` 注入；
+ * AUTH_SECRET 在项目 `.env`，线上配置在服务器 `/etc/<app>/env`。
+ * 若绕过脚本直接 `npm run start`，共用 API key 会**静默**丢失：
  * 首页照样 200，但 AI 层（问解牛/解读/thesis/drift/画像/事件摘要）每次调用都 500，
  * 登录验证码也发不出去 —— 2026-07-25 就这么坏了一整天没人发现。
  *
@@ -21,8 +22,8 @@ export function register() {
 
   const missing = REQUIRED.filter(([k]) => !process.env[k]);
 
-  // 会话密钥强度自检：`.env` 里那份历史遗留值是一句自然语言（含空格、非 base64），
-  // 熵太低不该签会话；正确来源是 secret store（由 scripts/start-prod.sh 注入）。
+  // 会话密钥强度自检：识别历史遗留的自然语言值（含空格、非 base64）。
+  // 当前值来自本机项目 `.env` 或服务器环境文件，不再从全局 store 注入。
   // 只报形状判定，绝不打印值本身。
   const authSecret = process.env.AUTH_SECRET ?? "";
   const weakAuth =

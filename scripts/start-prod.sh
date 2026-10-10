@@ -2,14 +2,15 @@
 #
 # 生产启动的唯一入口。
 #
-# 为什么必须走这个脚本：ALI_KEY / ALI_SECRET / OPENROUTER_API_KEY / AUTH_SECRET 不都在 `.env` 里，
-# 只在 `secret` store 里。直接 `NODE_ENV=production PORT=3838 npm run start` 能起来、
+# 为什么必须走这个脚本：ALI_KEY / ALI_SECRET / OPENROUTER_API_KEY 来自全局 `secret` store，
+# AUTH_SECRET 来自本项目 `.env`（600，gitignore）。直接 `NODE_ENV=production PORT=3838 npm run start` 能起来、
 # 首页也 200，但这三个 key **静默**缺失 —— AI 全线（问解牛 / 解读 / thesis / drift /
 # 画像 / 事件摘要）每次调用秒失败，登录验证码也发不出去。2026-07-25 就是这么坏的。
 # 把 `secret exec` 写进命令结构里，比写进文档里可靠。
 #
 # 用法：
 #   scripts/start-prod.sh            # 停旧进程 → 起新进程 → 自检
+#   scripts/start-prod.sh --check-env # 只核验配置，不启动或停止进程
 #   PORT=3939 scripts/start-prod.sh  # 换端口
 #
 # 本脚本**不做 build**。改了代码要先单独跑 `NODE_ENV=production npm run build`
@@ -28,14 +29,26 @@ command -v secret >/dev/null 2>&1 || {
   exit 1
 }
 
+# Node 20.6+；只检查变量名，不输出值；在停止任何进程前确认配置可读。
+secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY -- \
+  node --env-file="$ROOT/.env" -e '
+    const required = ["ALI_KEY", "ALI_SECRET", "OPENROUTER_API_KEY", "AUTH_SECRET"];
+    const missing = required.filter((key) => !process.env[key]);
+    if (missing.length) {
+      console.error("✗ 缺少启动配置：" + missing.join(" / "));
+      process.exit(1);
+    }
+    console.log("✓ 启动配置齐全：" + required.join(" / "));
+  '
+if [ "${1:-}" = "--check-env" ]; then
+  exit 0
+fi
+
 echo "→ 停掉 :$PORT 上的旧进程"
 lsof -ti:"$PORT" | xargs kill 2>/dev/null || true
 sleep 1
 
-# AUTH_SECRET 也走 secret store：`.env` 里那份是一句自然语言（含空格、非 base64），
-# 熵太低不该拿来签会话；store 里是标准的 `openssl rand -base64 32`。进程 env 优先级高于
-# `.env`，注入即生效。`.env` 的弱值保留只为让 `next build` / 本地 dev 的 env 校验能过——
-# 真要绕过本脚本裸起，下面的 [boot] 自检会把「用的是弱密钥」喊出来。
+# AUTH_SECRET 由 Next.js 从本项目 `.env` 读取，不再依赖全局副本。
 # AUTH_URL：**必须显式钉死**。解牛跑在 xray(443) → Caddy(8443) → rathole → 本机 3838 后面，
 # Auth.js 自己探测出来的 origin 是 `localhost:3838`（实测：无论怎么传 Host / X-Forwarded-Host
 # 都不改）——于是「退出登录」跳到 https://localhost:3838/，用户直接掉线到一个打不开的地址。
@@ -57,8 +70,8 @@ sleep 1
 # OPENROUTER_ASK_MODEL；`OPENROUTER_ASK_API_KEY` 留作后路，不设就跟主 key 同一把。
 # 万一哪天这把 key 又对 GPT 403，`server/ask-model.ts` 的候选链会静默退回 DeepSeek ——
 # 静默降级看不出来，所以 instrumentation.ts 的 [boot] 行会把「问解牛 → 哪个模型」打出来。
-echo "→ 启动（secret exec 注入 ALI_KEY / ALI_SECRET / OPENROUTER_API_KEY / AUTH_SECRET）"
-secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY AUTH_SECRET -- \
+echo "→ 启动（共用密钥来自 secret，AUTH_SECRET 来自项目 .env）"
+secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY -- \
   env NODE_ENV=production PORT="$PORT" \
   OPENROUTER_ASK_MODEL="${OPENROUTER_ASK_MODEL:-openai/gpt-5.6-terra}" \
   AUTH_URL="${AUTH_URL:-https://jieniu.swaylab.ai}" \

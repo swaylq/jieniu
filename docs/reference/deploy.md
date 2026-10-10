@@ -113,6 +113,21 @@ DATABASE_URL="$DATABASE_URL" npx tsx -e 'void (async () => {
 - **缓存**：静态 `/_next/static` HIT、`/api` DYNAMIC、HTML 不缓存（`x-site-cache-status` 头看）。
   基础版共享边缘缓存容量小，冷对象会被 LRU 挤掉回源——靠真实流量升温，别指望全 HIT。
 
+## 本机运行配置（2026-10-10）
+
+`scripts/start-prod.sh` / `scripts/start-scheduler.sh` 仅用于本机。共用的 `ALI_KEY`、
+`ALI_SECRET`、`OPENROUTER_API_KEY` 继续由 `secret exec` 注入；项目根目录的 `.env`
+保存 `AUTH_SECRET` 和普通配置 `OPS_ALERT_EMAIL`，权限必须为 600，且保持 Git 忽略。
+两个变量已从本机全局库删除；不要再用 `secret set` / `secret exec` 管理它们。
+
+本机需 Node 20.6+。Web 由 Next.js 读取 `.env`；调度器通过 Node 的
+`--env-file` 读取，并传给实际 worker。启动前会检查配置，
+`scripts/start-prod.sh --check-env` / `scripts/start-scheduler.sh --check-env`
+只检查变量是否齐全，不输出值，也不启动或停止进程。
+
+线上继续使用服务器的环境文件：国内 `/etc/jieniu/env`，海外 `/etc/jieniu-en/env`。
+迁移只改变本机存放和读取方式，服务器上的值没有修改。
+
 ## 旧架构（jieniu.swaylab.ai，回退/收尾）
 
 公网 443（VPS xray）→ Caddy `:8443` → `localhost:4025` → rathole → 本机 Mac `127.0.0.1:3838`。

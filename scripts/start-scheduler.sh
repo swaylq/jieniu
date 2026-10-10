@@ -12,7 +12,8 @@
 #
 # 用法：
 #   scripts/start-scheduler.sh
-#   scripts/start-scheduler.sh   # 收件人取自 secret store 的 OPS_ALERT_EMAIL
+#   scripts/start-scheduler.sh --check-env   # 只核验配置，不启动或停止进程
+#   scripts/start-scheduler.sh   # 收件人取自本项目 .env 的 OPS_ALERT_EMAIL
 
 set -euo pipefail
 
@@ -32,11 +33,22 @@ command -v pm2 >/dev/null 2>&1 || {
   exit 1
 }
 
-# 收件人从 secret store 注入（本仓在 GitHub 上是公开的，别把邮箱写进文件）。
-# 换收件人：`printf %s 'a@b.com' | secret set OPS_ALERT_EMAIL` 后重启本脚本。
-if ! secret list 2>/dev/null | grep -qx "OPS_ALERT_EMAIL"; then
-  echo "⚠ secret store 里没有 OPS_ALERT_EMAIL —— 告警只落库、不发信"
-  echo "  设置：printf %s 'you@example.com' | secret set OPS_ALERT_EMAIL"
+# OPS_ALERT_EMAIL 是普通运行配置，保存在本项目 `.env`（不提交）。
+# 修改收件人后重新运行本脚本；Node 将 .env 传入 worker 环境。
+
+# Node 20.6+；只检查变量名，不输出值；在停止任何进程前确认配置可读。
+secret exec ALI_KEY ALI_SECRET OPENROUTER_API_KEY -- \
+  node --env-file="$ROOT/.env" -e '
+    const required = ["ALI_KEY", "ALI_SECRET", "OPENROUTER_API_KEY", "OPS_ALERT_EMAIL"];
+    const missing = required.filter((key) => !process.env[key]);
+    if (missing.length) {
+      console.error("✗ 缺少启动配置：" + missing.join(" / "));
+      process.exit(1);
+    }
+    console.log("✓ 启动配置齐全：" + required.join(" / "));
+  '
+if [ "${1:-}" = "--check-env" ]; then
+  exit 0
 fi
 
 echo "→ 移除旧进程（保证密钥重新注入）"
@@ -60,17 +72,16 @@ fi
 # 旧日志留着会让下面的 grep 读到上一轮的自检行，看不出本轮到底起没起来。
 : >"$LOG"
 
-echo "→ 启动（secret exec 注入 OPENROUTER_API_KEY / ALI_KEY / ALI_SECRET / OPS_ALERT_EMAIL）"
-# OPS_ALERT_EMAIL 由 secret exec 注入，**不要**再在下面的 env 里写一遍：
-# `env` 在 secret exec 之后生效，调用者没设时会用空串把注入的值覆盖掉，
-# 于是告警又变回「只落库不发信」，而日志里一切正常。（2026-07-30 run4）
-secret exec OPENROUTER_API_KEY ALI_KEY ALI_SECRET OPS_ALERT_EMAIL -- \
+echo "→ 启动（共用密钥来自 secret，OPS_ALERT_EMAIL 来自项目 .env）"
+# 项目配置由 Node 的 --env-file 加载；不要用空的 env 参数覆盖收件人。
+secret exec OPENROUTER_API_KEY ALI_KEY ALI_SECRET -- \
   env DATABASE_URL="$DB" \
       MAIL_FROM="解牛 <noreply@mail.auramate.net>" \
       ALI_REGION=cn-hangzhou \
   pm2 start node_modules/.bin/tsx \
       --name "$NAME" \
       --cwd "$ROOT" \
+      --node-args="--env-file=$ROOT/.env" \
       --output "$LOG" --error "$LOG" \
       --time \
       -- src/scheduler/main.ts
