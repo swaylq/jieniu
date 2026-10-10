@@ -37,7 +37,7 @@ cd /home/ubuntu/jieniu
 git pull                                              # 代码有变时
 NODE_ENV=development npm install --include=dev        # 依赖有变时（production 会漏装 devDeps）
 NODE_ENV=production npm run build                     # 代码有变时；必须 exit 0 才往下走
-scripts/start-prod-ecs.sh                             # 读 /etc/jieniu/env → 停旧 → 起 → 自检
+scripts/start-prod-ecs.sh                             # 配置预检 → PM2 更新 web → 自检 → 保存
 ```
 
 **只用 `scripts/start-prod-ecs.sh` 启动，别手敲 `npm run start`。** 密钥不在 `.env`，在
@@ -48,6 +48,21 @@ scripts/start-prod-ecs.sh                             # 读 /etc/jieniu/env → 
 又用坏构建拉起来。
 
 启动后日志第一行 `[boot] ✓ 密钥齐全` 表示密钥进进程；`[boot] ✗` 说明启动方式不对，脚本非 0 退出。
+
+### 网页进程自动恢复（2026-10-10）
+
+Web 由 PM2 的 `jieniu-web` 托管，配置为 `scripts/ecosystem-prod-ecs.config.cjs`。
+`run-prod-ecs.sh` 在每次启动时读取 `/etc/jieniu/env`，并用 `exec` 启动 Next.js；
+PM2 直接监控实际网页进程，异常退出后自动重启。进程总内存超过 **1536 MiB** 时，
+PM2 在下一次内存检查时重启（通常约 30 秒），早于原来约 2 GiB 的 JavaScript 堆耗尽。
+这是故障恢复保护，不代表已定位长期内存增长的代码来源。
+
+- 启动与部署仍只用 `scripts/start-prod-ecs.sh`；`--check-env` 只检查配置、构建和依赖。
+- 日志保持追加，启动自检只读本次新增部分；不得把旧日志的成功行当成本次成功。
+- 首次迁移只停止工作目录和进程名匹配的旧 Next.js 进程，之后仅更新 `jieniu-web`。
+- 临时验收可指定 `NAME`、`PORT`、`LOG` 和 `PM2_SAVE=0`，结束后删除该临时 PM2 项。
+- 2026-10-08 崩溃日志保存在 `var/ops/502-20261010/jieniu-prod.before.log`；读取时用
+  `tail -c` 限制字节数，不能一次性载入整份数 GB 日志。
 
 > ECS 上 `lsof` 是坏的（返回空），脚本里查端口一律用 `fuser <port>/tcp`。
 
@@ -104,8 +119,10 @@ DATABASE_URL="$DATABASE_URL" npx tsx -e 'void (async () => {
 
 ## 注意
 
-- **ECS 重启不自拉起**：web 是 nohup、scheduler 的 pm2 autostart 是 `disabled`。ECS 重启后需手动
-  `scripts/start-prod-ecs.sh` + `scripts/start-scheduler-ecs.sh`（要持久守护再明确要求）。
+- **ECS 开机恢复**：2026-10-10 已用 PM2 的 `startup systemd -u ubuntu --hp /home/ubuntu`
+  注册并启用 `pm2-ubuntu`，通过保存的进程清单恢复 web 与 scheduler。
+  `systemctl is-enabled pm2-ubuntu` 应返回 `enabled`；新增/删除正式进程后要 `pm2 save`。
+  这次没有重启 ECS，开机恢复仅验证服务配置和保存清单。
 - **头像本机文件**：ECS 上 `var/avatars/<userId>.webp`（gitignore、不在库里）。库里只存
   `User.image` 指向 `/api/avatar/<id>?v=<哈希>`。丢头像会退回默认渐变，不报错。备份要连 `var/` 一起。
 - **证书三层**：① ESA 边缘免费证书（apex+www，ESA 托管自动续期，`ListCertificates` 看）；② 源站
